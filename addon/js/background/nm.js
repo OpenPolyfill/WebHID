@@ -45,6 +45,9 @@
     reconnectDelay: 1000,
     nmHostName: NM_HOST_FORWARDER,
     lastError: null,
+    handshakePromise: null,
+    handshakePort: null,
+    handshakeResult: null,
     /** Per-request deadline for NM requests (see sendFrame). */
     REQUEST_TIMEOUT_MS: 30000,
 
@@ -165,6 +168,9 @@
     retirePort(port) {
       if (this.port !== port) return false
       this.port = null
+      this.handshakePromise = null
+      this.handshakePort = null
+      this.handshakeResult = null
       for (const [, p] of this.pending) p.resolve({ s: 503 })
       this.pending.clear()
       clearAuthorityOwnership()
@@ -274,8 +280,28 @@
       if (sessionToken) req.T = sessionToken
       return await this.sendRequest(req)
     },
-    async handshake() {
-      return await this.sendRequest({ a: ACT.hs })
+    handshake() {
+      const port = this.port
+      if (port && this.handshakePort === port && this.handshakeResult) {
+        return Promise.resolve(this.handshakeResult)
+      }
+      if (port && this.handshakePort === port && this.handshakePromise) {
+        return this.handshakePromise
+      }
+      const promise = this.sendRequest({ a: ACT.hs })
+        .then((response) => {
+          if (this.port === port && http.isOk(response && response.s)) {
+            this.handshakePort = port
+            this.handshakeResult = response
+          }
+          return response
+        })
+        .finally(() => {
+          if (this.handshakePromise === promise) this.handshakePromise = null
+        })
+      this.handshakePort = port
+      this.handshakePromise = promise
+      return promise
     },
     async sendReport(deviceId, reportId, data) {
       return await this.sendPacked((reqId) =>

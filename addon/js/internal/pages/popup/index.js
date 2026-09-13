@@ -349,8 +349,9 @@
     let planes = []
     if (origin && tab && tab.id != null) {
       try {
-        const r = await browser.tabs.sendMessage(tab.id, {
+        const r = await browser.runtime.sendMessage({
           action: 'getDataPlaneStatus',
+          tabId: tab.id,
           origin
         })
         planes = (r && r.planes) || []
@@ -548,8 +549,9 @@
     /** @type {Set<number>} */
     let openIds = new Set()
     try {
-      const r = await browser.tabs.sendMessage(tab.id, {
+      const r = await browser.runtime.sendMessage({
         action: 'getOpenDeviceIds',
+        tabId: tab.id,
         origin
       })
       const rIds = r != null ? r.ids : undefined
