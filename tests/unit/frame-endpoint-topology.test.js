@@ -48,6 +48,11 @@ test('normal frame origin listing skips opaque authorities safely', () => {
   assert.match(messages, /endpoint\.origin\.startsWith\('https:'\)/)
   assert.doesNotMatch(messages, /new URL\(endpoint\.origin\)\.protocol/)
 })
+test('frame-origin API preserves opaque persistent target metadata', () => {
+  assert.match(messages, /targets\.push/)
+  assert.match(messages, /kind: 'opaque'/)
+  assert.match(messages, /persistentOrigin: endpoint\.persistentOrigin/)
+})
 test('authority metadata gates local origin-sensitive state', () => {
   assert.match(messages, /action: 'endpointMetadata'/)
   assert.match(messages, /typeof sender\.origin/)
