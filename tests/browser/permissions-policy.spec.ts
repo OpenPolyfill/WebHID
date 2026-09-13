@@ -277,6 +277,26 @@ test.describe('Cross-origin iframe', () => {
     const opaqueTargets = targets.filter((target) => target.kind === 'opaque')
     expect(opaqueTargets).toHaveLength(2)
     expect(opaqueTargets[0].persistentOrigin).not.toBe(opaqueTargets[1].persistentOrigin)
+    const scope = opaqueTargets[0].persistentOrigin
+    if (typeof scope !== 'string') throw new Error('opaque target has no persistent scope')
+    const delivered = await backgroundPage.evaluate((persistentScope) => {
+      const fanout = (
+        globalThis as unknown as {
+          webhid: {
+            import(name: string): {
+              postToPersistentOriginEndpoints(scope: string, message: object): number
+            }
+          }
+        }
+      ).webhid.import('backgroundEventFanout')
+      return fanout.postToPersistentOriginEndpoints(persistentScope, {
+        action: 'allowedDevicesChanged',
+        origin: 'null',
+        persistentOrigin: persistentScope,
+        deviceIds: []
+      })
+    }, scope)
+    expect(delivered).toBe(1)
   })
   test('B2: top-level hid=() denies a delegated cross-origin child', async ({
     page,
