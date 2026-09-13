@@ -6,6 +6,7 @@ import { test } from 'node:test'
 function loadSettings() {
   const exports = {}
   const sandbox = {
+    URL,
     browser: {
       runtime: { getManifest: () => ({ manifest_version: 3 }) },
       storage: { local: { get: async () => ({}) } }
@@ -79,7 +80,14 @@ test('settings updates and overlays survive a poisoned array iterator', async ()
         }
         const changed = store.set({ value: 2 })
         const effective = await settingsExports.loadEffectiveSettings('https://example.test')
-        return { changed, changes, value: store.value, effective }
+        const global = await settingsExports.loadGlobalSettings()
+        const opaque = await settingsExports.loadEffectiveSettings('null')
+        const opaqueScope = settingsExports.persistentSiteScope(
+          'null',
+          'https://widget.example/app',
+          'https://host.example'
+        )
+        return { changed, changes, value: store.value, global, effective, opaque, opaqueScope }
       }
     )()`,
     context
@@ -87,4 +95,27 @@ test('settings updates and overlays survive a poisoned array iterator', async ()
   assert.equal(result.value, 2)
   assert.equal(result.changes[0], 2)
   assert.equal(result.effective.dataPlane, 'ws')
+  assert.equal(result.opaque.dataPlane, result.global.dataPlane)
+  assert.equal(result.opaqueScope, 'opaque|https%3A%2F%2Fhost.example|https%3A%2F%2Fwidget.example')
+  assert.equal(exports.isPersistentSiteOrigin('null'), false)
+  assert.equal(exports.isPersistentSiteOrigin(result.opaqueScope), true)
+})
+test('opaque persistence partitions use trusted embedder and source origins', () => {
+  const { exports } = loadSettings()
+  const scope = (topOrigin, sourceOrigin) =>
+    exports.persistentSiteScope('null', sourceOrigin + '/app', topOrigin)
+
+  assert.notEqual(
+    scope('https://host-a.example', 'https://widget.example'),
+    scope('https://host-b.example', 'https://widget.example')
+  )
+  assert.notEqual(
+    scope('https://host.example', 'https://widget-a.example'),
+    scope('https://host.example', 'https://widget-b.example')
+  )
+  assert.equal(
+    scope('https://host.example', 'https://widget.example'),
+    scope('https://host.example', 'https://widget.example')
+  )
+  assert.equal(exports.persistentSiteScope('null', 'https://widget.example/app', null), null)
 })
