@@ -134,3 +134,34 @@ test('settings listener set replaces disposed subscriptions', () => {
   store.set({ dataPlane: 'ws' })
   assert.equal(changes, 2)
 })
+test('stale scoped loads cannot mutate the newer scope', async () => {
+  const { exports } = loadSettings()
+  const stores = {
+    A: exports.createSettingsStore({ dataPlane: 'nm' }),
+    B: exports.createSettingsStore({ dataPlane: 'nm' })
+  }
+  let currentScope = 'A'
+  let resolveA
+  let resolveB
+  const loader = exports.createScopedSettingsLoader(
+    (scope) =>
+      new Promise((resolve) => {
+        if (scope === 'A') resolveA = resolve
+        else resolveB = resolve
+      }),
+    () => currentScope,
+    () => stores[currentScope],
+    () => 'authority'
+  )
+  const first = loader.load('authority')
+  currentScope = 'B'
+  loader.clear()
+  const second = loader.load('authority')
+  resolveB({ dataPlane: 'ws' })
+  await second
+  resolveA({ dataPlane: 'nm' })
+  await first
+
+  assert.equal(stores.B.dataPlane, 'ws')
+  assert.equal(stores.A.dataPlane, 'nm')
+})
