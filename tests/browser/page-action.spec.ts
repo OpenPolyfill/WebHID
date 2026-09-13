@@ -169,6 +169,13 @@ test.describe('extension action surfaces', () => {
       (target) => {
         const calls: Array<{ action: string; origin: unknown }> = []
         Object.defineProperty(globalThis, '__popupStatusCalls', { value: calls })
+        const saved: unknown[] = []
+        Object.defineProperty(globalThis, '__popupSaved', { value: saved })
+        const storageSet = browser.storage.local.set.bind(browser.storage.local)
+        browser.storage.local.set = async (value) => {
+          saved.push(value)
+          return storageSet(value)
+        }
         const runtimeSendMessage = browser.runtime.sendMessage as unknown as (
           message: unknown
         ) => Promise<unknown>
@@ -221,6 +228,21 @@ test.describe('extension action surfaces', () => {
     await page.locator('#site-name').click()
     await page.locator('#origin-list li').nth(1).click()
     await expect(page.locator('#site-name-text')).toHaveText('Opaque iframe')
+    await page.locator('#btn-settings').click()
+    await page
+      .locator('input[name="dataPlane"][value="nm"]')
+      .evaluate((el) => (el as HTMLInputElement).click())
+    await expect
+      .poll(() =>
+        page.evaluate(
+          (key) =>
+            (globalThis as unknown as { __popupSaved?: unknown[] }).__popupSaved?.some(
+              (entry) => entry != null && typeof entry === 'object' && key in entry
+            ) || false,
+          `settings :: ${selectedPersistent} :: dataPlane`
+        )
+      )
+      .toBe(true)
     await expect(page.locator('#status')).toHaveClass(/state-warn/)
     await page.waitForFunction(
       ({ start, origin }) => {

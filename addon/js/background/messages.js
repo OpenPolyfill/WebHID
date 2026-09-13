@@ -234,13 +234,17 @@
    * Sends a persistence-scope event only to endpoints owning that scope.
    * @param {string|null} persistentOrigin
    * @param {object} message
-   * @returns {void}
+   * @returns {number}
    */
   function postToPersistentOriginEndpoints(persistentOrigin, message) {
-    if (!persistentOrigin) return
+    if (!persistentOrigin) return 0
+    let delivered = 0
     for (const endpoint of frameEndpoints.values()) {
-      if (endpoint.persistentOrigin === persistentOrigin) postToContentPort(endpoint.port, message)
+      if (endpoint.persistentOrigin !== persistentOrigin) continue
+      postToContentPort(endpoint.port, message)
+      delivered++
     }
+    return delivered
   }
   /**
    * Replaces the in-memory device cache with `devices` (decoded), persisting
@@ -1593,5 +1597,6 @@
     })
   }
 
+  webhid.export('backgroundEventFanout', { postToPersistentOriginEndpoints })
   webhid.export('registerMessageHandlers', registerMessageHandlers)
 })()
