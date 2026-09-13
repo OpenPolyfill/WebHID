@@ -103,12 +103,25 @@
   function selectedTarget() {
     return frameTargets.find((target) => target.persistentOrigin === persistentOrigin)
   }
+  /**
+   * Derives opaque target labels from the canonical persistence identity.
+   * @param {SiteTarget|undefined} target
+   * @returns {string}
+   */
+  function labelForTarget(target) {
+    if (!target) return origin || t('popupNoSite')
+    if (target.kind !== 'opaque' || !target.persistentOrigin) return target.label
+    const parts = target.persistentOrigin.split('|')
+    return parts.length === 3 && parts[0] === 'opaque'
+      ? `${parts[2]} (Opaque iframe)`
+      : target.label
+  }
 
   /**
    * @returns {void}
    */
   function renderSiteLabel() {
-    siteLabel.textContent = selectedTarget()?.label || origin || t('popupNoSite')
+    siteLabel.textContent = labelForTarget(selectedTarget())
     siteButton.classList.toggle('has-list', frameTargets.length > 1)
     siteButton.setAttribute('aria-expanded', 'false')
     originList.hidden = true
@@ -162,7 +175,7 @@
       li.setAttribute('role', 'option')
       li.setAttribute('tabindex', '-1')
       li.dataset.persistentOrigin = target.persistentOrigin || ''
-      li.textContent = target.label
+      li.textContent = labelForTarget(target)
       li.addEventListener('click', () => selectTarget(target))
       originList.appendChild(li)
     }
