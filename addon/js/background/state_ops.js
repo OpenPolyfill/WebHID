@@ -342,12 +342,15 @@
   function clearDeviceSessionsForOrigin(deviceId, origin) {
     const byToken = deviceSessions.get(deviceId)
     if (!byToken || !origin) return
+    const tabs = new Set()
     for (const [token, owner] of byToken) {
-      if (owner.origin === origin) byToken.delete(token)
+      if ((owner.persistentOrigin || owner.origin) !== origin) continue
+      byToken.delete(token)
+      if (owner.tabId != null) tabs.add(owner.tabId)
     }
     if (byToken.size === 0) deviceSessions.delete(deviceId)
+    for (const tabId of tabs) refreshBadge(tabId)
   }
-
   /**
    * Drops the session records owned by `tabId` for a device.
    * @param {number} deviceId

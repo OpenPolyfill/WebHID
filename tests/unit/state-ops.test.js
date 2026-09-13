@@ -358,6 +358,25 @@ test('opaque persistence scopes keep tab aggregation isolated', () => {
   assert.equal(JSON.stringify(ops.collectOpenDeviceIdsForTab(12, scopeB)), JSON.stringify(['9']))
   assert.equal(JSON.stringify(ops.collectOpenDeviceIdsForTab(12, 'null')), JSON.stringify([]))
 })
+test('opaque scope cleanup preserves sibling session ownership', () => {
+  const { ops, deviceSessions } = loadStateOps()
+  ops.registerFrameLifetime(13, 'opaque-a')
+  ops.registerFrameLifetime(13, 'opaque-b')
+  ops.registerDeviceSession(10, 'token-a', {
+    tabId: 13,
+    origin: 'null',
+    persistentOrigin: 'opaque|host-a|widget',
+    frameKey: 'opaque-a'
+  })
+  ops.registerDeviceSession(10, 'token-b', {
+    tabId: 13,
+    origin: 'null',
+    persistentOrigin: 'opaque|host-b|widget',
+    frameKey: 'opaque-b'
+  })
+  ops.clearDeviceSessionsForOrigin(10, 'opaque|host-a|widget')
+  assert.equal(JSON.stringify([...deviceSessions.get(10).keys()]), JSON.stringify(['token-b']))
+})
 test('exact endpoint cleanup cannot retire a replacement lifetime', async () => {
   const { ops, deviceSessions, deviceTabMap } = loadStateOps()
   ops.registerFrameLifetime(11, 'endpoint-old')
