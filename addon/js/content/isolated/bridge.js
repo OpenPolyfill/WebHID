@@ -8,6 +8,7 @@
   const http = webhid.import('http')
   const createSettingsStore = webhid.import('createSettingsStore')
   const createSettingsListenerSet = webhid.import('createSettingsListenerSet')
+  const createScopedSettingsLoader = webhid.import('createScopedSettingsLoader')
   const loadEffectiveSettings = webhid.import('loadEffectiveSettings')
   const loadSiteSettings = webhid.import('loadSiteSettings')
   const parseSettingsKey = webhid.import('parseSettingsKey')
@@ -600,8 +601,6 @@
   const settings = createSettingsStore(webhid.import('GLOBAL_DEFAULTS'))
   /** @type {Map<string, import("./types.js").SettingsStore>} */
   const settingsByOrigin = new Map()
-  /** @type {Map<string, Promise<import("./types.js").SettingsStore>>} */
-  const settingsLoads = new Map()
   /**
    * Maps authority identity to its persistent settings partition.
    * @param {string} origin
@@ -618,26 +617,19 @@
     installSettingsListeners(origin, store)
     return store
   }
+  const settingsLoader = createScopedSettingsLoader(
+    loadEffectiveSettings,
+    settingsScopeForOrigin,
+    settingsForOrigin,
+    () => authorityOrigin,
+    (error, scope) => logger.warn('load settings failed for', scope, ':', error.message)
+  )
   /**
    * @param {string} origin
    * @returns {Promise<import("./types.js").SettingsStore>}
    */
   function loadSettingsForOrigin(origin) {
-    const scope = settingsScopeForOrigin(origin)
-    const existing = settingsLoads.get(scope)
-    if (existing) return existing
-    const load = loadEffectiveSettings(scope)
-      .then((values) => {
-        const store = settingsForOrigin(origin)
-        store.set(values)
-        return store
-      })
-      .catch((error) => {
-        logger.warn('load settings failed for', scope, ':', error.message)
-        return settingsForOrigin(origin)
-      })
-    settingsLoads.set(scope, load)
-    return load
+    return settingsLoader.load(origin)
   }
   /** @returns {void} */
   function settleAuthorityReady() {
@@ -671,7 +663,7 @@
     }
     if (firstInitialization || scopeChanged) {
       settingsByOrigin.clear()
-      settingsLoads.clear()
+      settingsLoader.clear()
       settingsByOrigin.set(persistentOrigin || '', settings)
       installSettingsListeners(authorityOrigin, settings)
       if (scopeChanged) {
