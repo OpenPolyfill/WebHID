@@ -196,9 +196,32 @@
       }
     })
   }
+  /**
+   * Creates an idempotent subscription set for a long-lived settings store.
+   * @returns {{install: Function, dispose: Function}}
+   */
+  function createSettingsListenerSet() {
+    let disposers = []
+    function dispose() {
+      for (const disposer of disposers) {
+        if (typeof disposer === 'function') disposer()
+      }
+      disposers = []
+    }
+    return {
+      install(store, registrations) {
+        dispose()
+        disposers = registrations
+          .map(([keys, callback]) => store.on(keys, callback))
+          .filter((disposer) => typeof disposer === 'function')
+      },
+      dispose
+    }
+  }
 
   webhid.export('GLOBAL_DEFAULTS', GLOBAL_DEFAULTS)
   webhid.export('createSettingsStore', createSettingsStore)
+  webhid.export('createSettingsListenerSet', createSettingsListenerSet)
 
   const SETTING_NAMES = object.keys(GLOBAL_DEFAULTS)
 
