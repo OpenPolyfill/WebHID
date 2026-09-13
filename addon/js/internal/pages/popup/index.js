@@ -428,12 +428,13 @@
    * @returns {Promise<void>}
    */
   async function removeDevice(deviceIds) {
-    if (!origin || !deviceIds || !deviceIds.length) return
+    if (!persistentOrigin || !deviceIds || !deviceIds.length) return
     try {
       await browser.runtime.sendMessage({
         action: 'revokeDevice',
         deviceIds,
-        origin
+        origin,
+        persistentOrigin
       })
     } catch (e) {
       logger.debug('revokeDevice failed', e)

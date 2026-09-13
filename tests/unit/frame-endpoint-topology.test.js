@@ -53,6 +53,11 @@ test('frame-origin API preserves opaque persistent target metadata', () => {
   assert.match(messages, /kind: 'opaque'/)
   assert.match(messages, /persistentOrigin: endpoint\.persistentOrigin/)
 })
+test('settings scope transitions keep one listener subscription set', () => {
+  assert.match(bridge, /settingsListenerDisposers/)
+  assert.match(bridge, /clearSettingsListeners\(\)/)
+  assert.match(bridge, /settingsListenerDisposers = \[/)
+})
 test('authority metadata gates local origin-sensitive state', () => {
   assert.match(messages, /action: 'endpointMetadata'/)
   assert.match(messages, /typeof sender\.origin/)
