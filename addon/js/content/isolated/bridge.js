@@ -2793,35 +2793,50 @@
     logger.info('data plane changed:', dp, 'open devices:', active.length)
   }
 
+  /** @type {Array<(() => void)|undefined>} */
+  let settingsListenerDisposers = []
+  /**
+   * Removes the active settings side-effect listeners.
+   * @returns {void}
+   */
+  function clearSettingsListeners() {
+    for (const dispose of settingsListenerDisposers) {
+      if (typeof dispose === 'function') dispose()
+    }
+    settingsListenerDisposers = []
+  }
   /**
    * @param {string} origin
    * @param {import("./types.js").SettingsStore} store
    * @returns {void}
    */
   function installSettingsListeners(origin, store) {
+    clearSettingsListeners()
     logger.bindSettings(store)
-    store.on('hidePageAction', (hidden) => {
-      if (!hidden) pageActionMarked = false
-    })
-    store.on('dataPlane', (dp) => applyDataPlane(dp, origin))
-    store.on('workerSpawnMode', () => {
-      cachedSpawnModes.delete(origin)
-      applyDataPlane(store.dataPlane, origin)
-    })
-    store.on('useWorker', () => applyDataPlane(store.dataPlane, origin))
-    store.on(['dataPlane', 'logLevel'], () => {
-      const all = store.getAll()
-      const patch = { dataPlane: all.dataPlane, logLevel: all.logLevel }
-      for (const [port, context] of frameContextByPort) {
-        if (context.origin === origin) port.postMessage({ type: 'settings', settings: patch })
-      }
-      for (const [key, entry] of workers) {
-        const context = contextForPlaneKey(key)
-        if (context && context.origin === origin && entry.worker) {
-          entry.worker.postMessage({ type: 'settings', ...patch })
+    settingsListenerDisposers = [
+      store.on('hidePageAction', (hidden) => {
+        if (!hidden) pageActionMarked = false
+      }),
+      store.on('dataPlane', (dp) => applyDataPlane(dp, origin)),
+      store.on('workerSpawnMode', () => {
+        cachedSpawnModes.delete(origin)
+        applyDataPlane(store.dataPlane, origin)
+      }),
+      store.on('useWorker', () => applyDataPlane(store.dataPlane, origin)),
+      store.on(['dataPlane', 'logLevel'], () => {
+        const all = store.getAll()
+        const patch = { dataPlane: all.dataPlane, logLevel: all.logLevel }
+        for (const [port, context] of frameContextByPort) {
+          if (context.origin === origin) port.postMessage({ type: 'settings', settings: patch })
         }
-      }
-    })
+        for (const [key, entry] of workers) {
+          const context = contextForPlaneKey(key)
+          if (context && context.origin === origin && entry.worker) {
+            entry.worker.postMessage({ type: 'settings', ...patch })
+          }
+        }
+      })
+    ]
   }
 
   browser.storage.onChanged.addListener((changes, area) => {
