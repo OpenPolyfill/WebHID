@@ -43,6 +43,12 @@ test('authority metadata gates local origin-sensitive state', () => {
   assert.match(bridge, /await authorityReady/)
   assert.match(main, /await settingsReady/)
 })
+test('MAIN settings readiness waits for the initial snapshot', () => {
+  const liveSettings = main.match(/settings: \(data\) => \{[\s\S]*?\n    \},/)
+  assert.ok(liveSettings)
+  assert.doesNotMatch(liveSettings[0], /markSettingsReady/)
+  assert.match(main, /sendRequest\('getSettings', \{\}\)[\s\S]*markSettingsReady/)
+})
 
 test('MAIN does not bootstrap through a top WindowProxy', () => {
   assert.doesNotMatch(main, /nativeWindowPostMessage/)
