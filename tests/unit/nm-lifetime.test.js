@@ -145,7 +145,7 @@ test('host switch retires authority once and ignores stale disconnect', async ()
   assert.equal(ownership.broadcasts, 1)
 })
 
-test('handshake shares cached authority across frame requests', async () => {
+test('handshake coalesces concurrent calls but refreshes later', async () => {
   const { nativeMessaging, ports } = loadNativeMessaging({ deferHandshake: true })
   await nativeMessaging.connect()
 
@@ -158,6 +158,22 @@ test('handshake shares cached authority across frame requests', async () => {
     { n: 1, s: 200, w: 123, N: 'nonce' },
     { n: 1, s: 200, w: 123, N: 'nonce' }
   ])
-  await nativeMessaging.handshake()
-  assert.equal(ports[0].port.handshakeCalls, 1)
+  const third = nativeMessaging.handshake()
+  assert.equal(ports[0].port.handshakeCalls, 2)
+  ports[0].port.respondHandshake()
+  assert.deepEqual(await third, { n: 2, s: 200, w: 123, N: 'nonce' })
+})
+
+test('handshake after port replacement uses the new port', async () => {
+  const { nativeMessaging, ports } = loadNativeMessaging({ deferHandshake: true })
+  await nativeMessaging.connect()
+  const first = nativeMessaging.handshake()
+  ports[0].port.respondHandshake()
+  await first
+  ports[0].port.disconnect()
+  await nativeMessaging.connect()
+  const second = nativeMessaging.handshake()
+  assert.equal(ports[1].port.handshakeCalls, 1)
+  ports[1].port.respondHandshake()
+  assert.deepEqual(await second, { n: 2, s: 200, w: 123, N: 'nonce' })
 })

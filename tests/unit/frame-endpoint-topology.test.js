@@ -36,6 +36,13 @@ test('background owns endpoint registry and exact input fanout', () => {
   assert.match(nm, /collectDeviceSessionOwners\(deviceId\)/)
   assert.match(nm, /postToContentPort\(port/)
 })
+test('authority metadata gates local origin-sensitive state', () => {
+  assert.match(messages, /action: 'endpointMetadata'/)
+  assert.match(messages, /typeof sender\.origin/)
+  assert.match(bridge, /initializeAuthorityMetadata/)
+  assert.match(bridge, /await authorityReady/)
+  assert.match(main, /await settingsReady/)
+})
 
 test('MAIN does not bootstrap through a top WindowProxy', () => {
   assert.doesNotMatch(main, /nativeWindowPostMessage/)
