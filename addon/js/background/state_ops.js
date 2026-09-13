@@ -229,6 +229,54 @@
   function getDeviceSessionOwner(deviceId, token) {
     return deviceSessions.get(deviceId)?.get(token) || null
   }
+  /**
+   * Updates the data-plane state for one exact session endpoint.
+   * @param {number} deviceId
+   * @param {string} token
+   * @param {object} port
+   * @param {object|null} plane
+   * @returns {boolean}
+   */
+  function setDeviceSessionPlane(deviceId, token, port, plane) {
+    const owner = deviceSessions.get(deviceId)?.get(token)
+    if (!owner || owner.port !== port) return false
+    owner.plane = plane
+    return true
+  }
+  /**
+   * Collects tab-wide plane state from authoritative session owners.
+   * @param {number} tabId
+   * @param {string} [origin]
+   * @returns {object[]}
+   */
+  function collectDevicePlaneStatuses(tabId, origin) {
+    const statuses = []
+    for (const [deviceId, byToken] of deviceSessions) {
+      for (const [token, owner] of byToken) {
+        if (owner.tabId !== tabId || (origin && owner.origin !== origin) || !owner.plane) continue
+        statuses.push({ deviceId, token, ...owner.plane })
+      }
+    }
+    return statuses
+  }
+  /**
+   * Collects open device IDs from authoritative tab session ownership.
+   * @param {number} tabId
+   * @param {string} [origin]
+   * @returns {string[]}
+   */
+  function collectOpenDeviceIdsForTab(tabId, origin) {
+    const ids = new Set()
+    for (const [deviceId, byToken] of deviceSessions) {
+      for (const owner of byToken.values()) {
+        if (owner.tabId === tabId && (!origin || owner.origin === origin)) {
+          ids.add(String(deviceId))
+          break
+        }
+      }
+    }
+    return [...ids]
+  }
 
   /**
    * Collects session tokens for one trusted frame generation.
@@ -516,6 +564,9 @@
     collectDeviceSessionsForTab,
     collectDeviceSessionsForFrame,
     getDeviceSessionOwner,
+    setDeviceSessionPlane,
+    collectDevicePlaneStatuses,
+    collectOpenDeviceIdsForTab,
     clearDeviceSessions,
     clearDeviceSessionsForOrigin,
     clearDeviceSessionsForTab,

@@ -5,20 +5,44 @@ import { runInNewContext } from 'node:vm'
 
 const source = readFileSync(new URL('../../addon/js/background/nm.js', import.meta.url), 'utf8')
 
-function loadNativeMessaging() {
+function loadNativeMessaging({ deferHandshake = false } = {}) {
   const exports = {}
   const ports = []
   const ownership = { cleared: 0, broadcasts: 0 }
   const context = {
     globalThis: null,
+    setTimeout,
+    clearTimeout,
     browser: {
       runtime: {
         connectNative(name) {
           const disconnectListeners = []
+          const messageListeners = []
           const port = {
             name,
-            onMessage: { addListener() {} },
-            onDisconnect: { addListener(listener) { disconnectListeners.push(listener) } },
+            postMessage(message) {
+              if (message.n == null) return
+              port.handshakeCalls += 1
+              port.lastHandshake = message
+              if (!deferHandshake) port.respondHandshake()
+            },
+            handshakeCalls: 0,
+            lastHandshake: null,
+            onMessage: {
+              addListener(listener) {
+                messageListeners.push(listener)
+              }
+            },
+            onDisconnect: {
+              addListener(listener) {
+                disconnectListeners.push(listener)
+              }
+            },
+            respondHandshake() {
+              for (const listener of messageListeners) {
+                listener({ n: port.lastHandshake.n, s: 200, w: 123, N: 'nonce' })
+              }
+            },
             disconnect() {
               for (const listener of disconnectListeners) listener()
             }
@@ -40,22 +64,51 @@ function loadNativeMessaging() {
             PKG_SEND_FEATURE_REPORT: 4,
             EVT_CONNECT: 1,
             EVT_DISCONNECT: 2,
-            buildPackedSend() { return { toBase64() { return '' } } }
+            buildPackedSend() {
+              return {
+                toBase64() {
+                  return ''
+                }
+              }
+            }
           }
         }
         if (name === 'bgState') return { deviceCache: [] }
         if (name === 'bgStorage') return { saveDeviceInfo() {} }
         if (name === 'bgStateOps') {
           return {
-            tabsForEvent() { return null },
-            broadcastGlobalReset() { ownership.broadcasts++ },
-            clearAuthorityOwnership() { ownership.cleared++ },
+            tabsForEvent() {
+              return null
+            },
+            collectDeviceSessionOwners() {
+              return []
+            },
+            broadcastGlobalReset() {
+              ownership.broadcasts++
+            },
+            clearAuthorityOwnership() {
+              ownership.cleared++
+            },
             clearDeviceOwnership() {},
-            forTabsOfOrigin() { return Promise.resolve() }
+            forTabsOfOrigin() {
+              return Promise.resolve()
+            }
           }
         }
-        if (name === 'http') return { isOk() { return true } }
-        if (name === 'content-ports') return { postToContentPorts() { return new Set() } }
+        if (name === 'http')
+          return {
+            isOk() {
+              return true
+            }
+          }
+        if (name === 'content-ports') {
+          return {
+            postToContentPorts() {
+              return new Set()
+            },
+            postToContentPort() {}
+          }
+        }
         throw new Error('unexpected import: ' + name)
       },
       export(name, value) {
@@ -73,7 +126,11 @@ test('host switch retires authority once and ignores stale disconnect', async ()
   await nativeMessaging.connect()
   const oldPort = ports[0]
   let pendingResult
-  nativeMessaging.pending.set(1, { resolve(value) { pendingResult = value } })
+  nativeMessaging.pending.set(1, {
+    resolve(value) {
+      pendingResult = value
+    }
+  })
 
   nativeMessaging.reconnectWithNewHost()
 
@@ -86,4 +143,21 @@ test('host switch retires authority once and ignores stale disconnect', async ()
   assert.equal(nativeMessaging.port, ports[1].port)
   assert.equal(ownership.cleared, 1)
   assert.equal(ownership.broadcasts, 1)
+})
+
+test('handshake shares cached authority across frame requests', async () => {
+  const { nativeMessaging, ports } = loadNativeMessaging({ deferHandshake: true })
+  await nativeMessaging.connect()
+
+  const first = nativeMessaging.handshake()
+  const second = nativeMessaging.handshake()
+  assert.equal(ports[0].port.handshakeCalls, 1)
+
+  ports[0].port.respondHandshake()
+  assert.deepEqual(await Promise.all([first, second]), [
+    { n: 1, s: 200, w: 123, N: 'nonce' },
+    { n: 1, s: 200, w: 123, N: 'nonce' }
+  ])
+  await nativeMessaging.handshake()
+  assert.equal(ports[0].port.handshakeCalls, 1)
 })

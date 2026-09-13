@@ -213,6 +213,30 @@ test.describe('Cross-origin iframe', () => {
     expect(raw!.hidUndefined).toBe(false)
   })
 
+  test('sandboxed iframe keeps an opaque security origin', async ({ page, pageUrl, crossUrl }) => {
+    await page.goto(pageUrl('/iframe-parent'), {
+      waitUntil: 'domcontentloaded',
+      timeout: 15000
+    })
+    await page.evaluate(() => {
+      document.documentElement.dataset.opaqueOrigin = ''
+      window.addEventListener('message', (event) => {
+        if (event.data === 'opaque-origin-probe')
+          document.documentElement.dataset.opaqueOrigin = event.origin
+      })
+    })
+    await page.evaluate((src) => {
+      const frame = document.createElement('iframe')
+      frame.id = 'opaque-sandbox'
+      frame.setAttribute('sandbox', 'allow-scripts')
+      frame.src = src + '/iframe-child-no-allow'
+      document.body.appendChild(frame)
+    }, crossUrl(''))
+    const frame = await frameWithId(page, 'opaque-sandbox', '/iframe-child-no-allow')
+    await frame.evaluate(() => window.parent.postMessage('opaque-origin-probe', '*'))
+    await expect.poll(() => page.locator('html').getAttribute('data-opaque-origin')).toBe('null')
+    expect((await readFrameResult(frame))?.queryHid).toBe('denied')
+  })
   test('B2: top-level hid=() denies a delegated cross-origin child', async ({
     page,
     pageUrl,

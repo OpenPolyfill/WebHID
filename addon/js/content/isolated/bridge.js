@@ -348,20 +348,6 @@
   }
 
   /**
-   * @param {string} [origin]
-   * @returns {Set<string>}
-   */
-  function getOpenDeviceIds(origin) {
-    const ids = new Set()
-    for (const [port, context] of frameContextByPort) {
-      if (origin && context.origin !== origin) continue
-      const sessions = clientSessions.get(port)
-      if (!sessions) continue
-      for (const deviceId of sessions.keys()) ids.add(deviceId)
-    }
-    return ids
-  }
-  /**
    * @param {FrameContext} context
    * @returns {Array<{port: MessagePort, sessions: Map<string, string>, clientKey: string}>}
    */
@@ -423,57 +409,19 @@
   }
 
   browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    const origin = typeof request.origin === 'string' ? request.origin : ''
-    const knownOrigin = !origin || collectFrameOrigins().includes(origin)
     if (
-      !knownOrigin &&
-      (request.action === 'getOpenDeviceIds' || request.action === 'getDataPlaneStatus')
-    ) {
-      sendResponse(
-        request.action === 'getOpenDeviceIds'
-          ? { ids: [] }
-          : { planes: [], defaultPlane: webhid.import('GLOBAL_DEFAULTS').dataPlane }
-      )
-      return true
-    }
-    if (request.action === 'getFrameOrigins') {
-      sendResponse({ origins: collectFrameOrigins() })
-      return true
-    }
-    if (request.action === 'getDataPlaneStatus') {
-      const planes = []
-      const statusFor = (key, plane, mode) => ({
-        deviceId: deviceIdForPlaneKey(key),
-        plane,
-        mode,
-        generation: spawnGen.get(key),
-        ready: readyGenerations.get(key) === spawnGen.get(key)
-      })
-      for (const [key, transport] of deviceTransports) {
-        const context = contextForPlaneKey(key)
-        if (!context || (origin && context.origin !== origin)) continue
-        if (workers.has(key)) planes.push(statusFor(key, transport, 'worker'))
-      }
-      for (const key of inPageDevices) {
-        const context = contextForPlaneKey(key)
-        if (!context || (origin && context.origin !== origin)) continue
-        planes.push(statusFor(key, 'wt', 'inpage'))
-      }
-      for (const key of nmPlanes) {
-        const context = contextForPlaneKey(key)
-        if (!context || (origin && context.origin !== origin)) continue
-        planes.push(statusFor(key, 'nm', null))
-      }
-      loadSettingsForOrigin(origin || window.location.origin)
-        .then((store) => sendResponse({ planes, defaultPlane: store.dataPlane }))
-        .catch(() =>
-          sendResponse({
-            planes,
-            defaultPlane: webhid.import('GLOBAL_DEFAULTS').dataPlane
-          })
-        )
-      return true
-    }
+      request.action !== 'getOpenDeviceIds' &&
+      request.action !== 'getDataPlaneStatus' &&
+      request.action !== 'getFrameOrigins'
+    )
+      return false
+    sendBackgroundRequest({
+      action: request.action,
+      origin: typeof request.origin === 'string' ? request.origin : undefined
+    })
+      .then(sendResponse)
+      .catch(() => sendResponse({ ids: [], planes: [], origins: [] }))
+    return true
   })
   /**
    * @param {string} deviceId
@@ -748,6 +696,7 @@
     if (!context) return
     const client = clientForKey(context, clientKeyForPlaneKey(key))
     if (!client) return
+    notifyBackgroundPlaneStatus(key, generation, true)
     try {
       client.port.postMessage({
         type: 'dataPlaneReady',
@@ -757,6 +706,39 @@
     } catch (e) {
       logger.debug('data plane ready notification failed', e)
     }
+  }
+  /**
+   * Publishes exact session plane state for background aggregation.
+   * @param {string} key
+   * @param {number} generation
+   * @param {boolean} ready
+   * @param {boolean} [available]
+   * @returns {void}
+   */
+  function notifyBackgroundPlaneStatus(key, generation, ready, available = true) {
+    const context = contextForPlaneKey(key)
+    if (!context) return
+    const clientKey = clientKeyForPlaneKey(key)
+    const client = clientForKey(context, clientKey)
+    const deviceId = Number(deviceIdForPlaneKey(key))
+    const token = client?.sessions.get(deviceId)
+    if (!token) return
+    const plane = nmPlanes.has(key)
+      ? 'nm'
+      : inPageDevices.has(key)
+        ? 'wt'
+        : deviceTransports.get(key) || settingsForOrigin(context.origin).dataPlane
+    const mode = plane === 'nm' ? null : inPageDevices.has(key) ? 'inpage' : 'worker'
+    sendBackgroundRequest({
+      action: 'setDataPlaneStatus',
+      deviceId,
+      sessionToken: token,
+      clientKey,
+      plane: available ? plane : null,
+      mode,
+      generation,
+      ready
+    }).catch((e) => logger.debug('data plane status update failed', e))
   }
 
   /**
@@ -771,6 +753,7 @@
     if (!context) return
     const client = clientForKey(context, clientKeyForPlaneKey(key))
     if (!client) return
+    notifyBackgroundPlaneStatus(key, generation, false, true)
     try {
       client.port.postMessage({
         type: 'dataPlaneUnavailable',
@@ -1984,10 +1967,9 @@
     const clientKey = client.clientKey
     const clientPort = client.port
     sessions.set(deviceId, response.t)
-    sendBackgroundRequest({
-      action: 'deviceCountChanged',
-      count: getOpenDeviceIds().size
-    }).catch((e) => logger.debug('deviceCountChanged (open) failed', e))
+    sendBackgroundRequest({ action: 'deviceCountChanged' }).catch((e) =>
+      logger.debug('deviceCountChanged (open) failed', e)
+    )
     logger.debug('open ok deviceId=' + deviceId + ' wsPort=' + response.w)
     const key = planeKeyForClient(context, deviceId, clientKey)
     const dataPlane = settingsForOrigin(context.origin).dataPlane
@@ -2018,6 +2000,7 @@
       }
     }
     if (generation == null) return { accepted: false, error: 'data plane authority setup failed' }
+    notifyBackgroundPlaneStatus(key, generation, readyGenerations.get(key) === generation)
     response.clientPlaneGeneration = generation
     return { accepted: true }
   }
@@ -2035,10 +2018,9 @@
     logger.debug('close deviceId=' + deviceId)
     sessions.delete(deviceId)
     await despawnDataPlane(context, deviceId, { clientKey })
-    sendBackgroundRequest({
-      action: 'deviceCountChanged',
-      count: getOpenDeviceIds().size
-    }).catch((e) => logger.debug('deviceCountChanged (close) failed', e))
+    sendBackgroundRequest({ action: 'deviceCountChanged' }).catch((e) =>
+      logger.debug('deviceCountChanged (close) failed', e)
+    )
   }
   /**
    *
@@ -2429,11 +2411,11 @@
     logger.warn('global reset: clearing daemon state')
     resetAuthorityState()
       .catch((e) => logger.debug('authority reset failed', e))
-      .finally(() => {
-        sendBackgroundRequest({ action: 'deviceCountChanged', count: 0 }).catch((e) =>
+      .finally(() =>
+        sendBackgroundRequest({ action: 'deviceCountChanged' }).catch((e) =>
           logger.debug('deviceCountChanged (reset) failed', e)
         )
-      })
+      )
   }
 
   /**

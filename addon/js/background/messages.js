@@ -37,6 +37,9 @@
     purgeFrame,
     collectDeviceSessionsForOrigin,
     getDeviceSessionOwner,
+    setDeviceSessionPlane,
+    collectDevicePlaneStatuses,
+    collectOpenDeviceIdsForTab,
     closeForCleanup
   } = webhid.import('bgStateOps')
   const { urlOrigin, frameKey, documentFrameKey } = webhid.import('bgCsp')
@@ -62,7 +65,8 @@
     const frameId = Number.isInteger(sender.frameId) ? sender.frameId : null
     const documentId =
       typeof sender.documentId === 'string' && sender.documentId ? sender.documentId : null
-    const origin = urlOrigin(sender.url || '')
+    const origin = typeof sender.origin === 'string' && sender.origin ? sender.origin : null
+    const url = typeof sender.url === 'string' ? sender.url : ''
     if (tabId == null || frameId == null || !origin) return null
     const endpoint = {
       id: 'endpoint-' + ++nextEndpointId,
@@ -71,7 +75,7 @@
       frameId,
       documentId,
       origin,
-      url: sender.url,
+      url,
       frameKey: 'endpoint-' + nextEndpointId
     }
     frameEndpoints.set(port, endpoint)
@@ -732,6 +736,88 @@
   }
 
   /**
+   * Returns tab-wide open devices from authoritative background sessions.
+   * @param {object} request
+   * @param {object} sender
+   * @param {function(*): void} sendResponse
+   * @returns {boolean}
+   */
+  function handleGetOpenDeviceIds(request, sender, sendResponse) {
+    const tabId = Number.isInteger(request.tabId) ? request.tabId : sender.tab?.id
+    sendResponse({
+      ids: tabId == null ? [] : collectOpenDeviceIdsForTab(tabId, request.origin)
+    })
+    return false
+  }
+
+  /**
+   * Returns tab-wide data-plane state from authoritative session owners.
+   * @param {object} request
+   * @param {object} sender
+   * @param {function(*): void} sendResponse
+   * @returns {boolean}
+   */
+  function handleGetDataPlaneStatus(request, sender, sendResponse) {
+    const tabId = Number.isInteger(request.tabId) ? request.tabId : sender.tab?.id
+    const statuses = tabId == null ? [] : collectDevicePlaneStatuses(tabId, request.origin)
+    sendResponse({
+      planes: statuses.map(({ deviceId, plane, mode, generation, ready }) => ({
+        deviceId,
+        plane,
+        mode,
+        generation,
+        ready: ready === true
+      })),
+      defaultPlane: webhid.import('GLOBAL_DEFAULTS').dataPlane
+    })
+    return false
+  }
+
+  /**
+   * Updates one exact session's data-plane status.
+   * @param {object} request
+   * @param {object} sender
+   * @param {function(*): void} sendResponse
+   * @param {object} port
+   * @returns {boolean}
+   */
+  function handleSetDataPlaneStatus(request, sender, sendResponse, port) {
+    const endpoint = endpointForRequest(sender, port)
+    const deviceId = Number(request.deviceId)
+    const ok =
+      endpoint &&
+      Number.isInteger(deviceId) &&
+      typeof request.sessionToken === 'string' &&
+      isSessionOwnedBy(
+        deviceId,
+        request.sessionToken,
+        endpoint.origin,
+        endpoint.tabId,
+        endpoint.frameKey,
+        request.clientKey,
+        port
+      )
+    if (!ok) {
+      sendResponse({ s: 403 })
+      return false
+    }
+    const plane =
+      request.plane == null
+        ? null
+        : {
+            plane: request.plane,
+            mode: request.mode == null ? null : request.mode,
+            generation: request.generation,
+            ready: request.ready === true
+          }
+    sendResponse({
+      s: setDeviceSessionPlane(deviceId, request.sessionToken, port, plane) ? 204 : 403
+    })
+    return false
+  }
+
+  /**
+   * Updates the tab badge from all exact frame/session owners.
    * @param {object} request
    * @param {object} sender
    * @returns {boolean}
@@ -739,11 +825,13 @@
   function handleDeviceCountChanged(request, sender) {
     if (actionApi) {
       const tabId = sender.tab != null ? sender.tab.id : undefined
-      if (tabId != null)
+      if (tabId != null) {
+        const count = collectOpenDeviceIdsForTab(tabId).length
         actionApi.setBadgeText({
-          text: request.count > 0 ? String(request.count) : '',
+          text: count > 0 ? String(count) : '',
           tabId
         })
+      }
     }
     return false
   }
@@ -843,12 +931,13 @@
       sendResponse(null)
       return false
     }
-    const origin = urlOrigin(sender.url || '')
-    if (!origin) {
+    const authorityOrigin = typeof sender.origin === 'string' ? sender.origin : ''
+    const documentUrlOrigin = urlOrigin(sender.url || '')
+    if (!authorityOrigin || !documentUrlOrigin) {
       sendResponse(null)
       return false
     }
-    const key = `csp:${frameKey(tabId, sender.frameId ?? 0, origin)}`
+    const key = `csp:${frameKey(tabId, sender.frameId ?? 0, documentUrlOrigin)}`
     browser.storage.session
       .get(key)
       .then((r) => sendResponse(r[key] ?? null))
@@ -1119,7 +1208,7 @@
     const tabId = sender.tab?.id
     const frameId = Number.isInteger(sender.frameId) ? sender.frameId : null
     const documentId = typeof sender.documentId === 'string' ? sender.documentId : null
-    const requestedOrigin = urlOrigin(sender.url || '')
+    const requestedOrigin = typeof sender.origin === 'string' ? sender.origin : ''
     if (tabId == null || frameId == null || !documentId || !requestedOrigin) {
       return { policy: { hid: 'none' } }
     }
@@ -1184,7 +1273,7 @@
     const tabId = sender.tab?.id
     const frameId = Number.isInteger(sender.frameId) ? sender.frameId : null
     const documentId = typeof sender.documentId === 'string' ? sender.documentId : null
-    const origin = urlOrigin(sender.url || '')
+    const origin = typeof sender.origin === 'string' ? sender.origin : ''
     if (tabId == null || frameId == null || !documentId || !origin) {
       sendResponse({ ok: false })
       return false
@@ -1291,6 +1380,9 @@
     pairDevice: handlePairDevice,
     unpairDevice: handleUnpairDevice,
     getAllowedDevices: handleGetAllowedDevices,
+    getOpenDeviceIds: handleGetOpenDeviceIds,
+    getDataPlaneStatus: handleGetDataPlaneStatus,
+    setDataPlaneStatus: handleSetDataPlaneStatus,
     deviceCountChanged: handleDeviceCountChanged,
     showPageAction: handleShowPageAction,
     getDeviceCache: handleGetDeviceCache,
@@ -1333,14 +1425,15 @@
           pending.resolve(request.delegated === true)
           return
         }
-        const handler = HANDLERS[request.action]
+        const effectiveRequest = endpoint ? { ...request, origin: endpoint.origin } : request
+        const handler = HANDLERS[effectiveRequest.action]
         if (!handler) return
         let responded = false
         const sendPortResponse = (response) => {
           if (responded) return
           responded = true
           const responseMessage = { ...(response || {}) }
-          if (request.reqId != null) responseMessage.reqId = request.reqId
+          if (effectiveRequest.reqId != null) responseMessage.reqId = effectiveRequest.reqId
           try {
             port.postMessage(responseMessage)
           } catch {
@@ -1348,7 +1441,7 @@
           }
         }
         try {
-          const result = handler(request, port.sender, sendPortResponse, port)
+          const result = handler(effectiveRequest, port.sender, sendPortResponse, port)
           if (result && typeof result.then === 'function') {
             result.catch(() => sendPortResponse({ s: 500 }))
           } else if (result !== true && !responded) {
