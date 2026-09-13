@@ -28,6 +28,12 @@
   let nextHandshakeReqId = 0
   const handshakePending = new Map()
   const pickerResultHandlers = new Map()
+  let authorityOrigin = ''
+  let authorityFailed = false
+  let resolveAuthorityReady = null
+  const authorityReady = new Promise((resolve) => {
+    resolveAuthorityReady = resolve
+  })
   /** @returns {void} */
   function pumpControlQueue() {
     if (controlPending || controlQueue.length === 0) return
@@ -68,6 +74,10 @@
     })
   }
   controlPort.onMessage.addListener((message) => {
+    if (message && message.action === 'endpointMetadata') {
+      initializeAuthorityMetadata(message)
+      return
+    }
     if (message && message.action === 'pickerResult') {
       const handler = pickerResultHandlers.get(message.requestId)
       if (handler) handler(message)
@@ -101,7 +111,7 @@
       return
     }
     if (message && message.action === 'allowedDevicesChanged') {
-      const origin = message.origin || window.location.origin
+      const origin = message.origin || authorityOrigin
       allowedByOrigin.set(origin, new Set(message.deviceIds || []))
       loadedOrigins.add(origin)
       flushAllowedDeviceIdsQueue(origin)
@@ -128,6 +138,8 @@
   })
   controlPort.onDisconnect.addListener(() => {
     const error = new Error('background port disconnected')
+    authorityFailed = true
+    settleAuthorityReady()
     for (const pending of handshakePending.values()) pending.reject(error)
     handshakePending.clear()
     if (controlPending) {
@@ -172,7 +184,7 @@
    * Marks the current tab as using WebHID so its page action becomes visible.
    * @returns {void}
    */
-  function markPageActionUsed(origin = window.location.origin) {
+  function markPageActionUsed(origin = authorityOrigin) {
     if (pageActionMarked || settingsForOrigin(origin).hidePageAction) return
     pageActionMarked = true
     sendBackgroundRequest({ action: 'showPageAction' }).catch(() => {
@@ -282,7 +294,7 @@
   frameContext = acceptBootstrapPort(
     pagePort,
     window,
-    window.location.origin,
+    authorityOrigin || '',
     browserFrameIdentity(window)
   )
 
@@ -577,7 +589,7 @@
   /** @type {import("./types.js").SettingsStore} */
   const settings = createSettingsStore(webhid.import('GLOBAL_DEFAULTS'))
   /** @type {Map<string, import("./types.js").SettingsStore>} */
-  const settingsByOrigin = new Map([[window.location.origin, settings]])
+  const settingsByOrigin = new Map()
   /** @type {Map<string, Promise<import("./types.js").SettingsStore>>} */
   const settingsLoads = new Map()
   /**
@@ -611,7 +623,31 @@
     settingsLoads.set(origin, load)
     return load
   }
-  installSettingsListeners(window.location.origin, settings)
+  /** @returns {void} */
+  function settleAuthorityReady() {
+    if (!resolveAuthorityReady) return
+    resolveAuthorityReady()
+    resolveAuthorityReady = null
+  }
+  /**
+   * Applies browser-authenticated endpoint metadata before origin-sensitive work.
+   * @param {object} metadata
+   * @returns {void}
+   */
+  function initializeAuthorityMetadata(metadata) {
+    if (authorityOrigin || !metadata || typeof metadata.origin !== 'string' || !metadata.origin)
+      return
+    authorityOrigin = metadata.origin
+    if (frameContext) {
+      frameContext.origin = authorityOrigin
+      if (Number.isInteger(metadata.frameId)) frameContext.frameId = metadata.frameId
+      if (typeof metadata.documentId === 'string' && metadata.documentId)
+        frameContext.documentId = metadata.documentId
+    }
+    settingsByOrigin.set(authorityOrigin, settings)
+    installSettingsListeners(authorityOrigin, settings)
+    settleAuthorityReady()
+  }
   /** @type {Map<string, number>} */
   const spawnGen = new Map()
   /**
@@ -1399,25 +1435,30 @@
   }
 
   ;(async () => {
+    let resp = null
     try {
-      const resp = await sendHandshakeRequest()
-      if (http.isOk(resp.s) && resp.w) {
-        wsPort = resp.w
-        wsNonce = resp.N || null
-        wtPort = resp.W || null
-        wtCertHash = resp.H || null
-        if (!wsNonce) {
-          logger.warn(
-            'handshake: daemon did not send ws_nonce (old version?); ' +
-              'WS data plane will fall back to NM'
-          )
-        }
-        await loadSettingsForOrigin(window.location.origin)
-        loadAllowedDeviceIds(window.location.origin)
-      }
+      resp = await sendHandshakeRequest()
     } catch (e) {
       logger.warn('handshake failed:', e.message)
     }
+    await authorityReady
+    if (!authorityOrigin || authorityFailed) {
+      logger.warn('endpoint authority metadata unavailable')
+      return
+    }
+    if (!http.isOk(resp && resp.s) || !resp.w) return
+    wsPort = resp.w
+    wsNonce = resp.N || null
+    wtPort = resp.W || null
+    wtCertHash = resp.H || null
+    if (!wsNonce) {
+      logger.warn(
+        'handshake: daemon did not send ws_nonce (old version?); ' +
+          'WS data plane will fall back to NM'
+      )
+    }
+    await loadSettingsForOrigin(authorityOrigin)
+    loadAllowedDeviceIds(authorityOrigin)
   })()
 
   /**
@@ -1611,7 +1652,7 @@
    */
   function getRequestOrigin(data) {
     const port = requestPortMap.get(data.id)
-    return frameContextForPort(port)?.origin || window.location.origin
+    return frameContextForPort(port)?.origin || authorityOrigin
   }
 
   /**
@@ -1888,7 +1929,7 @@
     const filters = payload.filters || []
     const exclusionFilters = payload.exclusionFilters || []
     const context = frameContextForPort(requestPort)
-    const origin = context ? context.origin : window.location.origin
+    const origin = context ? context.origin : authorityOrigin
     const originSettings = await loadSettingsForOrigin(origin)
     const pickerMode =
       isChromium && originSettings.devicePickerMode === 'pageAction'
@@ -2252,11 +2293,16 @@
    */
   async function handleRequest(data, ports, _source, requestPort) {
     if (!data || data.id === undefined) return
+    await authorityReady
+    if (authorityFailed || !authorityOrigin) {
+      replyToPage({ type: 'response', id: data.id, result: { s: 503 } })
+      return
+    }
 
     logger.debug('req action=' + data.action + ' id=' + data.id)
     const requestContext = frameContextForPort(requestPort)
     if (PAGE_ACTION_API_ACTIONS.has(data.action)) {
-      markPageActionUsed(requestContext ? requestContext.origin : window.location.origin)
+      markPageActionUsed(requestContext ? requestContext.origin : authorityOrigin)
     }
 
     const handler = REQUEST_HANDLERS[data.action]
@@ -2734,15 +2780,15 @@
       if (!parsed) continue
       if (parsed.scope === 'global') {
         for (const store of settingsByOrigin.values()) store.set({ [parsed.name]: change.newValue })
-      } else {
-        settingsForOrigin(parsed.origin).set({ [parsed.name]: change.newValue })
+      } else if (authorityOrigin && parsed.origin === authorityOrigin) {
+        settingsForOrigin(authorityOrigin).set({ [parsed.name]: change.newValue })
       }
     }
   })
 
   browser.runtime.onMessage.addListener((message) => {
     if (message.action === 'allowedDevicesChanged' && Array.isArray(message.deviceIds)) {
-      const origin = message.origin || window.location.origin
+      const origin = message.origin || authorityOrigin
       allowedByOrigin.set(origin, new Set(message.deviceIds))
       loadedOrigins.add(origin)
       flushAllowedDeviceIdsQueue(origin)
