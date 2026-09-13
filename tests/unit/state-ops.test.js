@@ -275,6 +275,57 @@ test('physical ownership reset removes every session for one device', () => {
   assert.equal(ops.isFrameLifetimeActive(11, 'frame-a'), true)
   assert.equal(ops.isFrameLifetimeActive(11, 'frame-b'), true)
 })
+test('tab aggregation spans exact frame endpoints', () => {
+  const { ops } = loadStateOps()
+  const topPort = {}
+  const childPort = {}
+  ops.registerFrameLifetime(11, 'frame-top')
+  ops.registerFrameLifetime(11, 'frame-child')
+  ops.registerDeviceSession(7, 'session-top', {
+    tabId: 11,
+    origin: 'https://a.test',
+    frameKey: 'frame-top',
+    port: topPort
+  })
+  ops.registerDeviceSession(7, 'session-child', {
+    tabId: 11,
+    origin: 'https://a.test',
+    frameKey: 'frame-child',
+    port: childPort
+  })
+  ops.setDeviceSessionPlane(7, 'session-top', topPort, {
+    plane: 'nm',
+    mode: null,
+    generation: 1,
+    ready: true
+  })
+  ops.setDeviceSessionPlane(7, 'session-child', childPort, {
+    plane: 'ws',
+    mode: 'worker',
+    generation: 2,
+    ready: true
+  })
+
+  assert.equal(JSON.stringify(ops.collectOpenDeviceIdsForTab(11)), JSON.stringify(['7']))
+  assert.equal(
+    JSON.stringify(ops.collectOpenDeviceIdsForTab(11, 'https://a.test')),
+    JSON.stringify(['7'])
+  )
+  assert.equal(
+    JSON.stringify(ops.collectDevicePlaneStatuses(11, 'https://a.test')),
+    JSON.stringify([
+      { deviceId: 7, token: 'session-top', plane: 'nm', mode: null, generation: 1, ready: true },
+      {
+        deviceId: 7,
+        token: 'session-child',
+        plane: 'ws',
+        mode: 'worker',
+        generation: 2,
+        ready: true
+      }
+    ])
+  )
+})
 test('exact endpoint cleanup cannot retire a replacement lifetime', async () => {
   const { ops, deviceSessions, deviceTabMap } = loadStateOps()
   ops.registerFrameLifetime(11, 'endpoint-old')

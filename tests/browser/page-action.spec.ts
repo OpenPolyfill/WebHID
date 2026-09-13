@@ -165,40 +165,35 @@ test.describe('extension action surfaces', () => {
     const activeOrigin = new URL(pageUrl('/')).origin
     const selectedOrigin = `${activeOrigin}-selected`
     await sharedPage.goto(pageUrl('/test-page.html'), { waitUntil: 'domcontentloaded' })
-    await page.addInitScript((origin) => {
-      const calls: Array<{ action: string; origin: unknown }> = []
-      Object.defineProperty(globalThis, '__popupStatusCalls', { value: calls })
-      const runtimeSendMessage = browser.runtime.sendMessage as unknown as (
-        message: unknown
-      ) => Promise<unknown>
-      const tabsSendMessage = browser.tabs.sendMessage as unknown as (
-        tabId: number,
-        message: unknown
-      ) => Promise<unknown>
-      browser.runtime.sendMessage = async (message) => {
-        const request = message as { action?: unknown }
-        if (request.action === 'getFrameOrigins')
-          return { origins: [origin.active, origin.selected] }
-        if (request.action === 'getBackendStatus')
-          return { nmConnected: true, daemonReachable: true, hidPermission: 0 }
-        if (request.action === 'getPairedDevices') return { success: true, hashes: ['1'] }
-        return runtimeSendMessage(message)
-      }
-      browser.tabs.sendMessage = async (tabId, message) => {
-        const request = message as { action?: unknown; origin?: unknown }
-        const action = typeof request.action === 'string' ? request.action : ''
-        if (action === 'getDataPlaneStatus' || action === 'getOpenDeviceIds')
-          calls.push({ action, origin: request.origin })
-        if (action === 'getDataPlaneStatus') {
-          return request.origin === origin.selected
-            ? { planes: [{ deviceId: '1', plane: 'ws', mode: 'worker' }], defaultPlane: 'nm' }
-            : { planes: [], defaultPlane: 'nm' }
+    await page.addInitScript(
+      (origin) => {
+        const calls: Array<{ action: string; origin: unknown }> = []
+        Object.defineProperty(globalThis, '__popupStatusCalls', { value: calls })
+        const runtimeSendMessage = browser.runtime.sendMessage as unknown as (
+          message: unknown
+        ) => Promise<unknown>
+        browser.runtime.sendMessage = async (message) => {
+          const request = message as { action?: unknown; origin?: unknown }
+          if (request.action === 'getFrameOrigins')
+            return { origins: [origin.active, origin.selected] }
+          if (request.action === 'getBackendStatus')
+            return { nmConnected: true, daemonReachable: true, hidPermission: 0 }
+          if (request.action === 'getPairedDevices') return { success: true, hashes: ['1'] }
+          if (request.action === 'getDataPlaneStatus') {
+            calls.push({ action: 'getDataPlaneStatus', origin: request.origin })
+            return request.origin === origin.selected
+              ? { planes: [{ deviceId: '1', plane: 'ws', mode: 'worker' }], defaultPlane: 'nm' }
+              : { planes: [], defaultPlane: 'nm' }
+          }
+          if (request.action === 'getOpenDeviceIds') {
+            calls.push({ action: 'getOpenDeviceIds', origin: request.origin })
+            return request.origin === origin.selected ? { ids: ['1'] } : { ids: [] }
+          }
+          return runtimeSendMessage(message)
         }
-        if (action === 'getOpenDeviceIds')
-          return request.origin === origin.selected ? { ids: ['1'] } : { ids: [] }
-        return tabsSendMessage(tabId, message)
-      }
-    }, { active: activeOrigin, selected: selectedOrigin })
+      },
+      { active: activeOrigin, selected: selectedOrigin }
+    )
     const popupUrl = await backgroundPage.evaluate(() =>
       browser.runtime.getURL('js/internal/pages/popup/index.html')
     )
@@ -232,9 +227,7 @@ test.describe('extension action surfaces', () => {
     )
     const calls = await page.evaluate(() => {
       const value = (globalThis as unknown as { __popupStatusCalls?: unknown }).__popupStatusCalls
-      return Array.isArray(value)
-        ? (value as Array<{ action: string; origin: unknown }>)
-        : []
+      return Array.isArray(value) ? (value as Array<{ action: string; origin: unknown }>) : []
     })
     const afterSelection = calls.slice(before)
     expect(afterSelection).toEqual(

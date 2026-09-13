@@ -272,6 +272,7 @@ test.describe.serial('Public input report fan-out', () => {
           value: () => reports
         })
       })
+      await waitForPlaneCount(backgroundPage, 2)
       sendInput(vendorDevice, 1, PACKET)
       await sharedPage.waitForFunction(
         () => (window as typeof window & { __getReports?: () => number }).__getReports?.() === 1,
