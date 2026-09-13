@@ -5,6 +5,7 @@
   const logger = webhid.import('logger')
   const isChromium = webhid.import('isChromium')
   const decodeDeviceCollections = webhid.import('decodeDeviceCollections')
+  const persistentSiteScope = webhid.import('persistentSiteScope')
   const {
     deviceCache,
     pendingPicker,
@@ -66,6 +67,63 @@
 
   let nextEndpointId = 0
   /**
+   * Returns the registered top-frame endpoint for a tab.
+   * @param {number} tabId
+   * @returns {object|null}
+   */
+  function topEndpointForTab(tabId) {
+    for (const endpoint of frameEndpoints.values()) {
+      if (endpoint.tabId === tabId && endpoint.frameId === 0) return endpoint
+    }
+    return null
+  }
+  /**
+   * Sends browser-authenticated endpoint metadata to its exact bridge.
+   * @param {object} endpoint
+   * @returns {void}
+   */
+  function sendEndpointMetadata(endpoint) {
+    try {
+      endpoint.port.postMessage({
+        action: 'endpointMetadata',
+        endpointId: endpoint.id,
+        tabId: endpoint.tabId,
+        frameId: endpoint.frameId,
+        documentId: endpoint.documentId,
+        origin: endpoint.origin,
+        url: endpoint.url,
+        persistentOrigin: endpoint.persistentOrigin
+      })
+    } catch {
+      void 0
+    }
+  }
+  /**
+   * Refreshes persistence partitions after a top-frame endpoint changes.
+   * @param {number} tabId
+   * @returns {void}
+   */
+  function refreshEndpointPersistence(tabId) {
+    const top = topEndpointForTab(tabId)
+    for (const endpoint of frameEndpoints.values()) {
+      if (endpoint.tabId !== tabId) continue
+      const persistentOrigin = persistentSiteScope(endpoint.origin, endpoint.url, top?.origin)
+      if (endpoint.persistentOrigin === persistentOrigin) continue
+      endpoint.persistentOrigin = persistentOrigin
+      sendEndpointMetadata(endpoint)
+    }
+  }
+  /**
+   * Selects the trusted persistence partition for one request.
+   * @param {object} request
+   * @returns {string|null}
+   */
+  function persistenceOriginForRequest(request) {
+    return Object.prototype.hasOwnProperty.call(request, 'persistentOrigin')
+      ? request.persistentOrigin
+      : request.origin || null
+  }
+  /**
    * Registers one browser-owned exact frame endpoint.
    * @param {object} port
    * @returns {object|null}
@@ -87,6 +145,7 @@
       documentId,
       origin,
       url,
+      persistentOrigin: undefined,
       frameKey: 'endpoint-' + nextEndpointId
     }
     frameEndpoints.set(port, endpoint)
@@ -94,19 +153,7 @@
       frameEndpoints.delete(port)
       return null
     }
-    try {
-      port.postMessage({
-        action: 'endpointMetadata',
-        endpointId: endpoint.id,
-        tabId: endpoint.tabId,
-        frameId: endpoint.frameId,
-        documentId: endpoint.documentId,
-        origin: endpoint.origin,
-        url: endpoint.url
-      })
-    } catch {
-      void 0
-    }
+    refreshEndpointPersistence(tabId)
     return endpoint
   }
   /**
@@ -197,27 +244,32 @@
   }
 
   /**
-   * @param {string} origin
+   * @param {string} authorityOrigin
+   * @param {string|null} persistentOrigin
    * @param {number[]} deviceIds
    * @returns {Promise<void>}
    */
-  async function notifyAllowedDevicesChanged(origin, deviceIds) {
-    postToOriginEndpoints(origin, { action: 'allowedDevicesChanged', origin, deviceIds })
+  async function notifyAllowedDevicesChanged(authorityOrigin, persistentOrigin, deviceIds) {
+    postToOriginEndpoints(authorityOrigin, {
+      action: 'allowedDevicesChanged',
+      origin: authorityOrigin,
+      persistentOrigin,
+      deviceIds
+    })
   }
 
   /**
-   * Unpairs the devices in `toRevoke` from `origin`, closes them in the
-   * daemon, deletes their grant groups, and tells matching tabs.
-   * @param {string} origin
+   * @param {string|null} persistentOrigin
+   * @param {string} authorityOrigin
    * @param {Set<number>} toRevoke
    * @param {object[]} memberGroups
    * @returns {Promise<void>}
    */
-  async function revokeDevices(origin, toRevoke, memberGroups) {
+  async function revokeDevices(persistentOrigin, authorityOrigin, toRevoke, memberGroups) {
     for (const deviceId of toRevoke) {
-      await removeAllowedDevice(origin, deviceId)
+      await removeAllowedDevice(persistentOrigin, deviceId)
       removeDeviceInfo(deviceId)
-      const tokens = collectDeviceSessionsForOrigin(deviceId, origin)
+      const tokens = collectDeviceSessionsForOrigin(deviceId, persistentOrigin)
       for (const token of tokens) {
         const owner = getDeviceSessionOwner(deviceId, token)
         if (owner) unregisterDeviceTab(deviceId, owner.tabId)
@@ -227,14 +279,14 @@
       }
     }
     await deleteGrantGroups(memberGroups.map((g) => g.id))
-    const deviceIds = await getAllowedDevices(origin)
+    const deviceIds = await getAllowedDevices(persistentOrigin)
     for (const deviceId of toRevoke) {
-      postToOriginEndpoints(origin, {
+      postToOriginEndpoints(authorityOrigin, {
         action: 'webhidDeviceEvent',
-        event: { eventType: 'revoked', deviceId, origin }
+        event: { eventType: 'revoked', deviceId, origin: authorityOrigin }
       })
     }
-    postToOriginEndpoints(origin, { action: 'allowedDevicesChanged', origin, deviceIds })
+    notifyAllowedDevicesChanged(authorityOrigin, persistentOrigin, deviceIds)
   }
 
   /**
@@ -269,7 +321,7 @@
    * @returns {boolean}
    */
   function handleEnumeratePaired(request, sender, sendResponse) {
-    const origin = request.origin || ''
+    const origin = persistenceOriginForRequest(request)
     NativeMessaging.enumerateDevices()
       .then(async (response) => {
         if (http.isOk(response.s) && response.D) {
@@ -336,11 +388,12 @@
   function handleRecordGrantGroup(request, sender, sendResponse) {
     ;(async () => {
       try {
-        if (!request.origin || !Array.isArray(request.deviceIds)) {
+        const origin = persistenceOriginForRequest(request)
+        if (!origin || !Array.isArray(request.deviceIds)) {
           sendResponse({ success: false })
           return
         }
-        await recordGrantGroup(request.origin, request.deviceIds)
+        await recordGrantGroup(origin, request.deviceIds)
         sendResponse({ success: true })
       } catch (e) {
         sendResponse({ success: false, error: e.message })
@@ -358,7 +411,7 @@
   function handleGetGrantGroups(request, sender, sendResponse) {
     ;(async () => {
       try {
-        const groups = await getGrantGroupsForOrigin(request.origin)
+        const groups = await getGrantGroupsForOrigin(persistenceOriginForRequest(request))
         sendResponse({ success: true, groups })
       } catch {
         sendResponse({ success: false, groups: [] })
@@ -414,12 +467,14 @@
       sendResponse({ s: 403 })
       return true
     }
-    const { tabId, origin, frameKey } = endpoint
-    if (!isFrameLifetimeActive(tabId, frameKey)) {
-      sendResponse({ s: 503 })
+    const { tabId, frameKey } = endpoint
+    const authorityOrigin = endpoint.origin
+    const persistentOrigin = endpoint.persistentOrigin
+    if (!persistentOrigin || !isFrameLifetimeActive(tabId, frameKey)) {
+      sendResponse({ s: 403 })
       return true
     }
-    getAllowedDevices(origin)
+    getAllowedDevices(persistentOrigin)
       .then((deviceIds) => {
         if (!deviceIds.includes(request.deviceId)) {
           sendResponse({ s: 403 })
@@ -429,7 +484,9 @@
           .then(async (response) => {
             if (typeof response.P === 'number') lastHidPermission = response.P
             if (http.isOk(response.s) && response.i) {
-              const stillAllowed = (await getAllowedDevices(origin)).includes(request.deviceId)
+              const stillAllowed = (await getAllowedDevices(persistentOrigin)).includes(
+                request.deviceId
+              )
               const ownerStillAlive = isFrameLifetimeActive(tabId, frameKey)
               if (!stillAllowed || !ownerStillAlive) {
                 if (response.t)
@@ -445,7 +502,8 @@
                   tabId,
                   frameId: endpoint.frameId,
                   documentId: endpoint.documentId,
-                  origin,
+                  origin: authorityOrigin,
+                  persistentOrigin,
                   frameKey,
                   port,
                   clientKey: request.clientKey
@@ -565,8 +623,9 @@
   function handleRevokeDevice(request, sender, sendResponse) {
     ;(async () => {
       try {
-        const origin = request.origin
-        if (!origin) {
+        const persistentOrigin = persistenceOriginForRequest(request)
+        const authorityOrigin = request.origin || ''
+        if (!persistentOrigin || !authorityOrigin) {
           sendResponse({ success: false, error: 'no origin' })
           return
         }
@@ -574,14 +633,14 @@
           Array.isArray(request.deviceIds) && request.deviceIds.length
             ? request.deviceIds.map((id) => Number(id))
             : [Number(request.deviceId)]
-        const groups = await getGrantGroupsForOrigin(origin)
+        const groups = await getGrantGroupsForOrigin(persistentOrigin)
         const memberGroups = groups.filter((g) => g.deviceIds.some((id) => targetIds.includes(id)))
         /** @type {Set<number>} */
         const toRevoke = new Set(targetIds)
         for (const g of memberGroups) {
           for (const id of g.deviceIds) toRevoke.add(Number(id))
         }
-        await revokeDevices(origin, toRevoke, memberGroups)
+        await revokeDevices(persistentOrigin, authorityOrigin, toRevoke, memberGroups)
         sendResponse({ success: true })
       } catch (e) {
         sendResponse({ success: false, error: e.message })
@@ -687,7 +746,7 @@
   function handleGetPairedDevices(request, sender, sendResponse) {
     ;(async () => {
       try {
-        const deviceIds = await getAllowedDevices(request.origin)
+        const deviceIds = await getAllowedDevices(persistenceOriginForRequest(request))
         sendResponse({ success: true, hashes: deviceIds })
       } catch (e) {
         sendResponse({ success: false, error: e.message, hashes: [] })
@@ -705,9 +764,14 @@
   function handlePairDevice(request, sender, sendResponse) {
     ;(async () => {
       try {
-        await addAllowedDevice(request.origin, request.device.deviceId)
-        const deviceIds = await getAllowedDevices(request.origin)
-        await notifyAllowedDevicesChanged(request.origin, deviceIds)
+        const origin = persistenceOriginForRequest(request)
+        if (!origin || !request.device) {
+          sendResponse({ success: false, hashes: [] })
+          return
+        }
+        await addAllowedDevice(origin, request.device.deviceId)
+        const deviceIds = await getAllowedDevices(origin)
+        await notifyAllowedDevicesChanged(request.origin, origin, deviceIds)
         sendResponse({ success: true, hashes: deviceIds })
       } catch (e) {
         sendResponse({ success: false, error: e.message, hashes: [] })
@@ -725,14 +789,17 @@
   function handleUnpairDevice(request, sender, sendResponse) {
     ;(async () => {
       try {
+        const origin = persistenceOriginForRequest(request)
+        if (!origin) {
+          sendResponse({ success: false, hashes: [] })
+          return
+        }
         if (request.deviceId) {
-          await removeAllowedDevice(request.origin, request.deviceId)
+          await removeAllowedDevice(origin, request.deviceId)
           removeDeviceInfo(request.deviceId)
         }
-        const deviceIds = await getAllowedDevices(request.origin)
-        if (request.deviceId) {
-          await notifyAllowedDevicesChanged(request.origin, deviceIds)
-        }
+        const deviceIds = await getAllowedDevices(origin)
+        if (request.deviceId) await notifyAllowedDevicesChanged(request.origin, origin, deviceIds)
         sendResponse({ success: true, hashes: deviceIds })
       } catch (e) {
         sendResponse({ success: false, error: e.message })
@@ -750,7 +817,7 @@
   function handleGetAllowedDevices(request, sender, sendResponse) {
     ;(async () => {
       try {
-        const deviceIds = await getAllowedDevices(request.origin)
+        const deviceIds = await getAllowedDevices(persistenceOriginForRequest(request))
         sendResponse({ deviceIds })
       } catch {
         sendResponse({ deviceIds: [] })
@@ -980,6 +1047,7 @@
       .filter((endpoint) => endpoint.tabId === tabId)
       .sort((a, b) => a.frameId - b.frameId)
     for (const endpoint of endpoints) {
+      if (!/^https?:$/.test(new URL(endpoint.origin).protocol)) continue
       if (seen.has(endpoint.origin)) continue
       seen.add(endpoint.origin)
       origins.push(endpoint.origin)
@@ -1441,7 +1509,9 @@
           pending.resolve(request.delegated === true)
           return
         }
-        const effectiveRequest = endpoint ? { ...request, origin: endpoint.origin } : request
+        const effectiveRequest = endpoint
+          ? { ...request, origin: endpoint.origin, persistentOrigin: endpoint.persistentOrigin }
+          : request
         const handler = HANDLERS[effectiveRequest.action]
         if (!handler) return
         let responded = false
@@ -1471,6 +1541,7 @@
         port.onDisconnect.addListener(() => {
           if (frameEndpoints.get(port) !== endpoint) return
           frameEndpoints.delete(port)
+          refreshEndpointPersistence(endpoint.tabId)
           for (const [tabId, request] of pendingPicker) {
             if (request.port !== port && request.uiPort !== port) continue
             pendingPicker.delete(tabId)

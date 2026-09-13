@@ -240,6 +240,35 @@
     if (parts.length === 3) return { scope: 'site', origin: parts[1], name: parts[2] }
     return null
   }
+  /**
+   * Returns whether a serialized origin can be a persistent site scope.
+   * @param {string} origin
+   * @returns {boolean}
+   */
+  function isPersistentSiteOrigin(origin) {
+    return typeof origin === 'string' && origin.length > 0 && origin !== 'null'
+  }
+  /**
+   * Derives the persistent partition for one browser-authenticated document.
+   * @param {string} authorityOrigin
+   * @param {string} documentUrl
+   * @param {string|null|undefined} topAuthorityOrigin
+   * @returns {string|null}
+   */
+  function persistentSiteScope(authorityOrigin, documentUrl, topAuthorityOrigin) {
+    if (isPersistentSiteOrigin(authorityOrigin)) return authorityOrigin
+    if (authorityOrigin !== 'null') return null
+    let sourceOrigin = ''
+    try {
+      sourceOrigin = new URL(documentUrl).origin
+    } catch {
+      void 0
+    }
+    if (!sourceOrigin || !topAuthorityOrigin || topAuthorityOrigin === 'null') return null
+    return (
+      'opaque|' + encodeURIComponent(topAuthorityOrigin) + '|' + encodeURIComponent(sourceOrigin)
+    )
+  }
 
   /**
    * Loads all global settings from storage, applying defaults for missing keys.
@@ -265,6 +294,7 @@
    * @returns {Promise<object>}
    */
   async function loadSiteSettings(origin) {
+    if (!isPersistentSiteOrigin(origin)) return {}
     const keys = []
     for (let i = 0; i < SITE_SETTING_NAMES.length; i++) {
       arrayOps.push(keys, siteSettingKey(origin, SITE_SETTING_NAMES[i]))
@@ -286,7 +316,7 @@
    */
   async function loadEffectiveSettings(origin) {
     const global = await loadGlobalSettings()
-    if (!origin) return global
+    if (!isPersistentSiteOrigin(origin)) return global
     const site = await loadSiteSettings(origin)
     const entries = object.entries(site)
     for (let i = 0; i < entries.length; i++) {
@@ -316,10 +346,13 @@
    * @returns {Promise<void>}
    */
   async function saveSiteSetting(origin, name, value) {
+    if (!isPersistentSiteOrigin(origin)) return
     await browser.storage.local.set({ [siteSettingKey(origin, name)]: value })
   }
 
   webhid.export('SETTING_NAMES', SETTING_NAMES)
+  webhid.export('isPersistentSiteOrigin', isPersistentSiteOrigin)
+  webhid.export('persistentSiteScope', persistentSiteScope)
   webhid.export('globalSettingKey', globalSettingKey)
   webhid.export('siteSettingKey', siteSettingKey)
   webhid.export('parseSettingsKey', parseSettingsKey)

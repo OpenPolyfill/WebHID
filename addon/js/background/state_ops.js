@@ -151,7 +151,7 @@
    * Records one daemon session token with its browser-owned endpoint.
    * @param {number} deviceId
    * @param {string} token
-   * @param {{tabId: number, origin: string, frameKey?: string, clientKey?: string, frameId?: number, documentId?: string, port?: object}} owner
+   * @param {{tabId: number, origin: string, persistentOrigin?: string|null, frameKey?: string, clientKey?: string, frameId?: number, documentId?: string, port?: object}} owner
    * @returns {boolean}
    */
   function registerDeviceSession(deviceId, token, owner) {
@@ -172,6 +172,7 @@
       frameId: owner.frameId,
       documentId: owner.documentId || null,
       origin: owner.origin,
+      persistentOrigin: owner.persistentOrigin || null,
       frameKey,
       clientKey: owner.clientKey || '',
       port: owner.port || null
@@ -218,7 +219,7 @@
     if (!byToken || !origin) return []
     const tokens = []
     for (const [token, owner] of byToken) {
-      if (owner.origin === origin) tokens.push(token)
+      if ((owner.persistentOrigin || owner.origin) === origin) tokens.push(token)
     }
     return tokens
   }

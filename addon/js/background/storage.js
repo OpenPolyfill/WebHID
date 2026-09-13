@@ -1,6 +1,14 @@
 ;(function () {
   const logger = webhid.import('logger')
   const { deviceCache } = webhid.import('bgState')
+  /**
+   * Persistent HID grants require a non-opaque security origin.
+   * @param {string} origin
+   * @returns {boolean}
+   */
+  function isPersistentGrantOrigin(origin) {
+    return typeof origin === 'string' && origin.length > 0 && origin !== 'null'
+  }
 
   const DB_NAME = 'webhid-store'
   const DB_VERSION = 2
@@ -131,6 +139,7 @@
    * @returns {Promise<number[]>}
    */
   async function getAllowedDevices(origin) {
+    if (!isPersistentGrantOrigin(origin)) return []
     const db = await openDb()
     const tx = db.transaction('origins', 'readonly')
     const range = IDBKeyRange.bound([origin, -Infinity], [origin, Infinity])
@@ -148,6 +157,7 @@
    * @returns {Promise<void>}
    */
   async function addAllowedDevice(origin, deviceId) {
+    if (!isPersistentGrantOrigin(origin)) return
     const db = await openDb()
     const tx = db.transaction('origins', 'readwrite')
     tx.objectStore('origins').put({ origin, deviceId: Number(deviceId) })
@@ -161,6 +171,7 @@
    * @returns {Promise<void>}
    */
   async function removeAllowedDevice(origin, deviceId) {
+    if (!isPersistentGrantOrigin(origin)) return
     const db = await openDb()
     const tx = db.transaction('origins', 'readwrite')
     tx.objectStore('origins').delete([origin, Number(deviceId)])
@@ -176,7 +187,8 @@
    * @returns {Promise<void>}
    */
   async function recordGrantGroup(origin, deviceIds) {
-    if (!origin || !Array.isArray(deviceIds) || deviceIds.length < 2) return
+    if (!isPersistentGrantOrigin(origin) || !Array.isArray(deviceIds) || deviceIds.length < 2)
+      return
     try {
       const db = await openDb()
       const tx = db.transaction('grantGroups', 'readwrite')
@@ -197,6 +209,7 @@
    * @returns {Promise<Array<{id: number, origin: string, deviceIds: number[]}>>}
    */
   async function getGrantGroupsForOrigin(origin) {
+    if (!isPersistentGrantOrigin(origin)) return []
     try {
       const db = await openDb()
       const tx = db.transaction('grantGroups', 'readonly')
@@ -243,6 +256,7 @@
       })
       const map = new Map()
       for (const row of rows) {
+        if (!isPersistentGrantOrigin(row.origin)) continue
         if (!map.has(row.origin)) map.set(row.origin, [])
         map.get(row.origin).push(row.deviceId)
       }
