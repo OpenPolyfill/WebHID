@@ -239,8 +239,7 @@
   function postToPersistentOriginEndpoints(persistentOrigin, message) {
     if (!persistentOrigin) return
     for (const endpoint of frameEndpoints.values()) {
-      if (endpoint.persistentOrigin === persistentOrigin)
-        postToContentPort(endpoint.port, message)
+      if (endpoint.persistentOrigin === persistentOrigin) postToContentPort(endpoint.port, message)
     }
   }
   /**
@@ -1056,21 +1055,38 @@
   function handleGetFrameOrigins(request, sender, sendResponse) {
     const tabId = request.tabId != null ? request.tabId : sender.tab ? sender.tab.id : undefined
     if (tabId == null) {
-      sendResponse({ origins: [] })
+      sendResponse({ origins: [], targets: [] })
       return false
     }
     const origins = []
+    const targets = []
     const seen = new Set()
     const endpoints = [...frameEndpoints.values()]
       .filter((endpoint) => endpoint.tabId === tabId)
       .sort((a, b) => a.frameId - b.frameId)
     for (const endpoint of endpoints) {
-      if (!(endpoint.origin.startsWith('http:') || endpoint.origin.startsWith('https:'))) continue
-      if (seen.has(endpoint.origin)) continue
-      seen.add(endpoint.origin)
-      origins.push(endpoint.origin)
+      const isHttp = endpoint.origin.startsWith('http:') || endpoint.origin.startsWith('https:')
+      if (isHttp) {
+        if (seen.has(endpoint.origin)) continue
+        seen.add(endpoint.origin)
+        origins.push(endpoint.origin)
+        targets.push({
+          kind: 'origin',
+          label: endpoint.origin,
+          origin: endpoint.origin,
+          persistentOrigin: endpoint.persistentOrigin
+        })
+      } else if (endpoint.persistentOrigin && !seen.has(endpoint.persistentOrigin)) {
+        seen.add(endpoint.persistentOrigin)
+        targets.push({
+          kind: 'opaque',
+          label: 'Opaque iframe',
+          origin: endpoint.origin,
+          persistentOrigin: endpoint.persistentOrigin
+        })
+      }
     }
-    sendResponse({ origins })
+    sendResponse({ origins, targets })
     return false
   }
 
