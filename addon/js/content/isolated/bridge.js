@@ -29,6 +29,7 @@
   const handshakePending = new Map()
   const pickerResultHandlers = new Map()
   let authorityOrigin = ''
+  let persistentOrigin = null
   let authorityFailed = false
   let resolveAuthorityReady = null
   const authorityReady = new Promise((resolve) => {
@@ -111,7 +112,7 @@
       return
     }
     if (message && message.action === 'allowedDevicesChanged') {
-      const origin = message.origin || authorityOrigin
+      const origin = message.persistentOrigin || message.origin || authorityOrigin
       allowedByOrigin.set(origin, new Set(message.deviceIds || []))
       loadedOrigins.add(origin)
       flushAllowedDeviceIdsQueue(origin)
@@ -200,6 +201,7 @@
    * @property {MessagePort} port
    * @property {Window} source
    * @property {string} origin
+   * @property {string|null} persistentOrigin
    * @property {number|null} frameId
    * @property {string|null} documentId
    * @property {boolean} destroyed
@@ -282,6 +284,7 @@
       origin,
       frameId: identity.frameId,
       documentId: identity.documentId,
+      persistentOrigin: null,
       destroyed: false,
       sessions: new Map()
     }
@@ -593,13 +596,18 @@
   /** @type {Map<string, Promise<import("./types.js").SettingsStore>>} */
   const settingsLoads = new Map()
   /**
+   * Maps authority identity to its persistent settings partition.
    * @param {string} origin
-   * @returns {import("./types.js").SettingsStore}
+   * @returns {string}
    */
+  function settingsScopeForOrigin(origin) {
+    return origin === authorityOrigin ? persistentOrigin || '' : origin
+  }
   function settingsForOrigin(origin) {
-    if (settingsByOrigin.has(origin)) return settingsByOrigin.get(origin)
+    const scope = settingsScopeForOrigin(origin)
+    if (settingsByOrigin.has(scope)) return settingsByOrigin.get(scope)
     const store = createSettingsStore(webhid.import('GLOBAL_DEFAULTS'))
-    settingsByOrigin.set(origin, store)
+    settingsByOrigin.set(scope, store)
     installSettingsListeners(origin, store)
     return store
   }
@@ -608,19 +616,20 @@
    * @returns {Promise<import("./types.js").SettingsStore>}
    */
   function loadSettingsForOrigin(origin) {
-    const existing = settingsLoads.get(origin)
+    const scope = settingsScopeForOrigin(origin)
+    const existing = settingsLoads.get(scope)
     if (existing) return existing
-    const load = loadEffectiveSettings(origin)
+    const load = loadEffectiveSettings(scope)
       .then((values) => {
         const store = settingsForOrigin(origin)
         store.set(values)
         return store
       })
       .catch((error) => {
-        logger.warn('load settings failed for', origin, ':', error.message)
+        logger.warn('load settings failed for', scope, ':', error.message)
         return settingsForOrigin(origin)
       })
-    settingsLoads.set(origin, load)
+    settingsLoads.set(scope, load)
     return load
   }
   /** @returns {void} */
@@ -635,17 +644,36 @@
    * @returns {void}
    */
   function initializeAuthorityMetadata(metadata) {
-    if (authorityOrigin || !metadata || typeof metadata.origin !== 'string' || !metadata.origin)
-      return
+    if (!metadata || typeof metadata.origin !== 'string' || !metadata.origin) return
+    if (authorityOrigin && authorityOrigin !== metadata.origin) return
+    const nextPersistentOrigin =
+      typeof metadata.persistentOrigin === 'string' && metadata.persistentOrigin
+        ? metadata.persistentOrigin
+        : null
+    const firstInitialization = !authorityOrigin
+    const previousPersistentOrigin = persistentOrigin
+    const scopeChanged = persistentOrigin !== nextPersistentOrigin
     authorityOrigin = metadata.origin
+    persistentOrigin = nextPersistentOrigin
     if (frameContext) {
       frameContext.origin = authorityOrigin
+      frameContext.persistentOrigin = persistentOrigin
       if (Number.isInteger(metadata.frameId)) frameContext.frameId = metadata.frameId
       if (typeof metadata.documentId === 'string' && metadata.documentId)
         frameContext.documentId = metadata.documentId
     }
-    settingsByOrigin.set(authorityOrigin, settings)
-    installSettingsListeners(authorityOrigin, settings)
+    if (firstInitialization || scopeChanged) {
+      settingsByOrigin.clear()
+      settingsLoads.clear()
+      settingsByOrigin.set(persistentOrigin || '', settings)
+      installSettingsListeners(authorityOrigin, settings)
+      if (scopeChanged) {
+        allowedByOrigin.delete(previousPersistentOrigin || '')
+        loadedOrigins.delete(previousPersistentOrigin || '')
+        loadAllowedDeviceIds(persistentOrigin || '')
+      }
+      if (!firstInitialization) void loadSettingsForOrigin(authorityOrigin)
+    }
     settleAuthorityReady()
   }
   /** @type {Map<string, number>} */
@@ -808,6 +836,14 @@
   /** @type {Map<string, Promise<void>>} */
   const allowedLoads = new Map()
   const allowedDeviceIdsQueue = []
+  /**
+   * Returns whether an origin may own persistent HID grant state.
+   * @param {string} origin
+   * @returns {boolean}
+   */
+  function isPersistentGrantOrigin(origin) {
+    return typeof origin === 'string' && origin.length > 0 && origin !== 'null'
+  }
 
   /**
    * Resolves all queued isDeviceAllowed promises for `origin`.
@@ -824,7 +860,6 @@
       }
     }
   }
-
   /**
    * Checks whether a device is in the allowed set for `origin`, loading that
    * origin lazily when necessary.
@@ -834,6 +869,7 @@
    */
   function isDeviceAllowed(deviceId, origin) {
     if (!origin) return Promise.resolve(false)
+    if (!isPersistentGrantOrigin(origin)) return Promise.resolve(false)
     if (loadedOrigins.has(origin)) {
       return Promise.resolve((allowedByOrigin.get(origin) || new Set()).has(deviceId))
     }
@@ -853,6 +889,12 @@
    * @returns {Promise<void>}
    */
   async function loadAllowedDeviceIds(origin) {
+    if (!isPersistentGrantOrigin(origin)) {
+      allowedByOrigin.set(origin, new Set())
+      loadedOrigins.add(origin)
+      flushAllowedDeviceIdsQueue(origin)
+      return
+    }
     try {
       const resp = await sendBackgroundRequest({
         action: 'getAllowedDevices',
@@ -992,8 +1034,9 @@
       return 'blob'
     }
     let mode = originSettings.workerSpawnMode
-    if (origin) {
-      const site = await loadSiteSettings(origin)
+    const settingsScope = settingsScopeForOrigin(origin)
+    if (settingsScope) {
+      const site = await loadSiteSettings(settingsScope)
       if (site.workerSpawnMode !== undefined) mode = site.workerSpawnMode
     }
     if (mode === 'blob') {
@@ -1457,8 +1500,8 @@
           'WS data plane will fall back to NM'
       )
     }
-    await loadSettingsForOrigin(authorityOrigin)
-    loadAllowedDeviceIds(authorityOrigin)
+    await loadSettingsForOrigin(persistentOrigin || '')
+    loadAllowedDeviceIds(persistentOrigin || '')
   })()
 
   /**
@@ -1652,7 +1695,7 @@
    */
   function getRequestOrigin(data) {
     const port = requestPortMap.get(data.id)
-    return frameContextForPort(port)?.origin || authorityOrigin
+    return frameContextForPort(port)?.persistentOrigin || persistentOrigin || ''
   }
 
   /**
@@ -1733,7 +1776,7 @@
       }
       return
     }
-    const allowed = await isDeviceAllowed(deviceId, context.origin)
+    const allowed = await isDeviceAllowed(deviceId, context.persistentOrigin || '')
     if (!allowed) {
       logger.warn('data-port: not authorized for device', deviceId)
       try {
@@ -1929,7 +1972,7 @@
     const filters = payload.filters || []
     const exclusionFilters = payload.exclusionFilters || []
     const context = frameContextForPort(requestPort)
-    const origin = context ? context.origin : authorityOrigin
+    const origin = context ? context.persistentOrigin || '' : persistentOrigin || ''
     const originSettings = await loadSettingsForOrigin(origin)
     const pickerMode =
       isChromium && originSettings.devicePickerMode === 'pageAction'
@@ -2085,7 +2128,7 @@
         deviceIds: devices.map((device) => device.deviceId)
       }).catch((e) => logger.debug('recordGrantGroup failed', e))
     }
-    await loadAllowedDeviceIds(origin)
+    await loadAllowedDeviceIds(persistentOrigin || '')
   }
 
   /**
@@ -2099,7 +2142,7 @@
     const context = frameContextForPort(requestPort)
     const client = context && clientForPort(context, requestPort)
     const sessions = client && client.sessions
-    const origin = context ? context.origin : getRequestOrigin(data)
+    const origin = context ? context.persistentOrigin || '' : getRequestOrigin(data)
     let nmOpenAttempt = false
     let response = null
     const deviceId = payload && payload.deviceId
@@ -2780,7 +2823,7 @@
       if (!parsed) continue
       if (parsed.scope === 'global') {
         for (const store of settingsByOrigin.values()) store.set({ [parsed.name]: change.newValue })
-      } else if (authorityOrigin && parsed.origin === authorityOrigin) {
+      } else if (persistentOrigin && parsed.origin === persistentOrigin) {
         settingsForOrigin(authorityOrigin).set({ [parsed.name]: change.newValue })
       }
     }
@@ -2788,7 +2831,7 @@
 
   browser.runtime.onMessage.addListener((message) => {
     if (message.action === 'allowedDevicesChanged' && Array.isArray(message.deviceIds)) {
-      const origin = message.origin || authorityOrigin
+      const origin = message.persistentOrigin || message.origin || authorityOrigin
       allowedByOrigin.set(origin, new Set(message.deviceIds))
       loadedOrigins.add(origin)
       flushAllowedDeviceIdsQueue(origin)
