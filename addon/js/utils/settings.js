@@ -218,10 +218,48 @@
       dispose
     }
   }
+  /**
+   * Binds an async settings load to the scope it started for.
+   * @param {(scope: string) => Promise<object>} loadValues
+   * @param {(origin: string) => string} getScope
+   * @param {(origin: string) => object} getStore
+   * @param {() => string} getCurrentOrigin
+   * @param {(error: Error, scope: string) => void} [onError]
+   * @returns {{load: (origin: string) => Promise<object>, clear: () => void}}
+   */
+  function createScopedSettingsLoader(loadValues, getScope, getStore, getCurrentOrigin, onError) {
+    const loads = new Map()
+    function load(origin) {
+      const scope = getScope(origin)
+      const existing = loads.get(scope)
+      if (existing) return existing
+      const promise = Promise.resolve(loadValues(scope))
+        .then((values) => {
+          if (getScope(origin) !== scope) return load(getCurrentOrigin())
+          const store = getStore(origin)
+          store.set(values)
+          return store
+        })
+        .catch((error) => {
+          if (onError) onError(error, scope)
+          if (getScope(origin) !== scope) return load(getCurrentOrigin())
+          return getStore(origin)
+        })
+      loads.set(scope, promise)
+      return promise
+    }
+    return {
+      load,
+      clear() {
+        loads.clear()
+      }
+    }
+  }
 
   webhid.export('GLOBAL_DEFAULTS', GLOBAL_DEFAULTS)
   webhid.export('createSettingsStore', createSettingsStore)
   webhid.export('createSettingsListenerSet', createSettingsListenerSet)
+  webhid.export('createScopedSettingsLoader', createScopedSettingsLoader)
 
   const SETTING_NAMES = object.keys(GLOBAL_DEFAULTS)
 

@@ -63,7 +63,7 @@
   const originList = document.getElementById('origin-list')
 
   /**
-   * @typedef {{kind: string, label: string, origin: string, persistentOrigin: string|null}} SiteTarget
+   * @typedef {{kind: string, label?: string, origin: string, persistentOrigin: string|null}} SiteTarget
    */
   /**
    * Collects addressable settings targets in the active tab.
@@ -110,11 +110,12 @@
    */
   function labelForTarget(target) {
     if (!target) return origin || t('popupNoSite')
-    if (target.kind !== 'opaque' || !target.persistentOrigin) return target.label
+    if (target.kind !== 'opaque' || !target.persistentOrigin)
+      return target.label || target.origin
     const parts = target.persistentOrigin.split('|')
     return parts.length === 3 && parts[0] === 'opaque'
       ? `${parts[2]} (Opaque iframe)`
-      : target.label
+      : target.label || target.origin
   }
 
   /**
