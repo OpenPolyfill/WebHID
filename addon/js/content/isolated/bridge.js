@@ -31,6 +31,7 @@
   const pickerResultHandlers = new Map()
   let authorityOrigin = ''
   let persistentOrigin = null
+  let scopeLoadGeneration = 0
   let authorityFailed = false
   let resolveAuthorityReady = null
   const authorityReady = new Promise((resolve) => {
@@ -678,7 +679,23 @@
         loadedOrigins.delete(previousPersistentOrigin || '')
         loadAllowedDeviceIds(persistentOrigin || '')
       }
-      if (!firstInitialization) void loadSettingsForOrigin(authorityOrigin)
+    }
+    if (scopeChanged && !firstInitialization) {
+      const expectedScope = persistentOrigin
+      const generation = ++scopeLoadGeneration
+      void loadSettingsForOrigin(authorityOrigin).then((store) => {
+        if (
+          generation !== scopeLoadGeneration ||
+          persistentOrigin !== expectedScope ||
+          !frameContext ||
+          frameContext.destroyed
+        )
+          return
+        frameContext.port.postMessage({
+          type: 'persistentScopeChanged',
+          settings: store.getAll()
+        })
+      })
     }
     settleAuthorityReady()
   }

@@ -65,6 +65,14 @@ test('authority metadata gates local origin-sensitive state', () => {
   assert.match(bridge, /await authorityReady/)
   assert.match(main, /await settingsReady/)
 })
+test('scope changes resync full MAIN settings and invalidate paired devices', () => {
+  assert.match(bridge, /type: 'persistentScopeChanged'/)
+  assert.match(bridge, /scopeLoadGeneration/)
+  assert.match(bridge, /generation !== scopeLoadGeneration/)
+  assert.match(main, /persistentScopeChanged: \(data\)/)
+  assert.match(main, /pairedDevices = null/)
+  assert.match(main, /deviceInfoCache = null/)
+})
 test('MAIN settings readiness waits for the initial snapshot', () => {
   const liveSettings = main.match(/settings: \(data\) => \{[\s\S]*?\n    \},/)
   assert.ok(liveSettings)

@@ -846,6 +846,11 @@
     settings: (data) => {
       settings.set(data.settings || {})
     },
+    persistentScopeChanged: (data) => {
+      settings.set(data.settings || {})
+      pairedDevices = null
+      deviceInfoCache = null
+    },
     event: (data) => {
       dispatchDeviceEvent(data.event)
     }
