@@ -163,7 +163,7 @@ test.describe('extension action surfaces', () => {
     pageUrl
   }) => {
     const activeOrigin = new URL(pageUrl('/')).origin
-    const selectedPersistent = 'opaque|https%3A%2F%2Fhost.example|https%3A%2F%2Fwidget.example'
+    const selectedPersistent = 'opaque|https://host.example|https://widget.example'
     await sharedPage.goto(pageUrl('/test-page.html'), { waitUntil: 'domcontentloaded' })
     await page.addInitScript(
       (target) => {
@@ -241,7 +241,9 @@ test.describe('extension action surfaces', () => {
     })
     await page.locator('#site-name').click()
     await page.locator('#origin-list li').nth(1).click()
-    await expect(page.locator('#site-name-text')).toHaveText('Opaque iframe')
+    await expect(page.locator('#site-name-text')).toHaveText(
+      'https://widget.example (Opaque iframe)'
+    )
     await page.locator('#btn-settings').click()
     await page
       .locator('input[name="dataPlane"][value="nm"]')
@@ -263,14 +265,16 @@ test.describe('extension action surfaces', () => {
       .poll(() =>
         page.evaluate(() => {
           const calls =
-            (globalThis as unknown as {
-              popupStatusCalls?: Array<{
-                action?: string
-                origin?: unknown
-                persistentOrigin?: unknown
-                deviceIds?: unknown
-              }>
-            }).popupStatusCalls || []
+            (
+              globalThis as unknown as {
+                popupStatusCalls?: Array<{
+                  action?: string
+                  origin?: unknown
+                  persistentOrigin?: unknown
+                  deviceIds?: unknown
+                }>
+              }
+            ).popupStatusCalls || []
           return calls.find((entry) => entry.action === 'revokeDevice') || null
         })
       )
@@ -318,14 +322,16 @@ test.describe('extension action surfaces', () => {
       .poll(() =>
         page.evaluate(() => {
           const calls =
-            (globalThis as unknown as {
-              popupStatusCalls?: Array<{
-                action?: string
-                origin?: unknown
-                persistentOrigin?: unknown
-                deviceIds?: unknown
-              }>
-            }).popupStatusCalls || []
+            (
+              globalThis as unknown as {
+                popupStatusCalls?: Array<{
+                  action?: string
+                  origin?: unknown
+                  persistentOrigin?: unknown
+                  deviceIds?: unknown
+                }>
+              }
+            ).popupStatusCalls || []
           return [...calls].reverse().find((entry) => entry.action === 'revokeDevice') || null
         })
       )

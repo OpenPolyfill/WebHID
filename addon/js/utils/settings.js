@@ -288,9 +288,7 @@
       void 0
     }
     if (!sourceOrigin || !topAuthorityOrigin || topAuthorityOrigin === 'null') return null
-    return (
-      'opaque|' + encodeURIComponent(topAuthorityOrigin) + '|' + encodeURIComponent(sourceOrigin)
-    )
+    return `opaque|${topAuthorityOrigin}|${sourceOrigin}`
   }
 
   /**
