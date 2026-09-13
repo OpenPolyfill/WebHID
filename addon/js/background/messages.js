@@ -231,6 +231,19 @@
     }
   }
   /**
+   * Sends a persistence-scope event only to endpoints owning that scope.
+   * @param {string|null} persistentOrigin
+   * @param {object} message
+   * @returns {void}
+   */
+  function postToPersistentOriginEndpoints(persistentOrigin, message) {
+    if (!persistentOrigin) return
+    for (const endpoint of frameEndpoints.values()) {
+      if (endpoint.persistentOrigin === persistentOrigin)
+        postToContentPort(endpoint.port, message)
+    }
+  }
+  /**
    * Replaces the in-memory device cache with `devices` (decoded), persisting
    * them afterwards.
    * @param {object[]} devices
@@ -250,7 +263,7 @@
    * @returns {Promise<void>}
    */
   async function notifyAllowedDevicesChanged(authorityOrigin, persistentOrigin, deviceIds) {
-    postToOriginEndpoints(authorityOrigin, {
+    postToPersistentOriginEndpoints(persistentOrigin, {
       action: 'allowedDevicesChanged',
       origin: authorityOrigin,
       persistentOrigin,
@@ -281,9 +294,14 @@
     await deleteGrantGroups(memberGroups.map((g) => g.id))
     const deviceIds = await getAllowedDevices(persistentOrigin)
     for (const deviceId of toRevoke) {
-      postToOriginEndpoints(authorityOrigin, {
+      postToPersistentOriginEndpoints(persistentOrigin, {
         action: 'webhidDeviceEvent',
-        event: { eventType: 'revoked', deviceId, origin: authorityOrigin }
+        event: {
+          eventType: 'revoked',
+          deviceId,
+          origin: authorityOrigin,
+          persistentOrigin
+        }
       })
     }
     notifyAllowedDevicesChanged(authorityOrigin, persistentOrigin, deviceIds)
@@ -1047,7 +1065,7 @@
       .filter((endpoint) => endpoint.tabId === tabId)
       .sort((a, b) => a.frameId - b.frameId)
     for (const endpoint of endpoints) {
-      if (!/^https?:$/.test(new URL(endpoint.origin).protocol)) continue
+      if (!(endpoint.origin.startsWith('http:') || endpoint.origin.startsWith('https:'))) continue
       if (seen.has(endpoint.origin)) continue
       seen.add(endpoint.origin)
       origins.push(endpoint.origin)

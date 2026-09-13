@@ -36,6 +36,18 @@ test('background owns endpoint registry and exact input fanout', () => {
   assert.match(nm, /collectDeviceSessionOwners\(deviceId\)/)
   assert.match(nm, /postToContentPort\(port/)
 })
+test('persistent permission events cannot cross opaque partitions', () => {
+  assert.match(messages, /function postToPersistentOriginEndpoints/)
+  assert.match(messages, /endpoint\.persistentOrigin === persistentOrigin/)
+  assert.match(bridge, /messageEvent\.persistentOrigin === frameContext\?\.persistentOrigin/)
+  assert.match(bridge, /message\.persistentOrigin === persistentOrigin/)
+})
+
+test('normal frame origin listing skips opaque authorities safely', () => {
+  assert.match(messages, /endpoint\.origin\.startsWith\('http:'\)/)
+  assert.match(messages, /endpoint\.origin\.startsWith\('https:'\)/)
+  assert.doesNotMatch(messages, /new URL\(endpoint\.origin\)\.protocol/)
+})
 test('authority metadata gates local origin-sensitive state', () => {
   assert.match(messages, /action: 'endpointMetadata'/)
   assert.match(messages, /typeof sender\.origin/)
