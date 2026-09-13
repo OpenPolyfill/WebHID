@@ -250,13 +250,14 @@ test.describe('Cross-origin iframe', () => {
     await page.evaluate(
       ({ mainSrc, crossSrc }) => {
         for (const [id, src] of [
-          ['opaque-a', mainSrc],
-          ['opaque-b', crossSrc]
+          ['opaque-a', mainSrc + '/iframe-child-no-allow?path=a'],
+          ['opaque-b', crossSrc + '/iframe-child-no-allow?path=b'],
+          ['opaque-c', mainSrc + '/iframe-child-no-allow?path=c']
         ]) {
           const frame = document.createElement('iframe')
           frame.id = id
           frame.setAttribute('sandbox', 'allow-scripts')
-          frame.src = src + '/iframe-child-no-allow'
+          frame.src = src
           document.body.appendChild(frame)
         }
       },
@@ -264,6 +265,7 @@ test.describe('Cross-origin iframe', () => {
     )
     await frameWithId(page, 'opaque-a', '/iframe-child-no-allow')
     await frameWithId(page, 'opaque-b', '/iframe-child-no-allow')
+    await frameWithId(page, 'opaque-c', '/iframe-child-no-allow')
     const targets = (await backgroundPage.evaluate(async () => {
       const tabs = await browser.tabs.query({ active: true, currentWindow: true })
       const tab = tabs[0]
@@ -277,26 +279,33 @@ test.describe('Cross-origin iframe', () => {
     const opaqueTargets = targets.filter((target) => target.kind === 'opaque')
     expect(opaqueTargets).toHaveLength(2)
     expect(opaqueTargets[0].persistentOrigin).not.toBe(opaqueTargets[1].persistentOrigin)
-    const scope = opaqueTargets[0].persistentOrigin
-    if (typeof scope !== 'string') throw new Error('opaque target has no persistent scope')
-    const delivered = await backgroundPage.evaluate((persistentScope) => {
-      const fanout = (
-        globalThis as unknown as {
-          webhid: {
-            import(name: string): {
-              postToPersistentOriginEndpoints(scope: string, message: object): number
+    const scopeA = opaqueTargets[0].persistentOrigin
+    const scopeB = opaqueTargets[1].persistentOrigin
+    if (typeof scopeA !== 'string' || typeof scopeB !== 'string')
+      throw new Error('opaque target has no persistent scope')
+    const delivered = await backgroundPage.evaluate(
+      ({ scopeA, scopeB }) => {
+        const fanout = (
+          globalThis as unknown as {
+            webhid: {
+              import(name: string): {
+                postToPersistentOriginEndpoints(scope: string, message: object): number
+              }
             }
           }
-        }
-      ).webhid.import('backgroundEventFanout')
-      return fanout.postToPersistentOriginEndpoints(persistentScope, {
-        action: 'allowedDevicesChanged',
-        origin: 'null',
-        persistentOrigin: persistentScope,
-        deviceIds: []
-      })
-    }, scope)
-    expect(delivered).toBe(1)
+        ).webhid.import('backgroundEventFanout')
+        const send = (scope: string) =>
+          fanout.postToPersistentOriginEndpoints(scope, {
+            action: 'allowedDevicesChanged',
+            origin: 'null',
+            persistentOrigin: scope,
+            deviceIds: []
+          })
+        return { scopeA: send(scopeA), scopeB: send(scopeB) }
+      },
+      { scopeA, scopeB }
+    )
+    expect(delivered).toEqual({ scopeA: 2, scopeB: 1 })
   })
   test('B2: top-level hid=() denies a delegated cross-origin child', async ({
     page,
