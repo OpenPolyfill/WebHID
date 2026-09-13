@@ -111,9 +111,14 @@
       handleGlobalReset()
       return
     }
-    if (message && message.action === 'allowedDevicesChanged') {
-      const origin = message.persistentOrigin || message.origin || authorityOrigin
-      allowedByOrigin.set(origin, new Set(message.deviceIds || []))
+    if (
+      message &&
+      message.action === 'allowedDevicesChanged' &&
+      Array.isArray(message.deviceIds) &&
+      message.persistentOrigin === persistentOrigin
+    ) {
+      const origin = message.persistentOrigin
+      allowedByOrigin.set(origin, new Set(message.deviceIds))
       loadedOrigins.add(origin)
       flushAllowedDeviceIdsQueue(origin)
       return
@@ -2573,7 +2578,10 @@
       }
     } else if (messageEvent.eventType === 'revoked') {
       const contexts =
-        frameContext && frameContext.origin === messageEvent.origin ? [frameContext] : []
+        messageEvent.persistentOrigin &&
+        messageEvent.persistentOrigin === frameContext?.persistentOrigin
+          ? [frameContext]
+          : []
       for (const context of contexts) {
         reconcileFrameDevice(context, messageEvent.deviceId, messageEvent).catch((e) =>
           logger.debug('revoke reconciliation failed', e)
@@ -2830,8 +2838,12 @@
   })
 
   browser.runtime.onMessage.addListener((message) => {
-    if (message.action === 'allowedDevicesChanged' && Array.isArray(message.deviceIds)) {
-      const origin = message.persistentOrigin || message.origin || authorityOrigin
+    if (
+      message.action === 'allowedDevicesChanged' &&
+      Array.isArray(message.deviceIds) &&
+      message.persistentOrigin === persistentOrigin
+    ) {
+      const origin = message.persistentOrigin
       allowedByOrigin.set(origin, new Set(message.deviceIds))
       loadedOrigins.add(origin)
       flushAllowedDeviceIdsQueue(origin)
