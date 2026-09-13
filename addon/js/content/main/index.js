@@ -845,7 +845,6 @@
     response: handleResponseMessage,
     settings: (data) => {
       settings.set(data.settings || {})
-      markSettingsReady()
     },
     event: (data) => {
       dispatchDeviceEvent(data.event)
