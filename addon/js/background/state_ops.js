@@ -273,7 +273,12 @@
     const statuses = []
     for (const [deviceId, byToken] of deviceSessions) {
       for (const [token, owner] of byToken) {
-        if (owner.tabId !== tabId || (origin && owner.origin !== origin) || !owner.plane) continue
+        if (
+          owner.tabId !== tabId ||
+          (origin && (owner.persistentOrigin || owner.origin) !== origin) ||
+          !owner.plane
+        )
+          continue
         statuses.push({ deviceId, token, ...owner.plane })
       }
     }
@@ -289,7 +294,10 @@
     const ids = new Set()
     for (const [deviceId, byToken] of deviceSessions) {
       for (const owner of byToken.values()) {
-        if (owner.tabId === tabId && (!origin || owner.origin === origin)) {
+        if (
+          owner.tabId === tabId &&
+          (!origin || (owner.persistentOrigin || owner.origin) === origin)
+        ) {
           ids.add(String(deviceId))
           break
         }
