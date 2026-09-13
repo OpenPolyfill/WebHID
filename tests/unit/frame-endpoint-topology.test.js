@@ -52,6 +52,7 @@ test('frame-origin API preserves opaque persistent target metadata', () => {
   assert.match(messages, /targets\.push/)
   assert.match(messages, /kind: 'opaque'/)
   assert.match(messages, /persistentOrigin: endpoint\.persistentOrigin/)
+  assert.doesNotMatch(messages, /kind: 'opaque',\s+label:/)
 })
 test('settings scope transitions keep one listener subscription set', () => {
   assert.match(bridge, /createSettingsListenerSet/)

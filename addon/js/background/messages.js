@@ -1084,7 +1084,6 @@
         seen.add(endpoint.persistentOrigin)
         targets.push({
           kind: 'opaque',
-          label: 'Opaque iframe',
           origin: endpoint.origin,
           persistentOrigin: endpoint.persistentOrigin
         })
