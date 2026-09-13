@@ -40,6 +40,7 @@
     setDeviceSessionPlane,
     collectDevicePlaneStatuses,
     collectOpenDeviceIdsForTab,
+    setBadgeRefresh,
     closeForCleanup
   } = webhid.import('bgStateOps')
   const { urlOrigin, frameKey, documentFrameKey } = webhid.import('bgCsp')
@@ -52,6 +53,16 @@
 
   /** @type {object|null} */
   let actionApi = null
+  /**
+   * Projects authoritative tab session ownership onto the badge.
+   * @param {number} tabId
+   * @returns {void}
+   */
+  function refreshTabDeviceBadge(tabId) {
+    if (!actionApi || tabId == null) return
+    const count = collectOpenDeviceIdsForTab(tabId).length
+    actionApi.setBadgeText({ text: count > 0 ? String(count) : '', tabId })
+  }
 
   let nextEndpointId = 0
   /**
@@ -82,6 +93,19 @@
     if (!registerFrameLifetime(tabId, endpoint.frameKey)) {
       frameEndpoints.delete(port)
       return null
+    }
+    try {
+      port.postMessage({
+        action: 'endpointMetadata',
+        endpointId: endpoint.id,
+        tabId: endpoint.tabId,
+        frameId: endpoint.frameId,
+        documentId: endpoint.documentId,
+        origin: endpoint.origin,
+        url: endpoint.url
+      })
+    } catch {
+      void 0
     }
     return endpoint
   }
@@ -823,16 +847,7 @@
    * @returns {boolean}
    */
   function handleDeviceCountChanged(request, sender) {
-    if (actionApi) {
-      const tabId = sender.tab != null ? sender.tab.id : undefined
-      if (tabId != null) {
-        const count = collectOpenDeviceIdsForTab(tabId).length
-        actionApi.setBadgeText({
-          text: count > 0 ? String(count) : '',
-          tabId
-        })
-      }
-    }
+    refreshTabDeviceBadge(sender.tab?.id)
     return false
   }
 
@@ -1409,6 +1424,7 @@
    */
   function registerMessageHandlers(deps) {
     actionApi = deps.actionApi
+    setBadgeRefresh(refreshTabDeviceBadge)
     browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
       const handler = HANDLERS[request.action]
       if (!handler) return false

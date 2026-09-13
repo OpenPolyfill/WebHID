@@ -3,6 +3,23 @@
   const { deviceTabMap, deviceSessions, frameLifetimes, orphanCleanup } = webhid.import('bgState')
 
   const CLEANUP_ALREADY_GONE = 404
+  /** @type {((tabId: number) => void)|null} */
+  let badgeRefresh = null
+  /**
+   * Installs the background badge projection callback.
+   * @param {(tabId: number) => void} callback
+   * @returns {void}
+   */
+  function setBadgeRefresh(callback) {
+    badgeRefresh = callback
+  }
+  /**
+   * @param {number|null|undefined} tabId
+   * @returns {void}
+   */
+  function refreshBadge(tabId) {
+    if (badgeRefresh && tabId != null) badgeRefresh(tabId)
+  }
 
   /**
    * Whether a daemon close response proves that a session is no longer live.
@@ -143,9 +160,8 @@
     if (
       !isFrameLifetimeActive(owner.tabId, frameKey) &&
       !registerFrameLifetime(owner.tabId, frameKey)
-    ) {
+    )
       return false
-    }
     let byToken = deviceSessions.get(deviceId)
     if (!byToken) {
       byToken = new Map()
@@ -160,6 +176,7 @@
       clientKey: owner.clientKey || '',
       port: owner.port || null
     })
+    refreshBadge(owner.tabId)
     logger.debug('register session device ' + deviceId + ' tab ' + owner.tabId)
     return true
   }
@@ -174,8 +191,10 @@
     if (!deviceId || !token) return
     const byToken = deviceSessions.get(deviceId)
     if (!byToken) return
+    const owner = byToken.get(token)
     byToken.delete(token)
     if (byToken.size === 0) deviceSessions.delete(deviceId)
+    refreshBadge(owner?.tabId)
   }
 
   /**
@@ -535,10 +554,17 @@
    * @returns {void}
    */
   function clearAuthorityOwnership() {
+    const tabs = new Set()
+    for (const byToken of deviceSessions.values()) {
+      for (const owner of byToken.values()) {
+        if (owner.tabId != null) tabs.add(owner.tabId)
+      }
+    }
     deviceTabMap.clear()
     deviceSessions.clear()
     frameLifetimes.clear()
     orphanCleanup.clear()
+    for (const tabId of tabs) refreshBadge(tabId)
   }
 
   /**
@@ -547,13 +573,19 @@
    * @returns {void}
    */
   function clearDeviceOwnership(deviceId) {
+    const tabs = new Set()
+    for (const owner of deviceSessions.get(deviceId)?.values() || []) {
+      if (owner.tabId != null) tabs.add(owner.tabId)
+    }
     deviceTabMap.delete(deviceId)
     deviceSessions.delete(deviceId)
     for (const [token, entry] of orphanCleanup) {
       if (entry.deviceId === deviceId) orphanCleanup.delete(token)
     }
+    for (const tabId of tabs) refreshBadge(tabId)
   }
   webhid.export('bgStateOps', {
+    setBadgeRefresh,
     tabsForEvent,
     registerDeviceTab,
     registerDeviceSession,

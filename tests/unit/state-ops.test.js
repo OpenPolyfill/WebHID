@@ -277,8 +277,10 @@ test('physical ownership reset removes every session for one device', () => {
 })
 test('tab aggregation spans exact frame endpoints', () => {
   const { ops } = loadStateOps()
+  const refreshed = []
   const topPort = {}
   const childPort = {}
+  ops.setBadgeRefresh((tabId) => refreshed.push(tabId))
   ops.registerFrameLifetime(11, 'frame-top')
   ops.registerFrameLifetime(11, 'frame-child')
   ops.registerDeviceSession(7, 'session-top', {
@@ -293,6 +295,7 @@ test('tab aggregation spans exact frame endpoints', () => {
     frameKey: 'frame-child',
     port: childPort
   })
+  assert.deepEqual(refreshed, [11, 11])
   ops.setDeviceSessionPlane(7, 'session-top', topPort, {
     plane: 'nm',
     mode: null,

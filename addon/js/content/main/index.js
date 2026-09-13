@@ -845,6 +845,7 @@
     response: handleResponseMessage,
     settings: (data) => {
       settings.set(data.settings || {})
+      markSettingsReady()
     },
     event: (data) => {
       dispatchDeviceEvent(data.event)
@@ -934,17 +935,38 @@
 
   const defs = GLOBAL_DEFAULTS
   const settings = createSettingsStore(defs)
-
+  let resolveSettingsReady = null
+  let settingsReadySettled = false
+  const settingsReady = new NativePromise((resolve) => {
+    resolveSettingsReady = resolve
+  })
+  /** @returns {void} */
+  function markSettingsReady() {
+    if (settingsReadySettled) return
+    settingsReadySettled = true
+    if (resolveSettingsReady) resolveSettingsReady()
+    resolveSettingsReady = null
+  }
   settings.on('dataPlane', (v) => logger.info('data plane changed: ' + v))
   logger.bindSettings(settings)
 
-  promiseOps.then(bridgeReady, () => {
-    promiseOps.then(sendRequest('getSettings', {}), (result) => {
-      if (!result) return
-      settings.set(result)
-      logger.info('data plane: ' + settings.dataPlane)
-    })
-  })
+  promiseOps.then(
+    bridgeReady,
+    () => {
+      promiseOps.then(
+        sendRequest('getSettings', {}),
+        (result) => {
+          if (result) {
+            settings.set(result)
+            logger.info('data plane: ' + settings.dataPlane)
+          }
+          markSettingsReady()
+        },
+        markSettingsReady
+      )
+    },
+    markSettingsReady
+  )
   /** @returns {object} */
   function getPolicyContext() {
     return {}
@@ -1983,6 +2005,7 @@
     if (isWorker) {
       throw new NativeDOMException('Not allowed in worker context', 'NotSupportedError')
     }
+    await settingsReady
     const policy = await getPolicy()
     if (policy && policy.hid === 'none') {
       throw new NativeDOMException(
