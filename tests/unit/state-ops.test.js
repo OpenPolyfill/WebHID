@@ -296,18 +296,24 @@ test('tab aggregation spans exact frame endpoints', () => {
     port: childPort
   })
   assert.deepEqual(refreshed, [11, 11])
-  ops.setDeviceSessionPlane(7, 'session-top', topPort, {
-    plane: 'nm',
-    mode: null,
-    generation: 1,
-    ready: true
-  })
-  ops.setDeviceSessionPlane(7, 'session-child', childPort, {
-    plane: 'ws',
-    mode: 'worker',
-    generation: 2,
-    ready: true
-  })
+  assert.equal(
+    ops.setDeviceSessionPlane(7, 'session-top', topPort, {
+      plane: 'nm',
+      mode: null,
+      generation: 1,
+      ready: true
+    }),
+    true
+  )
+  assert.equal(
+    ops.setDeviceSessionPlane(7, 'session-child', childPort, {
+      plane: 'ws',
+      mode: 'worker',
+      generation: 2,
+      ready: true
+    }),
+    true
+  )
 
   assert.equal(JSON.stringify(ops.collectOpenDeviceIdsForTab(11)), JSON.stringify(['7']))
   assert.equal(
@@ -328,6 +334,29 @@ test('tab aggregation spans exact frame endpoints', () => {
       }
     ])
   )
+})
+test('opaque persistence scopes keep tab aggregation isolated', () => {
+  const { ops } = loadStateOps()
+  const scopeA = 'opaque|host-a|widget'
+  const scopeB = 'opaque|host-b|widget'
+  ops.registerFrameLifetime(12, 'opaque-a')
+  ops.registerFrameLifetime(12, 'opaque-b')
+  ops.registerDeviceSession(9, 'token-a', {
+    tabId: 12,
+    origin: 'null',
+    persistentOrigin: scopeA,
+    frameKey: 'opaque-a'
+  })
+  ops.registerDeviceSession(9, 'token-b', {
+    tabId: 12,
+    origin: 'null',
+    persistentOrigin: scopeB,
+    frameKey: 'opaque-b'
+  })
+
+  assert.equal(JSON.stringify(ops.collectOpenDeviceIdsForTab(12, scopeA)), JSON.stringify(['9']))
+  assert.equal(JSON.stringify(ops.collectOpenDeviceIdsForTab(12, scopeB)), JSON.stringify(['9']))
+  assert.equal(JSON.stringify(ops.collectOpenDeviceIdsForTab(12, 'null')), JSON.stringify([]))
 })
 test('exact endpoint cleanup cannot retire a replacement lifetime', async () => {
   const { ops, deviceSessions, deviceTabMap } = loadStateOps()
