@@ -167,10 +167,15 @@ test.describe('extension action surfaces', () => {
     await sharedPage.goto(pageUrl('/test-page.html'), { waitUntil: 'domcontentloaded' })
     await page.addInitScript(
       (target) => {
-        const calls: Array<{ action: string; origin: unknown }> = []
-        Object.defineProperty(globalThis, '__popupStatusCalls', { value: calls })
+        const calls: Array<{
+          action: string
+          origin: unknown
+          persistentOrigin?: unknown
+          deviceIds?: unknown
+        }> = []
+        Object.defineProperty(globalThis, 'popupStatusCalls', { value: calls })
         const saved: unknown[] = []
-        Object.defineProperty(globalThis, '__popupSaved', { value: saved })
+        Object.defineProperty(globalThis, 'popupSaved', { value: saved })
         const storageSet = browser.storage.local.set.bind(browser.storage.local)
         browser.storage.local.set = async (value) => {
           saved.push(value)
@@ -208,6 +213,15 @@ test.describe('extension action surfaces', () => {
               ? { planes: [{ deviceId: '1', plane: 'ws', mode: 'worker' }], defaultPlane: 'nm' }
               : { planes: [], defaultPlane: 'nm' }
           }
+          if (request.action === 'revokeDevice') {
+            calls.push({
+              action: 'revokeDevice',
+              origin: request.origin,
+              persistentOrigin: (request as { persistentOrigin?: unknown }).persistentOrigin,
+              deviceIds: (request as { deviceIds?: unknown }).deviceIds
+            })
+            return { success: true }
+          }
           if (request.action === 'getOpenDeviceIds') {
             calls.push({ action: 'getOpenDeviceIds', origin: request.origin })
             return request.origin === target.persistent ? { ids: ['1'] } : { ids: [] }
@@ -222,7 +236,7 @@ test.describe('extension action surfaces', () => {
     )
     await page.goto(popupUrl, { waitUntil: 'domcontentloaded', timeout: 15000 })
     const before = await page.evaluate(() => {
-      const value = (globalThis as unknown as { __popupStatusCalls?: unknown }).__popupStatusCalls
+      const value = (globalThis as unknown as { popupStatusCalls?: unknown }).popupStatusCalls
       return Array.isArray(value) ? value.length : 0
     })
     await page.locator('#site-name').click()
@@ -236,17 +250,39 @@ test.describe('extension action surfaces', () => {
       .poll(() =>
         page.evaluate(
           (key) =>
-            (globalThis as unknown as { __popupSaved?: unknown[] }).__popupSaved?.some(
+            (globalThis as unknown as { popupSaved?: unknown[] }).popupSaved?.some(
               (entry) => entry != null && typeof entry === 'object' && key in entry
             ) || false,
           `settings :: ${selectedPersistent} :: dataPlane`
         )
       )
       .toBe(true)
-    await expect(page.locator('#status')).toHaveClass(/state-warn/)
+    await page.locator('#btn-settings').click()
+    await page.locator('.btn-revoke').first().click()
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const calls =
+            (globalThis as unknown as {
+              popupStatusCalls?: Array<{
+                action?: string
+                origin?: unknown
+                persistentOrigin?: unknown
+                deviceIds?: unknown
+              }>
+            }).popupStatusCalls || []
+          return calls.find((entry) => entry.action === 'revokeDevice') || null
+        })
+      )
+      .toMatchObject({
+        action: 'revokeDevice',
+        origin: 'null',
+        persistentOrigin: selectedPersistent,
+        deviceIds: [1]
+      })
     await page.waitForFunction(
       ({ start, origin }) => {
-        const calls = (globalThis as unknown as { __popupStatusCalls?: unknown }).__popupStatusCalls
+        const calls = (globalThis as unknown as { popupStatusCalls?: unknown }).popupStatusCalls
         if (!Array.isArray(calls)) return false
         const after = calls.slice(start)
         return (
@@ -264,7 +300,7 @@ test.describe('extension action surfaces', () => {
       { timeout: 15000 }
     )
     const calls = await page.evaluate(() => {
-      const value = (globalThis as unknown as { __popupStatusCalls?: unknown }).__popupStatusCalls
+      const value = (globalThis as unknown as { popupStatusCalls?: unknown }).popupStatusCalls
       return Array.isArray(value) ? (value as Array<{ action: string; origin: unknown }>) : []
     })
     const afterSelection = calls.slice(before)
@@ -274,6 +310,31 @@ test.describe('extension action surfaces', () => {
         { action: 'getOpenDeviceIds', origin: selectedPersistent }
       ])
     )
+    await page.locator('#site-name').click()
+    await page.locator('#origin-list li').first().click()
+    await expect(page.locator('#site-name-text')).toHaveText(activeOrigin)
+    await page.locator('.btn-revoke').first().click()
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const calls =
+            (globalThis as unknown as {
+              popupStatusCalls?: Array<{
+                action?: string
+                origin?: unknown
+                persistentOrigin?: unknown
+                deviceIds?: unknown
+              }>
+            }).popupStatusCalls || []
+          return [...calls].reverse().find((entry) => entry.action === 'revokeDevice') || null
+        })
+      )
+      .toMatchObject({
+        action: 'revokeDevice',
+        origin: activeOrigin,
+        persistentOrigin: activeOrigin,
+        deviceIds: [1]
+      })
   })
   test('hidden page action stays visible during its pending picker', async ({
     backgroundPage,
