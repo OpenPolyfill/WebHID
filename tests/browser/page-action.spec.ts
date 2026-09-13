@@ -163,10 +163,10 @@ test.describe('extension action surfaces', () => {
     pageUrl
   }) => {
     const activeOrigin = new URL(pageUrl('/')).origin
-    const selectedOrigin = `${activeOrigin}-selected`
+    const selectedPersistent = 'opaque|https%3A%2F%2Fhost.example|https%3A%2F%2Fwidget.example'
     await sharedPage.goto(pageUrl('/test-page.html'), { waitUntil: 'domcontentloaded' })
     await page.addInitScript(
-      (origin) => {
+      (target) => {
         const calls: Array<{ action: string; origin: unknown }> = []
         Object.defineProperty(globalThis, '__popupStatusCalls', { value: calls })
         const runtimeSendMessage = browser.runtime.sendMessage as unknown as (
@@ -174,25 +174,41 @@ test.describe('extension action surfaces', () => {
         ) => Promise<unknown>
         browser.runtime.sendMessage = async (message) => {
           const request = message as { action?: unknown; origin?: unknown }
-          if (request.action === 'getFrameOrigins')
-            return { origins: [origin.active, origin.selected] }
+          if (request.action === 'getFrameOrigins') {
+            return {
+              targets: [
+                {
+                  kind: 'origin',
+                  label: target.active,
+                  origin: target.active,
+                  persistentOrigin: target.active
+                },
+                {
+                  kind: 'opaque',
+                  label: 'Opaque iframe',
+                  origin: 'null',
+                  persistentOrigin: target.persistent
+                }
+              ]
+            }
+          }
           if (request.action === 'getBackendStatus')
             return { nmConnected: true, daemonReachable: true, hidPermission: 0 }
           if (request.action === 'getPairedDevices') return { success: true, hashes: ['1'] }
           if (request.action === 'getDataPlaneStatus') {
             calls.push({ action: 'getDataPlaneStatus', origin: request.origin })
-            return request.origin === origin.selected
+            return request.origin === target.persistent
               ? { planes: [{ deviceId: '1', plane: 'ws', mode: 'worker' }], defaultPlane: 'nm' }
               : { planes: [], defaultPlane: 'nm' }
           }
           if (request.action === 'getOpenDeviceIds') {
             calls.push({ action: 'getOpenDeviceIds', origin: request.origin })
-            return request.origin === origin.selected ? { ids: ['1'] } : { ids: [] }
+            return request.origin === target.persistent ? { ids: ['1'] } : { ids: [] }
           }
           return runtimeSendMessage(message)
         }
       },
-      { active: activeOrigin, selected: selectedOrigin }
+      { active: activeOrigin, persistent: selectedPersistent }
     )
     const popupUrl = await backgroundPage.evaluate(() =>
       browser.runtime.getURL('js/internal/pages/popup/index.html')
@@ -204,7 +220,7 @@ test.describe('extension action surfaces', () => {
     })
     await page.locator('#site-name').click()
     await page.locator('#origin-list li').nth(1).click()
-    await expect(page.locator('#site-name-text')).toHaveText(selectedOrigin)
+    await expect(page.locator('#site-name-text')).toHaveText('Opaque iframe')
     await expect(page.locator('#status')).toHaveClass(/state-warn/)
     await page.waitForFunction(
       ({ start, origin }) => {
@@ -222,7 +238,7 @@ test.describe('extension action surfaces', () => {
           })
         )
       },
-      { start: before, origin: selectedOrigin },
+      { start: before, origin: selectedPersistent },
       { timeout: 15000 }
     )
     const calls = await page.evaluate(() => {
@@ -232,8 +248,8 @@ test.describe('extension action surfaces', () => {
     const afterSelection = calls.slice(before)
     expect(afterSelection).toEqual(
       expect.arrayContaining([
-        { action: 'getDataPlaneStatus', origin: selectedOrigin },
-        { action: 'getOpenDeviceIds', origin: selectedOrigin }
+        { action: 'getDataPlaneStatus', origin: selectedPersistent },
+        { action: 'getOpenDeviceIds', origin: selectedPersistent }
       ])
     )
   })

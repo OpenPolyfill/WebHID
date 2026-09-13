@@ -25,6 +25,8 @@
   let tab
   /** @type {string} */
   let origin = ''
+  /** @type {string|null} */
+  let persistentOrigin = null
 
   /**
    * Resolves the active tab and its http(s) origin. When the popup itself is
@@ -61,35 +63,53 @@
   const originList = document.getElementById('origin-list')
 
   /**
-   * Collects every distinct http(s) origin in the tab from the bridge's page
-   * ports, top-level first. Frames that never run the polyfill are absent.
-   * @returns {Promise<string[]>}
+   * @typedef {{kind: string, label: string, origin: string, persistentOrigin: string|null}} SiteTarget
+   */
+  /**
+   * Collects addressable settings targets in the active tab.
+   * @returns {Promise<SiteTarget[]>}
    */
   async function loadFrameOrigins() {
-    if (!tab || tab.id == null) return origin ? [origin] : []
+    const fallback = origin
+      ? [{ kind: 'origin', label: origin, origin, persistentOrigin: origin }]
+      : []
+    if (!tab || tab.id == null) return fallback
     try {
       const resp = await browser.runtime.sendMessage({
         action: 'getFrameOrigins',
         tabId: tab.id
       })
-      const origins = (resp && resp.origins) || []
-      return origins.length ? origins : origin ? [origin] : []
+      const targets = Array.isArray(resp?.targets) ? resp.targets : []
+      if (targets.length) return targets
+      const origins = Array.isArray(resp?.origins) ? resp.origins : []
+      return origins.length
+        ? origins.map((value) => ({
+            kind: 'origin',
+            label: value,
+            origin: value,
+            persistentOrigin: value
+          }))
+        : fallback
     } catch (e) {
       logger.debug('getFrameOrigins failed', e)
-      return origin ? [origin] : []
+      return fallback
     }
   }
 
-  /** @type {string[]} */
-  let frameOrigins = []
+  /** @type {SiteTarget[]} */
+  let frameTargets = []
+
+  /** @returns {SiteTarget|undefined} */
+  function selectedTarget() {
+    return frameTargets.find((target) => target.persistentOrigin === persistentOrigin)
+  }
 
   /**
-   * Renders the selected origin on the dropdown button and closes the list.
    * @returns {void}
    */
   function renderSiteLabel() {
-    siteLabel.textContent = origin || t('popupNoSite')
-    siteButton.classList.toggle('has-list', frameOrigins.length > 1)
+    siteLabel.textContent = selectedTarget()?.label || origin || t('popupNoSite')
+    siteButton.classList.toggle('has-list', frameTargets.length > 1)
     siteButton.setAttribute('aria-expanded', 'false')
     originList.hidden = true
   }
@@ -98,16 +118,15 @@
    * @returns {void}
    */
   function openOriginList() {
-    if (frameOrigins.length < 2) return
+    if (frameTargets.length < 2) return
     for (const li of originList.children) {
-      const selected = li.dataset.origin === origin
+      const selected = li.dataset.persistentOrigin === persistentOrigin
       li.classList.toggle('selected', selected)
       li.setAttribute('aria-selected', String(selected))
     }
     originList.hidden = false
     siteButton.setAttribute('aria-expanded', 'true')
   }
-
   /**
    * @returns {void}
    */
@@ -117,13 +136,14 @@
   }
 
   /**
-   * Switches the origin the popup operates on and re-renders for it.
-   * @param {string} o
+   * Switches the popup to one authority/persistence target.
+   * @param {SiteTarget} target
    * @returns {Promise<void>}
    */
-  async function selectOrigin(o) {
-    if (o === origin || !frameOrigins.includes(o)) return
-    origin = o
+  async function selectTarget(target) {
+    if (!target || target.persistentOrigin === persistentOrigin) return
+    origin = target.origin
+    persistentOrigin = target.persistentOrigin
     renderSiteLabel()
     settings = await loadSettings()
     applySettingsToUI()
@@ -132,19 +152,18 @@
   }
 
   /**
-   * Rebuilds the dropdown options for the current frameOrigins.
    * @returns {void}
    */
   function buildOriginList() {
     originList.textContent = ''
-    for (const o of frameOrigins) {
+    for (const target of frameTargets) {
       const li = document.createElement('li')
       li.className = 'origin-picker-option'
       li.setAttribute('role', 'option')
       li.setAttribute('tabindex', '-1')
-      li.dataset.origin = o
-      li.textContent = o
-      li.addEventListener('click', () => selectOrigin(o))
+      li.dataset.persistentOrigin = target.persistentOrigin || ''
+      li.textContent = target.label
+      li.addEventListener('click', () => selectTarget(target))
       originList.appendChild(li)
     }
     renderSiteLabel()
@@ -170,7 +189,7 @@
     })
     originList.addEventListener('keydown', (e) => {
       const items = [...originList.children]
-      const idx = items.findIndex((li) => li.dataset.origin === origin)
+      const idx = items.findIndex((li) => li.dataset.persistentOrigin === persistentOrigin)
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault()
         const next = (idx + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length
@@ -178,7 +197,12 @@
       } else if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault()
         const li = e.target.closest('li')
-        if (li) selectOrigin(li.dataset.origin)
+        if (li) {
+          const target = frameTargets.find(
+            (item) => item.persistentOrigin === li.dataset.persistentOrigin
+          )
+          if (target) selectTarget(target)
+        }
       } else if (e.key === 'Escape') {
         closeOriginList()
         siteButton.focus()
@@ -202,8 +226,9 @@
     if (token !== refreshToken) return
     tab = resolved.tab
     origin = resolved.origin
+    persistentOrigin = origin || null
     siteLabel.textContent = origin || t('popupNoSite')
-    frameOrigins = await loadFrameOrigins()
+    frameTargets = await loadFrameOrigins()
     if (token !== refreshToken) return
     buildOriginList()
     settings = await loadSettings()
@@ -218,7 +243,7 @@
    * @returns {Promise<object>}
    */
   async function loadSettings() {
-    return loadEffectiveSettings(origin)
+    return loadEffectiveSettings(persistentOrigin || origin)
   }
 
   /**
@@ -228,8 +253,8 @@
    * @returns {Promise<void>}
    */
   async function saveSetting(key, value) {
-    if (!origin) return
-    await saveSiteSetting(origin, key, value)
+    if (!persistentOrigin) return
+    await saveSiteSetting(persistentOrigin, key, value)
   }
 
   let settings
@@ -347,12 +372,12 @@
     }
     /** @type {Array<{deviceId: string, plane: string, mode: (string|null)}>} */
     let planes = []
-    if (origin && tab && tab.id != null) {
+    if (persistentOrigin && tab && tab.id != null) {
       try {
         const r = await browser.runtime.sendMessage({
           action: 'getDataPlaneStatus',
           tabId: tab.id,
-          origin
+          origin: persistentOrigin
         })
         planes = (r && r.planes) || []
       } catch (e) {
@@ -386,11 +411,11 @@
 
   /** @returns {Promise<string[]>} */
   async function loadDevices() {
-    if (!origin) return []
+    if (!persistentOrigin) return []
     try {
       const resp = await browser.runtime.sendMessage({
         action: 'getPairedDevices',
-        origin
+        origin: persistentOrigin
       })
       return resp && resp.success ? resp.hashes : []
     } catch {
@@ -552,7 +577,7 @@
       const r = await browser.runtime.sendMessage({
         action: 'getOpenDeviceIds',
         tabId: tab.id,
-        origin
+        origin: persistentOrigin
       })
       const rIds = r != null ? r.ids : undefined
       if (rIds) openIds = new Set(rIds.map((id) => Number(id)))

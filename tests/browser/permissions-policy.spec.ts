@@ -237,6 +237,47 @@ test.describe('Cross-origin iframe', () => {
     await expect.poll(() => page.locator('html').getAttribute('data-opaque-origin')).toBe('null')
     expect((await readFrameResult(frame))?.queryHid).toBe('denied')
   })
+  test('background preserves distinct opaque settings targets', async ({
+    page,
+    pageUrl,
+    crossUrl,
+    backgroundPage
+  }) => {
+    await page.goto(pageUrl('/iframe-parent'), {
+      waitUntil: 'domcontentloaded',
+      timeout: 15000
+    })
+    await page.evaluate(
+      ({ mainSrc, crossSrc }) => {
+        for (const [id, src] of [
+          ['opaque-a', mainSrc],
+          ['opaque-b', crossSrc]
+        ]) {
+          const frame = document.createElement('iframe')
+          frame.id = id
+          frame.setAttribute('sandbox', 'allow-scripts')
+          frame.src = src + '/iframe-child-no-allow'
+          document.body.appendChild(frame)
+        }
+      },
+      { mainSrc: pageUrl(''), crossSrc: crossUrl('') }
+    )
+    await frameWithId(page, 'opaque-a', '/iframe-child-no-allow')
+    await frameWithId(page, 'opaque-b', '/iframe-child-no-allow')
+    const targets = (await backgroundPage.evaluate(async () => {
+      const tabs = await browser.tabs.query({ active: true, currentWindow: true })
+      const tab = tabs[0]
+      if (!tab || tab.id == null) return []
+      const raw: unknown = await browser.tabs.sendMessage(tab.id, { action: 'getFrameOrigins' })
+      const response = raw as {
+        targets?: Array<{ kind: string; persistentOrigin: string | null }>
+      }
+      return response.targets || []
+    })) as Array<{ kind: string; persistentOrigin: string | null }>
+    const opaqueTargets = targets.filter((target) => target.kind === 'opaque')
+    expect(opaqueTargets).toHaveLength(2)
+    expect(opaqueTargets[0].persistentOrigin).not.toBe(opaqueTargets[1].persistentOrigin)
+  })
   test('B2: top-level hid=() denies a delegated cross-origin child', async ({
     page,
     pageUrl,
