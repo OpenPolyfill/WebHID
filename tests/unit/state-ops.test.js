@@ -154,6 +154,37 @@ test('frame cleanup retains failed authority without affecting siblings', async 
   assert.equal(ops.isFrameLifetimeActive(11, 'frame-b'), true)
 })
 
+test('scope transition closes old frame sessions without retiring the frame', async () => {
+  const { ops, deviceSessions, orphanCleanup } = loadStateOps()
+  ops.registerFrameLifetime(11, 'frame-a')
+  ops.registerFrameLifetime(11, 'frame-b')
+  ops.registerDeviceTab(7, 11)
+  ops.registerDeviceTab(7, 11)
+  ops.registerDeviceSession(7, 'session-a', {
+    tabId: 11,
+    origin: 'null',
+    persistentOrigin: 'opaque|host-a|widget',
+    frameKey: 'frame-a'
+  })
+  ops.registerDeviceSession(7, 'session-b', {
+    tabId: 11,
+    origin: 'https://b.test',
+    frameKey: 'frame-b'
+  })
+  const { promise: close, resolve: finishClose } = Promise.withResolvers()
+  const cleanup = ops.closeFrameSessions(11, 'frame-a', async () => {
+    await close
+    return { s: 204 }
+  })
+  assert.equal(ops.isFrameLifetimeActive(11, 'frame-a'), true)
+  assert.deepEqual([...deviceSessions.get(7).keys()], ['session-a', 'session-b'])
+  finishClose()
+  await cleanup
+  assert.equal(ops.isFrameLifetimeActive(11, 'frame-a'), true)
+  assert.deepEqual([...deviceSessions.get(7).keys()], ['session-b'])
+  assert.equal(orphanCleanup.has('session-a'), false)
+})
+
 test('authority and physical resets clear derived ownership', () => {
   const { ops, deviceTabMap, deviceSessions, orphanCleanup } = loadStateOps()
   ops.registerFrameLifetime(11, 'frame-a')
@@ -175,7 +206,7 @@ test('authority and physical resets clear derived ownership', () => {
   assert.equal(deviceTabMap.size, 0)
   assert.equal(deviceSessions.size, 0)
   assert.equal(orphanCleanup.size, 0)
-  assert.equal(ops.isFrameLifetimeActive(11, 'frame-a'), false)
+  assert.equal(ops.isFrameLifetimeActive(11, 'frame-a'), true)
 })
 
 test('retired frame generations cannot publish late sessions', async () => {

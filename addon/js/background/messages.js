@@ -42,7 +42,8 @@
     collectDevicePlaneStatuses,
     collectOpenDeviceIdsForTab,
     setBadgeRefresh,
-    closeForCleanup
+    closeForCleanup,
+    closeFrameSessions
   } = webhid.import('bgStateOps')
   const { urlOrigin, frameKey, documentFrameKey } = webhid.import('bgCsp')
   const NativeMessaging = webhid.import('NativeMessaging')
@@ -67,13 +68,14 @@
 
   let nextEndpointId = 0
   /**
-   * Returns the registered top-frame endpoint for a tab.
+   * Returns the registered live top-frame endpoint for a tab.
    * @param {number} tabId
    * @returns {object|null}
    */
   function topEndpointForTab(tabId) {
     for (const endpoint of frameEndpoints.values()) {
-      if (endpoint.tabId === tabId && endpoint.frameId === 0) return endpoint
+      if (endpoint.tabId === tabId && endpoint.frameId === 0 && endpointDocumentIsLive(endpoint))
+        return endpoint
     }
     return null
   }
@@ -107,11 +109,57 @@
     const top = topEndpointForTab(tabId)
     for (const endpoint of frameEndpoints.values()) {
       if (endpoint.tabId !== tabId) continue
-      const persistentOrigin = persistentSiteScope(endpoint.origin, endpoint.url, top?.origin)
+      const persistentOrigin = top
+        ? persistentSiteScope(endpoint.origin, endpoint.url, top.origin)
+        : null
       if (endpoint.persistentOrigin === persistentOrigin) continue
+      const previousPersistentOrigin = endpoint.persistentOrigin
       endpoint.persistentOrigin = persistentOrigin
+      if (previousPersistentOrigin !== undefined) {
+        void closeFrameSessions(endpoint.tabId, endpoint.frameKey, (deviceId, token) =>
+          NativeMessaging.closeDevice(deviceId, token)
+        ).catch((e) => logger.debug('scope transition cleanup failed', e))
+      }
       sendEndpointMetadata(endpoint)
     }
+  }
+  /**
+   * @param {object} endpoint
+   * @returns {void}
+   */
+  function retireEndpoint(endpoint) {
+    if (frameEndpoints.get(endpoint.port) !== endpoint) return
+    frameEndpoints.delete(endpoint.port)
+    cancelEndpointDelegations(endpoint)
+    const exactKey = documentFrameKey(endpoint.tabId, endpoint.frameId, endpoint.documentId)
+    frameDelegations.delete(exactKey)
+    permissionsPolicy.delete(exactKey)
+    void purgeFrame(endpoint.tabId, endpoint.frameKey, (deviceId, token) =>
+      NativeMessaging.closeDevice(deviceId, token)
+    ).catch((e) => logger.debug('frame endpoint cleanup failed', e))
+  }
+  /**
+   * @param {object} endpoint
+   * @param {object} port
+   * @param {string|null|undefined} persistentOrigin
+   * @returns {boolean}
+   */
+  function endpointAuthorityIsCurrent(endpoint, port, persistentOrigin) {
+    return (
+      frameEndpoints.get(port) === endpoint &&
+      isFrameLifetimeActive(endpoint.tabId, endpoint.frameKey) &&
+      endpoint.persistentOrigin === persistentOrigin
+    )
+  }
+  /**
+   * @param {object} endpoint
+   * @returns {boolean}
+   */
+  function endpointDocumentIsLive(endpoint) {
+    return (
+      frameEndpoints.get(endpoint.port) === endpoint &&
+      isFrameLifetimeActive(endpoint.tabId, endpoint.frameKey)
+    )
   }
   /**
    * Selects the trusted persistence partition for one request.
@@ -122,6 +170,33 @@
     return Object.prototype.hasOwnProperty.call(request, 'persistentOrigin')
       ? request.persistentOrigin
       : request.origin || null
+  }
+  /**
+   * Captures the browser-owned persistence authority for one request.
+   * @param {object} request
+   * @param {object} _sender
+   * @param {object|undefined} port
+   * @returns {{endpoint: object|null, port: object|undefined, persistentOrigin: string}|null}
+   */
+  function scopeAuthorityForRequest(request, _sender, port) {
+    const endpoint = port ? endpointForPort(port) : null
+    if (port && !endpoint) return null
+    const persistentOrigin = endpoint
+      ? endpoint.persistentOrigin
+      : persistenceOriginForRequest(request)
+    if (!persistentOrigin) return null
+    if (endpoint && !endpointAuthorityIsCurrent(endpoint, port, persistentOrigin)) return null
+    return { endpoint, port, persistentOrigin }
+  }
+  /**
+   * @param {{endpoint: object|null, port: object|undefined, persistentOrigin: string}} authority
+   * @returns {boolean}
+   */
+  function scopeAuthorityIsCurrent(authority) {
+    return (
+      !authority.endpoint ||
+      endpointAuthorityIsCurrent(authority.endpoint, authority.port, authority.persistentOrigin)
+    )
   }
   /**
    * Registers one browser-owned exact frame endpoint.
@@ -137,6 +212,10 @@
     const origin = typeof sender.origin === 'string' && sender.origin ? sender.origin : null
     const url = typeof sender.url === 'string' ? sender.url : ''
     if (tabId == null || frameId == null || !origin) return null
+    for (const candidate of [...frameEndpoints.values()]) {
+      if (candidate.tabId === tabId && (frameId === 0 || candidate.frameId === frameId))
+        retireEndpoint(candidate)
+    }
     const endpoint = {
       id: 'endpoint-' + ++nextEndpointId,
       port,
@@ -215,19 +294,22 @@
         action: 'frameDelegationQuery',
         requestId,
         childFrameId: endpoint.frameId,
-        childDocumentId: endpoint.documentId
+        childDocumentId: endpoint.documentId,
+        childOrigin: endpoint.origin,
+        parentOrigin: parent.origin
       })
     })
   }
   /**
-   * Sends an origin-scoped event to every registered exact frame endpoint.
-   * @param {string} origin
-   * @param {object} message
+   * Cancels delegation queries involving a retired endpoint.
+   * @param {object} endpoint
    * @returns {void}
    */
-  function postToOriginEndpoints(origin, message) {
-    for (const endpoint of frameEndpoints.values()) {
-      if (endpoint.origin === origin) postToContentPort(endpoint.port, message)
+  function cancelEndpointDelegations(endpoint) {
+    for (const [requestId, pending] of delegationPending) {
+      if (pending.endpoint !== endpoint && pending.parent !== endpoint) continue
+      delegationPending.delete(requestId)
+      pending.resolve(false)
     }
   }
   /**
@@ -279,11 +361,20 @@
    * @param {string} authorityOrigin
    * @param {Set<number>} toRevoke
    * @param {object[]} memberGroups
-   * @returns {Promise<void>}
+   * @param {() => boolean} [isCurrent]
+   * @returns {Promise<boolean>}
    */
-  async function revokeDevices(persistentOrigin, authorityOrigin, toRevoke, memberGroups) {
+  async function revokeDevices(
+    persistentOrigin,
+    authorityOrigin,
+    toRevoke,
+    memberGroups,
+    isCurrent = () => true
+  ) {
     for (const deviceId of toRevoke) {
+      if (!isCurrent()) return false
       await removeAllowedDevice(persistentOrigin, deviceId)
+      if (!isCurrent()) return false
       removeDeviceInfo(deviceId)
       const tokens = collectDeviceSessionsForOrigin(deviceId, persistentOrigin)
       for (const token of tokens) {
@@ -292,10 +383,14 @@
         await closeForCleanup(deviceId, token, (id, sessionToken) =>
           NativeMessaging.closeDevice(id, sessionToken)
         )
+        if (!isCurrent()) return false
       }
     }
+    if (!isCurrent()) return false
     await deleteGrantGroups(memberGroups.map((g) => g.id))
+    if (!isCurrent()) return false
     const deviceIds = await getAllowedDevices(persistentOrigin)
+    if (!isCurrent()) return false
     for (const deviceId of toRevoke) {
       postToPersistentOriginEndpoints(persistentOrigin, {
         action: 'webhidDeviceEvent',
@@ -308,6 +403,7 @@
       })
     }
     notifyAllowedDevicesChanged(authorityOrigin, persistentOrigin, deviceIds)
+    return true
   }
 
   /**
@@ -339,14 +435,28 @@
    * @param {object} request
    * @param {object} sender
    * @param {function(*): void} sendResponse
+   * @param {object} port
    * @returns {boolean}
    */
-  function handleEnumeratePaired(request, sender, sendResponse) {
-    const origin = persistenceOriginForRequest(request)
+  function handleEnumeratePaired(request, sender, sendResponse, port) {
+    const authority = scopeAuthorityForRequest(request, sender, port)
+    const origin = authority?.persistentOrigin
+    if (!authority || !origin) {
+      sendResponse({ s: 403 })
+      return true
+    }
     NativeMessaging.enumerateDevices()
       .then(async (response) => {
+        if (!scopeAuthorityIsCurrent(authority)) {
+          sendResponse({ s: 503 })
+          return
+        }
         if (http.isOk(response.s) && response.D) {
           const ids = await getAllowedDevices(origin)
+          if (!scopeAuthorityIsCurrent(authority)) {
+            sendResponse({ s: 503 })
+            return
+          }
           const paired = response.D.filter((d) => ids.includes(d.deviceId))
           decodeDeviceCollections(paired)
           sendResponse({ s: response.s, D: paired })
@@ -404,17 +514,23 @@
    * @param {object} request
    * @param {object} sender
    * @param {function(*): void} sendResponse
+   * @param {object} port
    * @returns {boolean}
    */
-  function handleRecordGrantGroup(request, sender, sendResponse) {
+  function handleRecordGrantGroup(request, sender, sendResponse, port) {
     ;(async () => {
       try {
-        const origin = persistenceOriginForRequest(request)
-        if (!origin || !Array.isArray(request.deviceIds)) {
+        const authority = scopeAuthorityForRequest(request, sender, port)
+        const origin = authority?.persistentOrigin
+        if (!authority || !origin || !Array.isArray(request.deviceIds)) {
           sendResponse({ success: false })
           return
         }
         await recordGrantGroup(origin, request.deviceIds)
+        if (!scopeAuthorityIsCurrent(authority)) {
+          sendResponse({ success: false, error: 'stale frame authority' })
+          return
+        }
         sendResponse({ success: true })
       } catch (e) {
         sendResponse({ success: false, error: e.message })
@@ -427,13 +543,23 @@
    * @param {object} request
    * @param {object} sender
    * @param {function(*): void} sendResponse
+   * @param {object} port
    * @returns {boolean}
    */
-  function handleGetGrantGroups(request, sender, sendResponse) {
+  function handleGetGrantGroups(request, sender, sendResponse, port) {
     ;(async () => {
       try {
-        const groups = await getGrantGroupsForOrigin(persistenceOriginForRequest(request))
-        sendResponse({ success: true, groups })
+        const authority = scopeAuthorityForRequest(request, sender, port)
+        if (!authority) {
+          sendResponse({ success: false, groups: [] })
+          return
+        }
+        const groups = await getGrantGroupsForOrigin(authority.persistentOrigin)
+        sendResponse(
+          scopeAuthorityIsCurrent(authority)
+            ? { success: true, groups }
+            : { success: false, groups: [] }
+        )
       } catch {
         sendResponse({ success: false, groups: [] })
       }
@@ -483,20 +609,21 @@
    * @returns {boolean}
    */
   function handleOpen(request, sender, sendResponse, port) {
-    const endpoint = endpointForRequest(sender, port)
-    if (!endpoint) {
+    const authority = scopeAuthorityForRequest(request, sender, port)
+    const endpoint = authority?.endpoint
+    const persistentOrigin = authority?.persistentOrigin
+    if (!authority || !endpoint || !persistentOrigin) {
       sendResponse({ s: 403 })
       return true
     }
     const { tabId, frameKey } = endpoint
     const authorityOrigin = endpoint.origin
-    const persistentOrigin = endpoint.persistentOrigin
-    if (!persistentOrigin || !isFrameLifetimeActive(tabId, frameKey)) {
-      sendResponse({ s: 403 })
-      return true
-    }
     getAllowedDevices(persistentOrigin)
       .then((deviceIds) => {
+        if (!scopeAuthorityIsCurrent(authority)) {
+          sendResponse({ s: 503 })
+          return
+        }
         if (!deviceIds.includes(request.deviceId)) {
           sendResponse({ s: 403 })
           return
@@ -508,13 +635,13 @@
               const stillAllowed = (await getAllowedDevices(persistentOrigin)).includes(
                 request.deviceId
               )
-              const ownerStillAlive = isFrameLifetimeActive(tabId, frameKey)
-              if (!stillAllowed || !ownerStillAlive) {
+              const ownerStillCurrent = scopeAuthorityIsCurrent(authority)
+              if (!stillAllowed || !ownerStillCurrent) {
                 if (response.t)
                   await closeForCleanup(response.i, response.t, (id, token) =>
                     NativeMessaging.closeDevice(id, token)
                   )
-                sendResponse({ s: ownerStillAlive ? 403 : 503 })
+                sendResponse({ s: ownerStillCurrent ? 403 : 503 })
                 return
               }
               let sessionRegistered = true
@@ -610,12 +737,15 @@
   async function handleFrameDestroyed(request, sender, sendResponse, port) {
     const endpoint = endpointForRequest(sender, port)
     if (endpoint) {
-      await purgeFrame(endpoint.tabId, endpoint.frameKey, (deviceId, token) =>
-        NativeMessaging.closeDevice(deviceId, token)
-      )
+      frameEndpoints.delete(port)
+      cancelEndpointDelegations(endpoint)
       const exactKey = documentFrameKey(endpoint.tabId, endpoint.frameId, endpoint.documentId)
       frameDelegations.delete(exactKey)
       permissionsPolicy.delete(exactKey)
+      await purgeFrame(endpoint.tabId, endpoint.frameKey, (deviceId, token) =>
+        NativeMessaging.closeDevice(deviceId, token)
+      )
+      refreshEndpointPersistence(endpoint.tabId)
     }
     sendResponse({ s: 204 })
     return true
@@ -639,14 +769,16 @@
    * @param {object} request
    * @param {object} sender
    * @param {function(*): void} sendResponse
+   * @param {object} port
    * @returns {boolean}
    */
-  function handleRevokeDevice(request, sender, sendResponse) {
+  function handleRevokeDevice(request, sender, sendResponse, port) {
     ;(async () => {
       try {
-        const persistentOrigin = persistenceOriginForRequest(request)
-        const authorityOrigin = request.origin || ''
-        if (!persistentOrigin || !authorityOrigin) {
+        const authority = scopeAuthorityForRequest(request, sender, port)
+        const persistentOrigin = authority?.persistentOrigin
+        const authorityOrigin = authority?.endpoint?.origin || request.origin || ''
+        if (!authority || !persistentOrigin || !authorityOrigin) {
           sendResponse({ success: false, error: 'no origin' })
           return
         }
@@ -655,14 +787,28 @@
             ? request.deviceIds.map((id) => Number(id))
             : [Number(request.deviceId)]
         const groups = await getGrantGroupsForOrigin(persistentOrigin)
+        if (!scopeAuthorityIsCurrent(authority)) {
+          sendResponse({ success: false, error: 'stale frame authority' })
+          return
+        }
         const memberGroups = groups.filter((g) => g.deviceIds.some((id) => targetIds.includes(id)))
         /** @type {Set<number>} */
         const toRevoke = new Set(targetIds)
         for (const g of memberGroups) {
           for (const id of g.deviceIds) toRevoke.add(Number(id))
         }
-        await revokeDevices(persistentOrigin, authorityOrigin, toRevoke, memberGroups)
-        sendResponse({ success: true })
+        const completed = await revokeDevices(
+          persistentOrigin,
+          authorityOrigin,
+          toRevoke,
+          memberGroups,
+          () => scopeAuthorityIsCurrent(authority)
+        )
+        sendResponse(
+          completed && scopeAuthorityIsCurrent(authority)
+            ? { success: true }
+            : { success: false, error: 'stale frame authority' }
+        )
       } catch (e) {
         sendResponse({ success: false, error: e.message })
       }
@@ -762,13 +908,23 @@
    * @param {object} request
    * @param {object} sender
    * @param {function(*): void} sendResponse
+   * @param {object} port
    * @returns {boolean}
    */
-  function handleGetPairedDevices(request, sender, sendResponse) {
+  function handleGetPairedDevices(request, sender, sendResponse, port) {
     ;(async () => {
       try {
-        const deviceIds = await getAllowedDevices(persistenceOriginForRequest(request))
-        sendResponse({ success: true, hashes: deviceIds })
+        const authority = scopeAuthorityForRequest(request, sender, port)
+        if (!authority) {
+          sendResponse({ success: false, hashes: [] })
+          return
+        }
+        const deviceIds = await getAllowedDevices(authority.persistentOrigin)
+        sendResponse(
+          scopeAuthorityIsCurrent(authority)
+            ? { success: true, hashes: deviceIds }
+            : { success: false, hashes: [] }
+        )
       } catch (e) {
         sendResponse({ success: false, error: e.message, hashes: [] })
       }
@@ -780,20 +936,34 @@
    * @param {object} request
    * @param {object} sender
    * @param {function(*): void} sendResponse
+   * @param {object} port
    * @returns {boolean}
    */
-  function handlePairDevice(request, sender, sendResponse) {
+  function handlePairDevice(request, sender, sendResponse, port) {
     ;(async () => {
       try {
-        const origin = persistenceOriginForRequest(request)
-        if (!origin || !request.device) {
+        const authority = scopeAuthorityForRequest(request, sender, port)
+        const origin = authority?.persistentOrigin
+        if (!authority || !origin || !request.device) {
           sendResponse({ success: false, hashes: [] })
           return
         }
         await addAllowedDevice(origin, request.device.deviceId)
+        if (!scopeAuthorityIsCurrent(authority)) {
+          sendResponse({ success: false, hashes: [] })
+          return
+        }
         const deviceIds = await getAllowedDevices(origin)
+        if (!scopeAuthorityIsCurrent(authority)) {
+          sendResponse({ success: false, hashes: [] })
+          return
+        }
         await notifyAllowedDevicesChanged(request.origin, origin, deviceIds)
-        sendResponse({ success: true, hashes: deviceIds })
+        sendResponse(
+          scopeAuthorityIsCurrent(authority)
+            ? { success: true, hashes: deviceIds }
+            : { success: false, hashes: [] }
+        )
       } catch (e) {
         sendResponse({ success: false, error: e.message, hashes: [] })
       }
@@ -805,23 +975,37 @@
    * @param {object} request
    * @param {object} sender
    * @param {function(*): void} sendResponse
+   * @param {object} port
    * @returns {boolean}
    */
-  function handleUnpairDevice(request, sender, sendResponse) {
+  function handleUnpairDevice(request, sender, sendResponse, port) {
     ;(async () => {
       try {
-        const origin = persistenceOriginForRequest(request)
-        if (!origin) {
+        const authority = scopeAuthorityForRequest(request, sender, port)
+        const origin = authority?.persistentOrigin
+        if (!authority || !origin) {
           sendResponse({ success: false, hashes: [] })
           return
         }
         if (request.deviceId) {
           await removeAllowedDevice(origin, request.deviceId)
+          if (!scopeAuthorityIsCurrent(authority)) {
+            sendResponse({ success: false, hashes: [] })
+            return
+          }
           removeDeviceInfo(request.deviceId)
         }
         const deviceIds = await getAllowedDevices(origin)
+        if (!scopeAuthorityIsCurrent(authority)) {
+          sendResponse({ success: false, hashes: [] })
+          return
+        }
         if (request.deviceId) await notifyAllowedDevicesChanged(request.origin, origin, deviceIds)
-        sendResponse({ success: true, hashes: deviceIds })
+        sendResponse(
+          scopeAuthorityIsCurrent(authority)
+            ? { success: true, hashes: deviceIds }
+            : { success: false, hashes: [] }
+        )
       } catch (e) {
         sendResponse({ success: false, error: e.message })
       }
@@ -833,13 +1017,19 @@
    * @param {object} request
    * @param {object} sender
    * @param {function(*): void} sendResponse
+   * @param {object} port
    * @returns {boolean}
    */
-  function handleGetAllowedDevices(request, sender, sendResponse) {
+  function handleGetAllowedDevices(request, sender, sendResponse, port) {
     ;(async () => {
       try {
-        const deviceIds = await getAllowedDevices(persistenceOriginForRequest(request))
-        sendResponse({ deviceIds })
+        const authority = scopeAuthorityForRequest(request, sender, port)
+        if (!authority) {
+          sendResponse({ deviceIds: [] })
+          return
+        }
+        const deviceIds = await getAllowedDevices(authority.persistentOrigin)
+        sendResponse(scopeAuthorityIsCurrent(authority) ? { deviceIds } : { deviceIds: [] })
       } catch {
         sendResponse({ deviceIds: [] })
       }
@@ -1318,8 +1508,56 @@
     return entry && entry.origin === origin ? entry : null
   }
   /**
-   * Computes the effective `hid` policy for one browser-authenticated frame
-   * document.
+   * Ensures every cross-origin container edge in the exact ancestry has a
+   * browser-authenticated delegation result.
+   * @param {object} endpoint
+   * @returns {Promise<boolean>}
+   */
+  async function ensureFrameDelegations(endpoint) {
+    let child = endpoint
+    const visited = new Set()
+    while (child && child.frameId !== 0) {
+      const key = documentFrameKey(child.tabId, child.frameId, child.documentId)
+      if (visited.has(key)) return false
+      visited.add(key)
+      const entry = policyEntryForDocument(
+        child.tabId,
+        child.frameId,
+        child.documentId,
+        child.origin
+      )
+      if (!entry || !entry.parentKey) return false
+      const parent = parentEndpointFor(child)
+      const parentEntry = permissionsPolicy.get(entry.parentKey)
+      if (!parent || !parentEntry || !parentEntry.origin) return false
+      const delegated = await queryFrameDelegation(child)
+      if (!endpointDocumentIsLive(child)) return false
+      frameDelegations.set(key, delegated)
+      child = parent
+    }
+    return !!child
+  }
+  /**
+   * @param {object} entry
+   * @param {Set<string>} visited
+   * @returns {boolean}
+   */
+  function effectivePolicyAllowsEntry(entry, visited = new Set()) {
+    if (!entry || entry.effective.kind === 'none') return false
+    const key = documentFrameKey(entry.tabId, entry.frameId, entry.documentId)
+    if (visited.has(key)) return false
+    visited.add(key)
+    if (entry.parentKey) {
+      const parent = permissionsPolicy.get(entry.parentKey)
+      if (!parent || !effectivePolicyAllowsEntry(parent, visited)) return false
+      if (frameDelegations.get(key) !== true) return false
+    }
+    return (
+      entry.effective.kind === 'all' ||
+      (entry.effective.kind === 'list' && entry.effective.origins.includes(entry.origin))
+    )
+  }
+  /**
    * @param {object} request
    * @param {object} sender
    * @returns {{policy: {hid: string}}}
@@ -1332,24 +1570,10 @@
     if (tabId == null || frameId == null || !documentId || !requestedOrigin) {
       return { policy: { hid: 'none' } }
     }
-    const exactKey = documentFrameKey(tabId, frameId, documentId)
     const entry = policyEntryForDocument(tabId, frameId, documentId, requestedOrigin)
-    if (!entry || entry.effective.kind === 'none') {
-      return { policy: { hid: 'none' } }
-    }
-    if (entry.parentFrameId >= 0) {
-      if (!entry.parentKey) return { policy: { hid: 'none' } }
-      const parent = permissionsPolicy.get(entry.parentKey)
-      if (!parent || !parent.origin) return { policy: { hid: 'none' } }
-      if (parent.origin !== entry.origin && frameDelegations.get(exactKey) !== true) {
-        return { policy: { hid: 'none' } }
-      }
-    }
-    const eff = entry.effective
-    if (eff.kind === 'all' || (eff.kind === 'list' && eff.origins.includes(entry.origin))) {
-      return { policy: { hid: 'allowed' } }
-    }
-    return { policy: { hid: 'none' } }
+    return effectivePolicyAllowsEntry(entry)
+      ? { policy: { hid: 'allowed' } }
+      : { policy: { hid: 'none' } }
   }
   /**
    * @param {object} request
@@ -1360,30 +1584,18 @@
    */
   async function handleGetPolicy(request, sender, sendResponse, port) {
     const endpoint = endpointForRequest(sender, port)
-    if (endpoint) {
-      const key = documentFrameKey(endpoint.tabId, endpoint.frameId, endpoint.documentId)
-      const entry = policyEntryForDocument(
-        endpoint.tabId,
-        endpoint.frameId,
-        endpoint.documentId,
-        endpoint.origin
-      )
-      if (
-        entry &&
-        endpoint.frameId !== 0 &&
-        entry.parentFrameId >= 0 &&
-        entry.parentKey &&
-        permissionsPolicy.get(entry.parentKey)?.origin !== entry.origin
-      ) {
-        const delegated = await queryFrameDelegation(endpoint)
-        frameDelegations.set(key, delegated)
-      }
+    if (
+      !endpoint ||
+      !(await ensureFrameDelegations(endpoint)) ||
+      !endpointDocumentIsLive(endpoint)
+    ) {
+      sendResponse({ policy: { hid: 'none' } })
+      return false
     }
     sendResponse(policyForRequest(request, sender))
     return false
   }
   /**
-   * Records delegation for this browser-authenticated frame document.
    * @param {object} request
    * @param {object} sender
    * @param {function(*): void} sendResponse
