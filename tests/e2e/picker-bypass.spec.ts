@@ -7,6 +7,15 @@ const VENDOR = mockIdFor('vendor')
 const VENDOR_INPUT_SIZE = 64
 
 test.describe.serial('picker consent bypass', () => {
+  test.beforeAll(async ({ sharedPage }) => {
+    await sharedPage.evaluate(async () => {
+      for (const device of await navigator.hid.getDevices()) {
+        if (device.vendorId !== 0x16c0 || device.productId !== 0x0001) continue
+        if (device.opened) await device.close()
+        await device.forget()
+      }
+    })
+  })
   test('baseline: vendor device is not granted before the bypass', async ({ sharedPage }) => {
     const vendorCount = await sharedPage.evaluate(async () => {
       const ds = await navigator.hid.getDevices()
