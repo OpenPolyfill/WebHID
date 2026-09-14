@@ -5,6 +5,7 @@
   const logger = webhid.import('logger')
   const isChromium = webhid.import('isChromium')
   const decodeDeviceCollections = webhid.import('decodeDeviceCollections')
+  const loadEffectiveSettings = webhid.import('loadEffectiveSettings')
   const persistentSiteScope = webhid.import('persistentSiteScope')
   const {
     deviceCache,
@@ -1065,12 +1066,28 @@
    * @param {object} request
    * @param {object} sender
    * @param {function(*): void} sendResponse
+   * @param {object} [port]
    * @returns {boolean}
    */
-  function handleGetDataPlaneStatus(request, sender, sendResponse) {
+  function handleGetDataPlaneStatus(request, sender, sendResponse, port) {
     const tabId = Number.isInteger(request.tabId) ? request.tabId : sender.tab?.id
-    const statuses = tabId == null ? [] : collectDevicePlaneStatuses(tabId, request.origin)
-    sendResponse({
+    const endpoint = endpointForRequest(sender, port)
+    const requestedOrigin =
+      typeof request.statusOrigin === 'string' ? request.statusOrigin : null
+    const endpointOrigin = endpoint ? endpoint.persistentOrigin || endpoint.origin : ''
+    const origin =
+      endpoint && requestedOrigin
+        ? [...frameEndpoints.values()].some(
+            (candidate) =>
+              candidate.tabId === endpoint.tabId &&
+              (candidate.persistentOrigin || candidate.origin) === requestedOrigin &&
+              endpointDocumentIsLive(candidate)
+          )
+          ? requestedOrigin
+          : endpointOrigin
+        : endpointOrigin || request.origin
+    const statuses = tabId == null ? [] : collectDevicePlaneStatuses(tabId, origin)
+    const response = () => ({
       planes: statuses.map(({ deviceId, plane, mode, generation, ready }) => ({
         deviceId,
         plane,
@@ -1080,7 +1097,10 @@
       })),
       defaultPlane: webhid.import('GLOBAL_DEFAULTS').dataPlane
     })
-    return false
+    loadEffectiveSettings(origin || '')
+      .then((settings) => sendResponse({ ...response(), defaultPlane: settings.dataPlane }))
+      .catch(() => sendResponse(response()))
+    return true
   }
 
   /**
@@ -1722,6 +1742,7 @@
     getAllowedDevices: handleGetAllowedDevices,
     getOpenDeviceIds: handleGetOpenDeviceIds,
     getDataPlaneStatus: handleGetDataPlaneStatus,
+    getDataPlaneStatusForOrigin: handleGetDataPlaneStatus,
     setDataPlaneStatus: handleSetDataPlaneStatus,
     deviceCountChanged: handleDeviceCountChanged,
     showPageAction: handleShowPageAction,
@@ -1767,7 +1788,15 @@
           return
         }
         const effectiveRequest = endpoint
-          ? { ...request, origin: endpoint.origin, persistentOrigin: endpoint.persistentOrigin }
+          ? {
+              ...request,
+              origin: endpoint.origin,
+              persistentOrigin: endpoint.persistentOrigin,
+              ...(request.action === 'getDataPlaneStatusForOrigin' &&
+              typeof request.statusOrigin === 'string'
+                ? { statusOrigin: request.statusOrigin }
+                : {})
+            }
           : request
         const handler = HANDLERS[effectiveRequest.action]
         if (!handler) return
