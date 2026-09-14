@@ -432,17 +432,38 @@
   }
 
   browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    const isStatusRequest =
+      request.action === 'getDataPlaneStatus' || request.action === 'getDataPlaneStatusForOrigin'
     if (
       request.action !== 'getOpenDeviceIds' &&
-      request.action !== 'getDataPlaneStatus' &&
+      !isStatusRequest &&
       request.action !== 'getFrameOrigins'
     )
       return false
-    sendBackgroundRequest({
-      action: request.action,
-      origin: typeof request.origin === 'string' ? request.origin : undefined
-    })
-      .then(sendResponse)
+    const trustedOriginRequest =
+      request.action === 'getDataPlaneStatusForOrigin' &&
+      sender?.id === browser.runtime.id &&
+      typeof request.origin === 'string'
+    const origin = trustedOriginRequest
+      ? request.origin
+      : frameContext?.persistentOrigin || frameContext?.origin || window.location.origin
+    const backgroundRequest = {
+      action: trustedOriginRequest ? 'getDataPlaneStatusForOrigin' : request.action,
+      ...(request.action === 'getDataPlaneStatus'
+        ? {}
+        : trustedOriginRequest
+          ? { statusOrigin: origin }
+          : { origin })
+    }
+    sendBackgroundRequest(backgroundRequest)
+      .then(async (response) => {
+        if (!isStatusRequest) {
+          sendResponse(response)
+          return
+        }
+        const settings = await loadSettingsForOrigin(origin)
+        sendResponse({ ...response, defaultPlane: settings.dataPlane })
+      })
       .catch(() => sendResponse({ ids: [], planes: [], origins: [] }))
     return true
   })
