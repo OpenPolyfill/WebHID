@@ -1714,15 +1714,6 @@
   }
 
   /**
-   * Returns this exact document's origin for local settings and UI requests.
-   * @returns {string[]}
-   */
-  function collectFrameOrigins() {
-    const origin = frameContext.origin
-    return origin && (origin.startsWith('http:') || origin.startsWith('https:')) ? [origin] : []
-  }
-
-  /**
    * Dispatches one message arriving on a request port: maps its request id to
    * the port and routes it to the request handler.
    * @param {MessagePort} port
@@ -1900,19 +1891,93 @@
     }
   }
   /**
-   * @param {{childFrameId: number, childDocumentId: string}} query
+   * @param {string} token
+   * @returns {string|null}
+   */
+  function delegationToken(token) {
+    if (!token) return null
+    const first = token[0]
+    const last = token[token.length - 1]
+    if (first === "'" || first === '"') {
+      if (last !== first || token.length < 2) return null
+      return token.slice(1, -1)
+    }
+    if (last === "'" || last === '"') return null
+    return token
+  }
+  /**
+   * @param {string} value
+   * @param {string} [base]
+   * @returns {string|null}
+   */
+  function originFromDelegationUrl(value, base) {
+    try {
+      const urlType = pristine.types.URL
+      const url = urlType.construct(base ? [value, base] : [value])
+      const origin = urlType.proto.getters.origin(url)
+      return typeof origin === 'string' && origin !== 'null' ? origin : null
+    } catch {
+      return null
+    }
+  }
+  /**
+   * @param {Element} frame
+   * @param {{childOrigin: string, parentOrigin: string}} query
+   * @param {string[]} tokens
+   * @returns {boolean}
+   */
+  function allowHidDirective(frame, query, tokens) {
+    if (tokens.length === 0) {
+      const src = frame.getAttribute('src') || ''
+      const sourceOrigin = src ? originFromDelegationUrl(src, document.baseURI) : query.parentOrigin
+      return sourceOrigin === query.childOrigin
+    }
+    for (const rawToken of tokens) {
+      const token = delegationToken(rawToken)
+      if (token === null) return false
+      if (token === 'none') return false
+      if (token === '*') return true
+      if (token === 'self' && query.childOrigin === query.parentOrigin) return true
+      if (token === 'src') {
+        const src = frame.getAttribute('src') || ''
+        const sourceOrigin = src
+          ? originFromDelegationUrl(src, document.baseURI)
+          : query.parentOrigin
+        if (sourceOrigin === query.childOrigin) return true
+        continue
+      }
+      if (originFromDelegationUrl(token) === query.childOrigin) return true
+    }
+    return false
+  }
+  /**
+   * @param {{childFrameId: number, childDocumentId: string, childOrigin: string, parentOrigin: string}} query
    * @returns {boolean}
    */
   function frameDelegationForChild(query) {
     try {
       const getFrameId = browser.runtime.getFrameId
       const getDocumentId = browser.runtime.getDocumentId
-      if (typeof getFrameId !== 'function' || typeof getDocumentId !== 'function') return false
+      if (
+        typeof getFrameId !== 'function' ||
+        typeof getDocumentId !== 'function' ||
+        typeof query.childOrigin !== 'string' ||
+        typeof query.parentOrigin !== 'string'
+      )
+        return false
       for (const frame of document.querySelectorAll('iframe,frame')) {
         if (getFrameId(frame) !== query.childFrameId) continue
         if (getDocumentId(frame) !== query.childDocumentId) continue
-        const allow = frame.getAttribute('allow') || ''
-        return allow.split(';').some((directive) => /^\s*hid(?:\s|$)/i.test(directive))
+        const directives = (frame.getAttribute('allow') || '')
+          .split(';')
+          .filter((directive) => directive.trim().toLowerCase().startsWith('hid'))
+        if (directives.length === 0) return query.childOrigin === query.parentOrigin
+        for (const directive of directives) {
+          const tokens = directive.trim().split(/\s+/)
+          if (tokens.shift()?.toLowerCase() !== 'hid') return false
+          if (!allowHidDirective(frame, query, tokens)) return false
+        }
+        return true
       }
     } catch {
       void 0

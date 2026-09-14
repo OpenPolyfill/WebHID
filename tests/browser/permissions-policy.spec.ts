@@ -196,6 +196,54 @@ test.describe('Cross-origin iframe', () => {
     expect(raw!.hidUndefined).toBe(false)
   })
 
+  test('iframe hid allowlists are origin and document exact', async ({
+    page,
+    pageUrl,
+    crossUrl
+  }) => {
+    await page.goto(pageUrl('/iframe-parent'), {
+      waitUntil: 'domcontentloaded',
+      timeout: 15000
+    })
+    await page.evaluate(
+      ({ main, cross, pageUrlForTest }) => {
+        const add = (id: string, src: string, allow: string) => {
+          const frame = document.createElement('iframe')
+          frame.id = id
+          frame.src = src
+          frame.allow = allow
+          document.body.appendChild(frame)
+        }
+        add('allow-none', cross + '/iframe-child-no-allow', "hid 'none'")
+        add('allow-other', cross + '/iframe-child-no-allow', `hid ${main}`)
+        add('allow-self', pageUrlForTest, "hid 'self'")
+        add('allow-bare', cross + '/iframe-child-no-allow', 'hid')
+      },
+      { main: pageUrl(''), cross: crossUrl(''), pageUrlForTest: pageUrl('/iframe-child-no-allow') }
+    )
+    await expect
+      .poll(
+        () => page.frames().filter((frame) => frame.url().includes('/iframe-child-no-allow')).length
+      )
+      .toBe(4)
+    expect(
+      (await readFrameResult(await frameWithId(page, 'allow-none', 'iframe-child')))?.queryHid
+    ).toBe('denied')
+    expect(
+      (await readFrameResult(await frameWithId(page, 'allow-other', 'iframe-child')))?.queryHid
+    ).toBe('denied')
+    expect(
+      (await readFrameResult(await frameWithId(page, 'allow-self', 'iframe-child')))?.queryHid
+    ).toBe('granted')
+    const bare = await frameWithId(page, 'allow-bare', 'iframe-child')
+    expect((await readFrameResult(bare))?.queryHid).toBe('granted')
+    await bare.evaluate((url) => {
+      window.location.href = url
+    }, pageUrl('/iframe-child-no-allow'))
+    const navigated = await frameWithId(page, 'allow-bare', 'iframe-child')
+    expect((await readFrameResult(navigated))?.queryHid).toBe('denied')
+  })
+
   test('cross-origin iframe cannot forge a sibling allow="hid" src', async ({
     sharedPage,
     crossUrl
@@ -307,6 +355,53 @@ test.describe('Cross-origin iframe', () => {
     )
     expect(delivered).toEqual({ scopeA: 2, scopeB: 1 })
   })
+
+  test('top navigation retires old opaque persistence authorities', async ({
+    page,
+    pageUrl,
+    crossUrl,
+    backgroundPage
+  }) => {
+    await page.goto(pageUrl('/iframe-parent'), {
+      waitUntil: 'domcontentloaded',
+      timeout: 15000
+    })
+    await page.evaluate((src) => {
+      const frame = document.createElement('iframe')
+      frame.id = 'old-opaque'
+      frame.setAttribute('sandbox', 'allow-scripts')
+      frame.src = src
+      document.body.appendChild(frame)
+    }, pageUrl('/iframe-child-no-allow'))
+    await frameWithId(page, 'old-opaque', '/iframe-child-no-allow')
+    await page.goto(crossUrl('/iframe-parent'), {
+      waitUntil: 'domcontentloaded',
+      timeout: 15000
+    })
+    await page.evaluate((src) => {
+      const frame = document.createElement('iframe')
+      frame.id = 'new-opaque'
+      frame.setAttribute('sandbox', 'allow-scripts')
+      frame.src = src
+      document.body.appendChild(frame)
+    }, pageUrl('/iframe-child-no-allow'))
+    await frameWithId(page, 'new-opaque', '/iframe-child-no-allow')
+    const targets = (await backgroundPage.evaluate(async () => {
+      const tabs = await browser.tabs.query({ active: true, currentWindow: true })
+      const tab = tabs[0]
+      if (!tab || tab.id == null) return []
+      const raw: unknown = await browser.tabs.sendMessage(tab.id, { action: 'getFrameOrigins' })
+      return (
+        (raw as { targets?: Array<{ kind: string; persistentOrigin: string | null }> }).targets ||
+        []
+      )
+    })) as Array<{ kind: string; persistentOrigin: string | null }>
+    const opaque = targets.filter((target) => target.kind === 'opaque')
+    expect(opaque).toHaveLength(1)
+    expect(opaque[0].persistentOrigin).toBe(
+      `opaque|${new URL(crossUrl('')).origin}|${new URL(pageUrl('')).origin}`
+    )
+  })
   test('B2: top-level hid=() denies a delegated cross-origin child', async ({
     page,
     pageUrl,
@@ -330,6 +425,79 @@ test.describe('Cross-origin iframe', () => {
     expect(raw!.isCrossOrigin).toBe(true)
     expect(raw!.queryHid).toBe('denied')
     expect(raw!.hidUndefined).toBe(false)
+  })
+
+  test('ancestor container denial cannot be re-enabled by descendants', async ({
+    page,
+    pageUrl,
+    crossUrl
+  }) => {
+    await page.goto(pageUrl('/iframe-parent'), {
+      waitUntil: 'domcontentloaded',
+      timeout: 15000
+    })
+    await page.evaluate((src) => {
+      for (const id of ['nested-denied-same', 'nested-denied-cross']) {
+        const frame = document.createElement('iframe')
+        frame.id = id
+        frame.src = src
+        document.body.appendChild(frame)
+      }
+    }, crossUrl('/iframe-child-no-allow'))
+    const deniedSameParent = await frameWithId(page, 'nested-denied-same', 'iframe-child')
+    const deniedCrossParent = await frameWithId(page, 'nested-denied-cross', 'iframe-child')
+    await deniedSameParent.evaluate((src) => {
+      const child = document.createElement('iframe')
+      child.id = 'nested-denied-same-child'
+      child.src = src
+      child.allow = 'hid'
+      document.body.appendChild(child)
+    }, crossUrl('/iframe-child-no-allow'))
+    await deniedCrossParent.evaluate((src) => {
+      const child = document.createElement('iframe')
+      child.id = 'nested-denied-cross-child'
+      child.src = src
+      child.allow = 'hid'
+      document.body.appendChild(child)
+    }, pageUrl('/iframe-child-no-allow'))
+    expect(
+      (await readFrameResult(await frameWithId(page, 'nested-denied-same-child', 'iframe-child')))
+        ?.queryHid
+    ).toBe('denied')
+    expect(
+      (await readFrameResult(await frameWithId(page, 'nested-denied-cross-child', 'iframe-child')))
+        ?.queryHid
+    ).toBe('denied')
+  })
+
+  test('delegation remains available through an allowed nested topology', async ({
+    page,
+    pageUrl,
+    crossUrl
+  }) => {
+    await page.goto(pageUrl('/iframe-parent'), {
+      waitUntil: 'domcontentloaded',
+      timeout: 15000
+    })
+    await page.evaluate((src) => {
+      const parent = document.createElement('iframe')
+      parent.id = 'nested-allowed-parent'
+      parent.src = src
+      parent.allow = 'hid'
+      document.body.appendChild(parent)
+    }, crossUrl('/iframe-child-no-allow'))
+    const parent = await frameWithId(page, 'nested-allowed-parent', 'iframe-child')
+    await parent.evaluate((src) => {
+      const child = document.createElement('iframe')
+      child.id = 'nested-allowed-child'
+      child.src = src
+      child.allow = 'hid'
+      document.body.appendChild(child)
+    }, crossUrl('/iframe-child-no-allow'))
+    expect(
+      (await readFrameResult(await frameWithId(page, 'nested-allowed-child', 'iframe-child')))
+        ?.queryHid
+    ).toBe('granted')
   })
 
   test('cross-origin iframe worker cannot bypass policy without delegation', async ({

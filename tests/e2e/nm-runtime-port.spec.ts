@@ -110,4 +110,119 @@ test.describe.serial('Exact frame endpoint fanout', () => {
       await sharedPage.goto(`${origin}/tests/test-page.html`, { waitUntil: 'domcontentloaded' })
     }
   })
+
+  test('pending open cannot publish after top document replacement', async ({
+    sharedPage,
+    backgroundPage,
+    vendorDevice
+  }) => {
+    const origin = new URL(sharedPage.url()).origin
+    const settingKey = `settings :: ${origin} :: dataPlane`
+    await vendorDevice.ready
+    const previous = await backgroundPage.evaluate(
+      (key: string) => browser.storage.local.get(key),
+      settingKey
+    )
+    await backgroundPage.evaluate(
+      (key: string) => browser.storage.local.set({ [key]: 'nm' }),
+      settingKey
+    )
+    try {
+      await sharedPage.goto(`${origin}/tests/test-page.html`, { waitUntil: 'domcontentloaded' })
+      await sharedPage.waitForFunction(() => typeof navigator.hid !== 'undefined', {
+        timeout: 15000
+      })
+      await grantDevicePermission(sharedPage, [VENDOR])
+      await backgroundPage.evaluate(() => {
+        const state = globalThis as unknown as {
+          webhid: {
+            import(name: string): {
+              openDevice: (deviceId: number) => Promise<object>
+              closeDevice: (deviceId: number, token: string) => Promise<object>
+            }
+          }
+          __originalOpenDevice?: (deviceId: number) => Promise<object>
+          __originalCloseDevice?: (deviceId: number, token: string) => Promise<object>
+          __openEntered?: boolean
+          __releaseOpen?: () => void
+        }
+        const nm = state.webhid.import('NativeMessaging')
+        state.__originalOpenDevice = nm.openDevice.bind(nm)
+        state.__originalCloseDevice = nm.closeDevice.bind(nm)
+        state.__openEntered = false
+        nm.openDevice = async (deviceId: number) => {
+          state.__openEntered = true
+          await new Promise<void>((resolve) => {
+            state.__releaseOpen = resolve
+          })
+          return { s: 200, i: deviceId, t: 'stale-open' }
+        }
+        nm.closeDevice = () => Promise.resolve({ s: 204 })
+      })
+      await sharedPage.evaluate(() => {
+        const state = window as unknown as { pendingOpen?: Promise<unknown> }
+        state.pendingOpen = (async () => {
+          const devices = await navigator.hid.getDevices()
+          if (!devices[0]) throw new Error('paired device missing')
+          try {
+            await devices[0].open()
+          } catch {
+            return
+          }
+        })()
+      })
+      await expect
+        .poll(() =>
+          backgroundPage.evaluate(
+            () => (globalThis as unknown as { __openEntered?: boolean }).__openEntered === true
+          )
+        )
+        .toBe(true)
+      await sharedPage.goto(`${origin}/tests/test-page.html`, { waitUntil: 'domcontentloaded' })
+      await sharedPage.waitForFunction(() => typeof navigator.hid !== 'undefined', {
+        timeout: 15000
+      })
+      await backgroundPage.evaluate(() => {
+        ;(globalThis as unknown as { __releaseOpen?: () => void }).__releaseOpen?.()
+      })
+      await expect
+        .poll(
+          () =>
+            backgroundPage.evaluate(async () => {
+              const tabs = await browser.tabs.query({ active: true, currentWindow: true })
+              const tab = tabs[0]
+              if (!tab || tab.id == null) return []
+              const raw = (await browser.tabs.sendMessage(tab.id, {
+                action: 'getOpenDeviceIds'
+              })) as { ids?: string[] } | null
+              return raw?.ids || []
+            }),
+          { timeout: 15000 }
+        )
+        .toEqual([])
+    } finally {
+      await backgroundPage.evaluate(() => {
+        const state = globalThis as unknown as {
+          webhid: {
+            import(name: string): {
+              openDevice: (deviceId: number) => Promise<object>
+              closeDevice: (deviceId: number, token: string) => Promise<object>
+            }
+          }
+          __originalOpenDevice?: (deviceId: number) => Promise<object>
+          __originalCloseDevice?: (deviceId: number, token: string) => Promise<object>
+        }
+        const nm = state.webhid.import('NativeMessaging')
+        if (state.__originalOpenDevice) nm.openDevice = state.__originalOpenDevice
+        if (state.__originalCloseDevice) nm.closeDevice = state.__originalCloseDevice
+      })
+      await backgroundPage.evaluate(
+        ({ key, values }) =>
+          browser.storage.local
+            .remove(!(key in values) ? [key] : [])
+            .then(() => (key in values ? browser.storage.local.set(values) : undefined)),
+        { key: settingKey, values: previous }
+      )
+    }
+  })
 })
