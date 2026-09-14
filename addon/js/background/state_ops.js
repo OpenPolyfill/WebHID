@@ -467,6 +467,28 @@
     }
     await Promise.all(pending)
   }
+  /**
+   * Closes sessions owned by one live frame when its persistence scope changes.
+   * @param {number} tabId
+   * @param {string} frameKey
+   * @param {Function} closeDeviceFn
+   * @returns {Promise<void>}
+   */
+  async function closeFrameSessions(tabId, frameKey, closeDeviceFn) {
+    if (tabId == null || !frameKey) return
+    const deviceIds = new Set([...deviceSessions.keys(), ...deviceTabMap.keys()])
+    const pending = []
+    for (const deviceId of deviceIds) {
+      const tokens = collectDeviceSessionsForFrame(deviceId, tabId, frameKey)
+      for (const token of tokens) {
+        unregisterDeviceTab(deviceId, tabId)
+        pending.push(closeForCleanup(deviceId, token, closeDeviceFn))
+      }
+      const tabs = deviceTabMap.get(deviceId)
+      if (tabs && tabs.size === 0) deviceTabMap.delete(deviceId)
+    }
+    await Promise.all(pending)
+  }
 
   /**
    * Moves a session whose daemon close failed into the orphan retry queue.
@@ -562,7 +584,8 @@
   }
 
   /**
-   * Clears all browser ownership derived from one dead NM authority lifetime.
+   * Clears browser ownership derived from one dead NM authority lifetime.
+   * Document lifetimes remain tied to their browser-authenticated endpoints.
    * @returns {void}
    */
   function clearAuthorityOwnership() {
@@ -574,7 +597,6 @@
     }
     deviceTabMap.clear()
     deviceSessions.clear()
-    frameLifetimes.clear()
     orphanCleanup.clear()
     for (const tabId of tabs) refreshBadge(tabId)
   }
@@ -625,6 +647,7 @@
     retireFrameLifetime,
     purgeFrame,
     purgeTab,
+    closeFrameSessions,
     broadcastGlobalReset,
     clearAuthorityOwnership,
     clearDeviceOwnership,

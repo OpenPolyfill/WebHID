@@ -86,3 +86,23 @@ test('MAIN does not bootstrap through a top WindowProxy', () => {
   assert.doesNotMatch(main, /windowObject\.top/)
   assert.match(main, /reflect\.deleteProperty\(globalThis, 'webhid'\)/)
 })
+
+test('endpoint replacement retires prior document authorities', () => {
+  assert.match(messages, /frameId === 0 \|\| candidate\.frameId === frameId/)
+  assert.match(messages, /frameEndpoints\.delete\(port\)/)
+  assert.match(messages, /endpointAuthorityIsCurrent/)
+  assert.match(messages, /closeFrameSessions/)
+})
+
+test('missing top endpoint fails child persistence closed', () => {
+  assert.match(messages, /const persistentOrigin = top[\s\S]*: null/)
+  assert.doesNotMatch(messages, /const top = topEndpointForTab\(tabId\)\s+if \(!top\) return/)
+})
+
+test('iframe delegation is not a presence-only grant', () => {
+  assert.match(bridge, /function delegationToken/)
+  assert.match(bridge, /token === 'none'/)
+  assert.match(bridge, /token === 'self'/)
+  assert.match(bridge, /token === 'src'/)
+  assert.doesNotMatch(bridge, /some\(\(directive\) => \^\\\\s\*hid/)
+})
