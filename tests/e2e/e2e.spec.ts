@@ -99,11 +99,11 @@ test.describe.serial('WebHID E2E', () => {
     sharedPage,
     vendorDevice
   }) => {
-    await grantDevicePermission(sharedPage, [VENDOR])
     await sharedPage.evaluate(async (ctx: VendorCtx) => {
       const ds = await navigator.hid.getDevices()
-      const d = ds.find((x) => x.vendorId === ctx.f.vendorId && x.productId === ctx.f.productId)!
-      await d.open()
+      const d = ds.find((x) => x.vendorId === ctx.f.vendorId && x.productId === ctx.f.productId)
+      if (!d) throw new Error('vendor device missing after initial grant')
+      if (!d.opened) await d.open()
     }, VENDOR_CTX)
     const outputPromise = waitForOutputReport(vendorDevice)
     const opened = await sharedPage.evaluate(async (ctx: VendorCtx) => {
