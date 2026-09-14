@@ -708,21 +708,25 @@ test('site settings stay isolated across frame origins', async ({
       const tab = tabs.find((entry) => entry.url?.startsWith(topUrl))
       if (!tab?.id) return null
       return {
+        current: await browser.tabs.sendMessage(tab.id, {
+          action: 'getDataPlaneStatus'
+        }),
         top: await browser.tabs.sendMessage(tab.id, {
-          action: 'getDataPlaneStatus',
+          action: 'getDataPlaneStatusForOrigin',
           origin: topOrigin
         }),
         child: await browser.tabs.sendMessage(tab.id, {
-          action: 'getDataPlaneStatus',
+          action: 'getDataPlaneStatusForOrigin',
           origin: childOrigin
         }),
         unknown: await browser.tabs.sendMessage(tab.id, {
-          action: 'getDataPlaneStatus',
+          action: 'getDataPlaneStatusForOrigin',
           origin: 'http://unknown.invalid'
         })
       }
     }, { topUrl, topOrigin, childOrigin })
     expect(statuses).toEqual({
+      current: expect.objectContaining({ defaultPlane: 'nm' }),
       top: expect.objectContaining({ defaultPlane: 'nm' }),
       child: expect.objectContaining({ defaultPlane: 'ws' }),
       unknown: expect.objectContaining({ planes: [], defaultPlane: expect.any(String) })
