@@ -124,17 +124,31 @@
     }
   }
   /**
+   * Removes picker requests owned by an endpoint.
    * @param {object} endpoint
    * @returns {void}
    */
+  function clearPendingPickerForEndpoint(endpoint) {
+    for (const [tabId, request] of pendingPicker) {
+      if (request.port !== endpoint.port && request.uiPort !== endpoint.port) continue
+      pendingPicker.delete(tabId)
+    }
+  }
+  /**
+   * Retires one endpoint and all state owned by its document lifetime.
+   * @param {object} endpoint
+   * @returns {Promise<void>|null}
+   */
   function retireEndpoint(endpoint) {
-    if (frameEndpoints.get(endpoint.port) !== endpoint) return
-    frameEndpoints.delete(endpoint.port)
+    clearPendingPickerForEndpoint(endpoint)
+    if (endpoint.retired) return null
+    endpoint.retired = true
+    if (frameEndpoints.get(endpoint.port) === endpoint) frameEndpoints.delete(endpoint.port)
     cancelEndpointDelegations(endpoint)
     const exactKey = documentFrameKey(endpoint.tabId, endpoint.frameId, endpoint.documentId)
     frameDelegations.delete(exactKey)
     permissionsPolicy.delete(exactKey)
-    void purgeFrame(endpoint.tabId, endpoint.frameKey, (deviceId, token) =>
+    return purgeFrame(endpoint.tabId, endpoint.frameKey, (deviceId, token) =>
       NativeMessaging.closeDevice(deviceId, token)
     ).catch((e) => logger.debug('frame endpoint cleanup failed', e))
   }
@@ -737,15 +751,9 @@
   async function handleFrameDestroyed(request, sender, sendResponse, port) {
     const endpoint = endpointForRequest(sender, port)
     if (endpoint) {
-      frameEndpoints.delete(port)
-      cancelEndpointDelegations(endpoint)
-      const exactKey = documentFrameKey(endpoint.tabId, endpoint.frameId, endpoint.documentId)
-      frameDelegations.delete(exactKey)
-      permissionsPolicy.delete(exactKey)
-      await purgeFrame(endpoint.tabId, endpoint.frameKey, (deviceId, token) =>
-        NativeMessaging.closeDevice(deviceId, token)
-      )
+      const cleanup = retireEndpoint(endpoint)
       refreshEndpointPersistence(endpoint.tabId)
+      if (cleanup) await cleanup
     }
     sendResponse({ s: 204 })
     return true
@@ -1788,21 +1796,9 @@
       })
       if (endpoint) {
         port.onDisconnect.addListener(() => {
-          if (frameEndpoints.get(port) !== endpoint) return
-          frameEndpoints.delete(port)
+          const cleanup = retireEndpoint(endpoint)
           refreshEndpointPersistence(endpoint.tabId)
-          for (const [tabId, request] of pendingPicker) {
-            if (request.port !== port && request.uiPort !== port) continue
-            pendingPicker.delete(tabId)
-          }
-          for (const [requestId, pending] of delegationPending) {
-            if (pending.endpoint !== endpoint && pending.parent !== endpoint) continue
-            delegationPending.delete(requestId)
-            pending.resolve(false)
-          }
-          purgeFrame(endpoint.tabId, endpoint.frameKey, (deviceId, token) =>
-            NativeMessaging.closeDevice(deviceId, token)
-          ).catch((e) => logger.debug('frame endpoint cleanup failed', e))
+          if (cleanup) void cleanup
         })
       }
     })
