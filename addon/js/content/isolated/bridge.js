@@ -100,7 +100,7 @@
       devicePicker
         .show(message.filters || [], message.exclusionFilters || [])
         .then((result) =>
-          controlPort.postMessage({
+          sendBackgroundRequest({
             action: 'inlinePickerResult',
             requestId: message.requestId,
             selected: !!(result.devices && result.devices.length),
