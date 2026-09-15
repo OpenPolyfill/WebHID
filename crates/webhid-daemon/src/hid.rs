@@ -65,6 +65,12 @@ fn identity_needs_descriptor(info: &HidDeviceInfo) -> bool {
     resolve_linux_syspath(&path).is_some_and(|base| base.contains("/misc/uhid/"))
 }
 
+/// Identities on other platforms never depend on the descriptor.
+#[cfg(not(target_os = "linux"))]
+fn identity_needs_descriptor(_info: &HidDeviceInfo) -> bool {
+    false
+}
+
 #[cfg(target_os = "linux")]
 fn resolve_linux_syspath(devnode: &str) -> Option<String> {
     let name = std::path::Path::new(devnode).file_name()?.to_str()?;
