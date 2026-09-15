@@ -9,22 +9,60 @@ thread_local! {
     static READ_BUF: RefCell<Vec<u8>> = RefCell::new(Vec::with_capacity(256));
 }
 
-/// Generate a stable `u32` device identifier from the device path.
+/// Generate a stable `u32` device identifier for one logical HID interface.
 ///
-/// Uses FNV-1a 32-bit hash of the platform-specific device path
-/// (Linux: `/dev/hidraw0` / syspath; Windows: device interface path;
-/// macOS: IOService path). Same device in same port → same hash across
-/// reboots. Two devices with identical vid/pid/serial but different
+/// Uses FNV-1a 32-bit hash of a per-interface identity string (Linux:
+/// canonical sysfs path of the HID interface; Windows: device interface
+/// path; macOS: IOService path). Same device in same port → same hash
+/// across reboots. Two devices with identical vid/pid/serial but different
 /// physical ports have different paths → different hashes.
-pub fn make_device_id(info: &HidDeviceInfo) -> u32 {
+///
+/// Linux UHID needs one extra ingredient. Every virtual device lives under
+/// `/sys/devices/virtual/misc/uhid/<bus:vid:pid>.<instance>`, and the
+/// instance suffix is a kernel-wide counter reassigned at every device
+/// creation. Hashing the full path would change the id at every reconnect,
+/// while stripping the suffix collapses concurrent sibling interfaces that
+/// share bus:vid:pid into one ambiguous id (open() could pick the wrong
+/// sibling). The uhid identity therefore keeps the stable
+/// `<bus:vid:pid>` base and mixes in the report descriptor: a recreated
+/// virtual device keeps its descriptor and its id, siblings with different
+/// descriptors get different ids, and siblings sharing every attribute are
+/// indistinguishable and merge as one identity.
+///
+/// `descriptor` is the raw report descriptor of the interface; it only
+/// participates for Linux uhid devices and may be empty when it could not
+/// be read (the identity then degrades to the base path).
+pub fn make_device_id(info: &HidDeviceInfo, descriptor: &[u8]) -> u32 {
     let path = info.path().to_string_lossy();
     #[cfg(target_os = "linux")]
     {
-        if let Some(syspath) = resolve_linux_syspath(&path) {
-            return webhid::hash_device_id(&syspath);
+        if let Some(base) = resolve_linux_syspath(&path) {
+            return webhid::hash_device_id(&identity_string(&base, descriptor));
         }
     }
+    let _ = descriptor;
     webhid::hash_device_id(&path)
+}
+
+/// The per-interface identity string whose FNV-1a hash is the device id.
+/// Also used as the physical-device bucket key (`physical_identity`), so
+/// uhid siblings with different report descriptors count as distinct
+/// physical devices for collision detection.
+#[cfg(target_os = "linux")]
+fn identity_string(base: &str, descriptor: &[u8]) -> String {
+    if base.contains("/misc/uhid/") && !descriptor.is_empty() {
+        format!("{base}+{}", hex::encode(descriptor))
+    } else {
+        base.to_owned()
+    }
+}
+
+/// Whether the interface's identity needs its report descriptor (Linux
+/// uhid devices only, see `make_device_id`).
+#[cfg(target_os = "linux")]
+fn identity_needs_descriptor(info: &HidDeviceInfo) -> bool {
+    let path = info.path().to_string_lossy();
+    resolve_linux_syspath(&path).is_some_and(|base| base.contains("/misc/uhid/"))
 }
 
 #[cfg(target_os = "linux")]
@@ -32,6 +70,20 @@ fn resolve_linux_syspath(devnode: &str) -> Option<String> {
     let name = std::path::Path::new(devnode).file_name()?.to_str()?;
     let syslink = format!("/sys/class/hidraw/{name}/device");
     let realpath = std::fs::canonicalize(&syslink).ok()?;
+    sysfs_base_from_realpath(&realpath)
+}
+
+/// Pure core of `resolve_linux_syspath`, testable without sysfs: the
+/// stable identity base for a canonicalized HID device sysfs path.
+/// Real buses (USB, Bluetooth…) place each interface under its own stable
+/// parent (`.../1-7:1.2/0003:046D:C52B.0009`), so the parent of the hid
+/// device directory is the interface identity. All uhid devices share one
+/// parent (`/sys/devices/virtual/misc/uhid`), so the stable `bus:vid:pid`
+/// prefix of the hid device directory name is appended while the kernel
+/// instance suffix (`.NNNN`) is dropped; descriptor mixing in
+/// `identity_string` keeps sibling uhid interfaces apart.
+#[cfg(target_os = "linux")]
+fn sysfs_base_from_realpath(realpath: &std::path::Path) -> Option<String> {
     let parent = realpath.parent()?;
     let mut base = parent.to_string_lossy().into_owned();
 
@@ -61,38 +113,43 @@ pub fn enumerate() -> anyhow::Result<Vec<DeviceInfo>> {
 /// Stable physical-device identity used to keep two distinct no-serial
 /// devices apart while still merging multiple interfaces of one device.
 /// On Linux the syspath base already identifies the physical device (all
-/// of its interfaces canonicalize to the same path); elsewhere the hidapi
-/// path is the best available per-interface identity.
-fn physical_identity(info: &HidDeviceInfo) -> String {
+/// of its interfaces canonicalize to the same path); uhid devices mix in
+/// their report descriptor instead, since every uhid device is its own
+/// physical device and only the descriptor separates same-vid/pid
+/// siblings stably (see `make_device_id`). Elsewhere the hidapi path is
+/// the best available per-interface identity.
+fn physical_identity(info: &HidDeviceInfo, descriptor: &[u8]) -> String {
     let path = info.path().to_string_lossy();
     #[cfg(target_os = "linux")]
     {
-        if let Some(syspath) = resolve_linux_syspath(&path) {
-            return syspath;
+        if let Some(base) = resolve_linux_syspath(&path) {
+            return identity_string(&base, descriptor);
         }
     }
+    let _ = descriptor;
     path.into_owned()
 }
 
 /// Key that identifies one physical device across hidapi entries: the
 /// serial number when present, the platform physical identity otherwise.
 /// Used to detect 32-bit device-id hash collisions.
-fn physical_key(info: &HidDeviceInfo) -> String {
+fn physical_key(info: &HidDeviceInfo, descriptor: &[u8]) -> String {
     let serial = info.serial_number().unwrap_or("");
     if serial.is_empty() {
-        physical_identity(info)
+        physical_identity(info, descriptor)
     } else {
         format!("serial:{serial}")
     }
 }
 
-/// Number of distinct physical devices among `entries`. More than one means
-/// the entries' shared 32-bit device id is ambiguous and must not be used
-/// as an authority (opening the id could select the wrong physical device).
-fn distinct_physical_count(entries: &[&HidDeviceInfo]) -> usize {
+/// Number of distinct physical devices among `(entry, descriptor)` pairs.
+/// More than one means the entries' shared 32-bit device id is ambiguous
+/// and must not be used as an authority (opening the id could select the
+/// wrong physical device).
+fn distinct_physical_count(entries: &[(&HidDeviceInfo, Vec<u8>)]) -> usize {
     let mut seen = std::collections::HashSet::new();
-    for info in entries {
-        seen.insert(physical_key(info));
+    for (info, desc) in entries {
+        seen.insert(physical_key(info, desc));
     }
     seen.len()
 }
@@ -104,7 +161,7 @@ pub fn enumerate_with_filter(filter: Option<&EnumerateFilter>) -> anyhow::Result
     type PhysKey = String;
     let api = HidApi::new()?;
 
-    let mut groups: std::collections::HashMap<GroupKey, Vec<(PhysKey, &HidDeviceInfo)>> =
+    let mut groups: std::collections::HashMap<GroupKey, Vec<(PhysKey, &HidDeviceInfo, Vec<u8>)>> =
         std::collections::HashMap::new();
     // device_id -> distinct physical devices hashing to it; used to drop
     // colliding ids from enumeration entirely (fail closed).
@@ -123,24 +180,25 @@ pub fn enumerate_with_filter(filter: Option<&EnumerateFilter>) -> anyhow::Result
         if is_blocked_pub(info) {
             continue;
         }
+        let desc = read_raw_report_descriptor_with_api(&api, info);
         let serial = info.serial_number().unwrap_or("").to_string();
         // When the device has no serial number, distinct physical devices
         // with identical vid/pid must not be merged. Bucket by physical
         // identity instead; with a serial, the serial already separates
         // devices and every interface of one device shares one bucket.
         let phys = if serial.is_empty() {
-            physical_identity(info)
+            physical_identity(info, &desc)
         } else {
             String::new()
         };
         id_physical
-            .entry(make_device_id(info))
+            .entry(make_device_id(info, &desc))
             .or_default()
-            .insert(physical_key(info));
+            .insert(physical_key(info, &desc));
         groups
             .entry((info.vendor_id(), info.product_id(), serial))
             .or_default()
-            .push((phys, info));
+            .push((phys, info, desc));
     }
 
     let mut devices = Vec::new();
@@ -149,8 +207,7 @@ pub fn enumerate_with_filter(filter: Option<&EnumerateFilter>) -> anyhow::Result
             &String,
             std::collections::HashSet<Vec<u8>>,
         > = std::collections::HashMap::new();
-        for (phys, info) in ifaces {
-            let desc = read_raw_report_descriptor_with_api(&api, info);
+        for (phys, info, desc) in ifaces {
             if !seen_descriptors
                 .entry(phys)
                 .or_default()
@@ -158,7 +215,7 @@ pub fn enumerate_with_filter(filter: Option<&EnumerateFilter>) -> anyhow::Result
             {
                 continue;
             }
-            if let Some(d) = info_from_hidapi_pub_with_desc(info, desc) {
+            if let Some(d) = info_from_hidapi_pub_with_desc(info, desc.clone()) {
                 if is_blocked_by_vendor_product(&d) {
                     continue;
                 }
@@ -225,7 +282,7 @@ pub(crate) fn build_device_info(
         serial_number: info.serial_number().map(String::from),
         usage_page: Some(info.usage_page()),
         usage: Some(info.usage()),
-        device_id: make_device_id(info),
+        device_id: make_device_id(info, &raw_descriptor),
         descriptor_parse_failed: collections.is_empty(),
         collections,
         max_input_report_size,
@@ -344,25 +401,34 @@ pub fn is_blocked_by_vendor_product(info: &webhid::DeviceInfo) -> bool {
     crate::blocklist::device_is_blocked(rules, info.vendor_id, info.product_id)
 }
 
-/// Open a device by its stable `device_id` (u32 FNV-1a hash of path).
+/// Open a device by its stable `device_id` (u32 FNV-1a hash of the
+/// interface identity, see `make_device_id`).
 /// Returns (DeviceInfo, uses_numbered_reports, HidDevice) for I/O.
 /// When the 32-bit id is shared by more than one distinct physical device,
 /// the id is ambiguous and opening it is refused: the permission could
 /// otherwise resolve to the wrong physical device.
 pub fn open_by_device_id(device_id: u32) -> anyhow::Result<(DeviceInfo, bool, HidDevice)> {
     let api = HidApi::new()?;
-    let matches: Vec<&HidDeviceInfo> = api
-        .device_list()
-        .filter(|info| !is_blocked_pub(info) && make_device_id(info) == device_id)
-        .collect();
+    let mut matches: Vec<(&HidDeviceInfo, Vec<u8>)> = Vec::new();
+    for info in api.device_list() {
+        if is_blocked_pub(info) {
+            continue;
+        }
+        if !identity_needs_descriptor(info) && make_device_id(info, &[]) != device_id {
+            continue;
+        }
+        let desc = read_raw_report_descriptor_with_api(&api, info);
+        if make_device_id(info, &desc) == device_id {
+            matches.push((info, desc));
+        }
+    }
     if distinct_physical_count(&matches) > 1 {
         return Err(anyhow::anyhow!(
             "device_id '{device_id:#x}' is ambiguous ({} distinct physical devices hash to it); refusing to open",
             distinct_physical_count(&matches)
         ));
     }
-    for info in matches {
-        let desc = read_raw_report_descriptor_with_api(&api, info);
+    for (info, desc) in matches {
         let device_info = info_from_hidapi_pub_with_desc(info, desc.clone())
             .ok_or_else(|| anyhow::anyhow!("failed to build DeviceInfo"))?;
         if is_blocked_by_vendor_product(&device_info) {

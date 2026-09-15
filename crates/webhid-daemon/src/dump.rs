@@ -173,7 +173,7 @@ fn dump_entry(api: &HidApi, info: &HidDeviceInfo, hex_descriptor: bool) -> DumpE
         && prune_device_info(device_info).is_some();
 
     DumpEntry {
-        device_id: hid::make_device_id(info),
+        device_id: hid::make_device_id(info, &desc),
         vendor_id: info.vendor_id(),
         product_id: info.product_id(),
         product_name: info.product_string().map(String::from).unwrap_or_default(),

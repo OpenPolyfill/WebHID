@@ -34,6 +34,11 @@ udev = "0.8"
 libc = "0.2"
 hidapi = { version = "2.6", default-features = false, features = ["linux-native"] }
 
+[dev-dependencies]
+# The uhid identity regression tests create real virtual devices through
+# the mock's platform backend instead of shelling out to the CLI.
+webhid-mock = { path = "../webhid-mock" }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 hidapi = { version = "2.6", default-features = false, features = ["macos-shared-device"] }
 core-foundation-sys = "0.8"
