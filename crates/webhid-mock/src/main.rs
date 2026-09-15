@@ -17,12 +17,7 @@
 #![cfg_attr(target_os = "windows", allow(dead_code, unused_imports))]
 
 #[cfg(not(target_os = "windows"))]
-use std::io::Write;
-
-#[cfg(target_os = "linux")]
-mod linux;
-#[cfg(target_os = "macos")]
-mod macos;
+use webhid_mock::SpawnOpts;
 
 #[cfg(not(target_os = "windows"))]
 use anyhow::Context as _;
@@ -60,12 +55,12 @@ fn try_main() -> anyhow::Result<()> {
 
 #[cfg(target_os = "linux")]
 fn run_spawn(opts: SpawnOpts) -> anyhow::Result<()> {
-    linux::run_spawn(opts)
+    webhid_mock::linux::run_spawn(opts)
 }
 
 #[cfg(target_os = "macos")]
 fn run_spawn(opts: SpawnOpts) -> anyhow::Result<()> {
-    macos::run_spawn(opts)
+    webhid_mock::macos::run_spawn(opts)
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -76,19 +71,6 @@ struct Args {
 #[cfg(not(target_os = "windows"))]
 enum Command {
     Spawn(SpawnOpts),
-}
-
-#[cfg(not(target_os = "windows"))]
-struct SpawnOpts {
-    vid: u16,
-    pid: u16,
-    name: String,
-    descriptor_path: String,
-    usage_page: Option<u16>,
-    usage: Option<u16>,
-    bus: u16,
-    version: u16,
-    country: u8,
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -247,82 +229,4 @@ fn print_usage() {
     eprintln!();
     eprintln!("OS events (output reports, get/set report queries) are echoed to stdout");
     eprintln!("as JSON. On stdin EOF, the device is destroyed and the process exits.");
-}
-
-/// A spawned virtual HID device. Platform backends implement this in
-/// `linux.rs` / `macos.rs`; the JSON command handler only needs input
-/// injection, everything else (event echoing) is backend-specific.
-#[cfg(not(target_os = "windows"))]
-trait MockDevice {
-    /// Inject an input report into the host. `payload` must already include
-    /// the report ID as its first byte for numbered-report devices.
-    fn send_input(&self, payload: &[u8]) -> anyhow::Result<()>;
-}
-
-#[cfg(not(target_os = "windows"))]
-#[derive(PartialEq)]
-enum LoopAction {
-    Continue,
-    Exit,
-}
-
-/// Handle one JSON command line. Shared by all platform event loops.
-#[cfg(not(target_os = "windows"))]
-fn handle_command(dev: &dyn MockDevice, line: &str) -> anyhow::Result<LoopAction> {
-    #[derive(serde::Deserialize)]
-    #[serde(tag = "cmd")]
-    enum Cmd {
-        #[serde(rename = "input")]
-        Input {
-            #[serde(rename = "reportId")]
-            report_id: Option<u8>,
-            data: Option<Vec<u8>>,
-        },
-        #[serde(rename = "destroy")]
-        Destroy,
-        #[serde(rename = "ping")]
-        Ping,
-    }
-
-    let cmd: Cmd = serde_json::from_str(line).context("failed to parse JSON command")?;
-    match cmd {
-        Cmd::Input { report_id, data } => {
-            let payload = match (report_id, data) {
-                (Some(rid), Some(mut d)) => {
-                    let mut buf = Vec::with_capacity(1 + d.len());
-                    buf.push(rid);
-                    buf.append(&mut d);
-                    buf
-                }
-                (Some(rid), None) => vec![rid],
-                (None, Some(d)) => d,
-                (None, None) => Vec::new(),
-            };
-            if payload.is_empty() {
-                anyhow::bail!("input command requires either reportId or data");
-            }
-            dev.send_input(&payload)?;
-            emit_stdout(&serde_json::json!({
-                "event": "input_sent",
-                "reportId": report_id.unwrap_or(0),
-                "size": payload.len(),
-            }));
-        }
-        Cmd::Destroy => {
-            return Ok(LoopAction::Exit);
-        }
-        Cmd::Ping => {
-            emit_stdout(&serde_json::json!({"event": "pong"}));
-        }
-    }
-    Ok(LoopAction::Continue)
-}
-
-/// Emit one JSON event line on stdout. Safe to call from multiple threads
-/// (each call takes the stdout lock for the whole line).
-#[cfg(not(target_os = "windows"))]
-fn emit_stdout(value: &serde_json::Value) {
-    let mut stdout = std::io::stdout().lock();
-    let _ = writeln!(stdout, "{}", value);
-    let _ = stdout.flush();
 }
