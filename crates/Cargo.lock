@@ -1644,6 +1644,7 @@ dependencies = [
  "tokio-tungstenite",
  "udev 0.8.0",
  "webhid",
+ "webhid-mock",
  "wtransport",
 ]
 
