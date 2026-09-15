@@ -1,10 +1,13 @@
 ;(async function () {
+  const VENDOR_VID = 0x16c0
+  const VENDOR_PID = 0x0001
+
   self.onmessage = async (event) => {
     if (!event.data || event.data.type !== 'start') return
     const id = event.data.id
     try {
       const devices = await navigator.hid.getDevices()
-      const device = devices[0]
+      const device = devices.find((x) => x.vendorId === VENDOR_VID && x.productId === VENDOR_PID)
       if (!device) throw new Error('no paired device for ' + id)
       let closing = false
       device.oninputreport = (reportEvent) => {
