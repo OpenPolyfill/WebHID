@@ -286,15 +286,19 @@ test.describe.serial('WebHID E2E', () => {
   })
 
   test('device disconnect closes opened HIDDevice state', async ({ sharedPage, vendorDevice }) => {
-    const disconnected = sharedPage.evaluate(async () => {
-      const device = (await navigator.hid.getDevices())[0]
+    const disconnected = sharedPage.evaluate(async (f: DeviceFilter) => {
+      // Granted devices sort by numeric deviceId, so the vendor must be
+      // found by vid/pid, not by list position.
+      const device = (await navigator.hid.getDevices()).find(
+        (x) => x.vendorId === f.vendorId && x.productId === f.productId
+      )
       if (!device) throw new Error('vendor device missing before disconnect')
       if (!device.opened) await device.open()
       const { promise, resolve, reject } = Promise.withResolvers<boolean>()
       navigator.hid.addEventListener('disconnect', () => resolve(device.opened === false))
       setTimeout(() => reject(new Error('disconnect event not received within 10s')), 10000)
       return promise
-    })
+    }, VENDOR)
     vendorDevice.process.stdin!.write('{"cmd":"destroy"}\n')
     expect(await disconnected).toBe(true)
 
