@@ -37,6 +37,7 @@ const PAGES: Record<string, string> = {
   '/same-origin-policy-allowed': loadPage('same-origin-policy.html'),
   '/same-origin-policy-blocked': loadPage('same-origin-policy.html'),
   '/iframe-same-origin-parent': loadPage('iframe-same-origin-parent.html'),
+  '/mux-transport': loadPage('mux-transport.html'),
   '/policy-check-allowed-self': loadPage('policy-check.html'),
   '/policy-check-allowed-all': loadPage('policy-check.html'),
   '/iframe-parent': loadPage('iframe-parent.html'),

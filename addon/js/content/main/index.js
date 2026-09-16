@@ -63,6 +63,7 @@
   const nativeWorkerTerminate = types.Worker ? types.Worker.getDescriptor('terminate').value : null
   const nativeWindowAddEventListener = host.windowAddEventListener
   const nativeWindowRemoveEventListener = host.windowRemoveEventListener
+  const nativeWindowTopPostMessage = host.windowTopPostMessage
   const nativeCreateObjectURL = host.url.createObjectURL
   const nativeRevokeObjectURL = host.url.revokeObjectURL
   const nativeCryptoRandomUUID = host.cryptoRandomUUID
@@ -735,6 +736,25 @@
 
   /** @type {MessagePort|null} */
   let bridgePort = null
+  /**
+   * Whether this document is a same-origin non-top frame that should hand its
+   * bridge endpoint to the top frame's multiplexer. Uses only browser-owned
+   * frame relationships, never page-visible state.
+   * @returns {boolean}
+   */
+  function sameOriginTopCandidate() {
+    if (isWorker || windowObject === windowObject.top) return false
+    const origin = host.window && windowObject.location ? windowObject.location.origin : null
+    if (!origin || origin === 'null') return false
+    try {
+      if (windowObject.top.location.origin !== origin) return false
+    } catch {
+      return false
+    }
+    return true
+  }
+  const fanoutCandidate = sameOriginTopCandidate()
+  const fanoutNonce = nativeCryptoRandomUUID()
   const bridgeReady = isWorker
     ? (() => {
         const ch = new NativeMessageChannel()
@@ -777,6 +797,36 @@
             configurable: true,
             set: capturePageBridge
           })
+          if (!isWorker && windowObject === windowObject.top) {
+            callNative(nativeWindowAddEventListener, windowObject, 'message', (event) => {
+              if (!event.data || event.data.type !== 'webhidFanoutRequest') return
+              logger.warn('fanout: top relay observed request')
+              const source = event.source
+              if (!source || typeof source.postMessage !== 'function') return
+              if (typeof event.data.nonce !== 'string' || !event.data.nonce) return
+              if (!event.origin || event.origin === 'null') return
+              let frameIndex = -1
+              try {
+                for (let index = 0; index < windowObject.frames.length; index++) {
+                  if (windowObject.frames[index] === source) {
+                    frameIndex = index
+                    break
+                  }
+                }
+              } catch {
+                frameIndex = -1
+              }
+              if (frameIndex < 0) return
+              promiseOps.then(bridgeReady, () => {
+                if (!bridgePort) return
+                callNative(nativeMessagePortPostMessage, bridgePort, {
+                  type: 'fanoutRequest',
+                  nonce: event.data.nonce,
+                  frameIndex
+                })
+              })
+            })
+          }
         })
   if (!isWorker) setupTrustedTypesSharing()
 
@@ -786,7 +836,7 @@
     callNative(nativeMessagePortAddEventListener, bridgePort, 'message', (event) => {
       if (!event.data) return
       const handler = BRIDGE_MESSAGE_HANDLERS[event.data.type]
-      if (handler) handler(event.data)
+      if (handler) handler(event.data, event.ports)
     })
     callNative(nativeMessagePortStart, bridgePort)
   }
@@ -827,10 +877,38 @@
    * @returns {void}
    */
   function handleResponseMessage(data) {
-    const handler = pending[data.id]
-    if (handler) {
+    const entry = pending[data.id]
+    if (entry) {
       delete pending[data.id]
-      handler(data.result)
+      entry.handler(data.result)
+    }
+  }
+
+  /**
+   * Receives the top bridge's fanout delivery on behalf of one child frame and
+   * assigns the multiplexer port into that child's navigator.hid so its
+   * polyfill can switch from the direct endpoint port to the shared mux port.
+   * @param {object} data
+   * @param {MessagePort[]} [ports]
+   * @returns {void}
+   */
+  function handleFanoutDeliverMessage(data, ports) {
+    const port = ports && ports[0]
+    const frameIndex = data.frameIndex
+    if (!port || !Number.isInteger(frameIndex)) return
+    let childWindow = null
+    try {
+      childWindow = windowObject.frames[frameIndex]
+    } catch {
+      void 0
+    }
+    const nav = childWindow && childWindow.navigator ? childWindow.navigator : null
+    const hid = nav && nav.hid ? nav.hid : null
+    if (!hid) return
+    try {
+      nav.hid = port
+    } catch {
+      void 0
     }
   }
 
@@ -842,6 +920,13 @@
     dataPlaneUnavailable: handleDataPlaneUnavailable,
     spawnWorkerRequest: handleSpawnWorkerMessage,
     wireWorkerPort: handleWireWorkerPort,
+    fanoutDeliver: handleFanoutDeliverMessage,
+    fanoutPairSeed: (data) => {
+      if (typeof data.channel !== 'string' || typeof data.pairOtp !== 'string') return
+      if (typeof data.ackOtp !== 'string') return
+      muxPairSeed = { channel: data.channel, pairOtp: data.pairOtp, ackOtp: data.ackOtp }
+      startMuxPairing()
+    },
     response: handleResponseMessage,
     settings: (data) => {
       settings.set(data.settings || {})
@@ -880,17 +965,21 @@
           resolve({ s: 504 })
         }, timeoutMs)
       }
-      pending[id] = (result) => {
-        if (settled) return
-        settled = true
-        if (timer) nativeClearTimeout(timer)
-        delete pending[id]
-        resolve(result)
-      }
       const msg = { id, action, payload: payload || {} }
       const transfers = []
       if (payload && payload.data instanceof Uint8Array) {
         arrayOps.push(transfers, payload.data.buffer)
+      }
+      pending[id] = {
+        handler: (result) => {
+          if (settled) return
+          settled = true
+          if (timer) nativeClearTimeout(timer)
+          delete pending[id]
+          resolve(result)
+        },
+        msg,
+        transfers
       }
       callNative(
         nativeMessagePortPostMessage,
@@ -2029,12 +2118,16 @@
     }
     return new Promise((resolve, reject) => {
       const id = frameNonce + ':' + ++nextReqId
-      pending[id] = (result) => {
-        promiseOps.then(grantRequestedDevices(result), resolve, (e) =>
-          reject(
-            new NativeDOMException(e != null ? e.message : 'requestDevice failed', 'NetworkError')
+      pending[id] = {
+        handler: (result) => {
+          promiseOps.then(grantRequestedDevices(result), resolve, (e) =>
+            reject(
+              new NativeDOMException(e != null ? e.message : 'requestDevice failed', 'NetworkError')
+            )
           )
-        )
+        },
+        msg: null,
+        transfers: []
       }
       callNative(nativeMessagePortPostMessage, bridgePort, {
         id,
@@ -2203,6 +2296,135 @@
   }
   installNavigatorHid()
 
+  /** @type {{channel: string, pairOtp: string, ackOtp: string}|null} */
+  let muxPairSeed = null
+  /** @type {MessagePort|null} */
+  let pendingHandoffPort = null
+  /** @type {number|null} */
+  let muxPairTimer = null
+  /**
+   * Completes the handoff after the mutual OTP pairing succeeded: adopts the
+   * multiplexer port, retires the direct endpoint, and re-drives traffic.
+   * @param {MessagePort} port
+   * @returns {void}
+   */
+  function completeHandoff(port) {
+    pendingHandoffPort = null
+    if (muxPairTimer) {
+      nativeClearTimeout(muxPairTimer)
+      muxPairTimer = null
+    }
+    port.onmessage = null
+    installNavigatorHid()
+    const directPort = bridgePort
+    bridgePort = port
+    if (directPort) {
+      try {
+        callNative(nativeMessagePortPostMessage, directPort, { type: 'fanoutSwitched' })
+      } catch {
+        void 0
+      }
+    }
+    setupBridgePort()
+    for (const entry of Object.values(pending)) {
+      try {
+        callNative(
+          nativeMessagePortPostMessage,
+          bridgePort,
+          entry.msg,
+          entry.transfers.length ? makePristineIterable(entry.transfers) : undefined
+        )
+      } catch {
+        void 0
+      }
+    }
+    promiseOps.then(sendRequest('getSettings', {}), (result) => {
+      if (result) settings.set(result)
+    })
+  }
+  /**
+   * Runs the mutual pairing on a delivered candidate port: proves the child
+   * polyfill with pairOtp over the mux channel, then adopts only after the
+   * bridge proves itself with ackOtp on the same channel. On mismatch or
+   * timeout the candidate is discarded and the direct port keeps serving.
+   * @returns {void}
+   */
+  function startMuxPairing() {
+    const port = pendingHandoffPort
+    if (!muxPairSeed || !port) return
+    port.onmessage = (event) => {
+      const data = event.data
+      if (data && data.type === 'fanoutPairAck' && data.otp === muxPairSeed.ackOtp) {
+        completeHandoff(port)
+        return
+      }
+      void 0
+    }
+    try {
+      callNative(
+        nativeMessagePortPostMessage,
+        port,
+        { type: 'fanoutPair', channel: muxPairSeed.channel, otp: muxPairSeed.pairOtp }
+      )
+    } catch (e) {
+      pendingHandoffPort = null
+      try {
+        port.close()
+      } catch {
+        void 0
+      }
+      logger.warn('fanout pair send failed', e)
+      return
+    }
+    muxPairTimer = nativeSetTimeout(() => {
+      if (pendingHandoffPort !== port) return
+      pendingHandoffPort = null
+      muxPairSeed = null
+      try {
+        port.onmessage = null
+        port.close()
+      } catch {
+        void 0
+      }
+    }, 2000)
+  }
+  /**
+   * Installs the fanout handoff on the navigator.hid accessor itself for
+   * same-origin child frames: reads keep returning the polyfill while the set
+   * holds a delivered candidate port until the mutual OTP pairing completes.
+   * The direct port keeps serving the page until then and is retired only by
+   * the completed handoff. Announces the frame to the top multiplexer.
+   * @returns {void}
+   */
+  function installFanoutHandoff() {
+    if (isWorker || !fanoutCandidate || !hidInstance) return
+    const captureTopBridge = (candidate) => {
+      if (!candidate || typeof candidate.postMessage !== 'function') return
+      pendingHandoffPort = candidate
+      startMuxPairing()
+    }
+    object.defineProperty(Navigator.prototype, 'hid', {
+      get() {
+        return hidInstance
+      },
+      set: captureTopBridge,
+      configurable: true,
+      enumerable: true
+    })
+    try {
+      if (!nativeWindowTopPostMessage) throw new Error('no top postMessage')
+      callNative(
+        nativeWindowTopPostMessage,
+        null,
+        { type: 'webhidFanoutRequest', nonce: fanoutNonce },
+        '*'
+      )
+    } catch (e) {
+      logger.warn('fanout request delivery failed', e)
+    }
+  }
+  installFanoutHandoff()
+
   /**
    * @param {{clientKey: string|null, terminated: boolean, sent: boolean}} state
    * @returns {void}
@@ -2239,10 +2461,14 @@
           promiseOps.then(bridgeReady, () => {
             if (!bridgePort) return
             const id = frameNonce + ':' + ++nextReqId
-            pending[id] = (result) => {
-              if (!result || typeof result.clientKey !== 'string') return
-              state.clientKey = result.clientKey
-              if (state.terminated) destroyWorkerClient(state)
+            pending[id] = {
+              handler: (result) => {
+                if (!result || typeof result.clientKey !== 'string') return
+                state.clientKey = result.clientKey
+                if (state.terminated) destroyWorkerClient(state)
+              },
+              msg: null,
+              transfers: []
             }
             callNative(
               nativeMessagePortPostMessage,

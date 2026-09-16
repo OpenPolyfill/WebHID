@@ -1,6 +1,7 @@
 ;(function () {
   const webhid = globalThis.webhid
   const { registerContentPort, postToContentPort } = webhid.import('content-ports')
+  const pristine = webhid.import('pristine')
   const http = webhid.import('http')
   const logger = webhid.import('logger')
   const isChromium = webhid.import('isChromium')
@@ -13,6 +14,7 @@
     permissionsPolicy,
     frameDelegations,
     frameEndpoints,
+    fanoutEndpoints,
     pageActionVisibility
   } = webhid.import('bgState')
   const {
@@ -89,6 +91,7 @@
     try {
       endpoint.port.postMessage({
         action: 'endpointMetadata',
+        channel: endpoint.channel,
         endpointId: endpoint.id,
         tabId: endpoint.tabId,
         frameId: endpoint.frameId,
@@ -108,7 +111,7 @@
    */
   function refreshEndpointPersistence(tabId) {
     const top = topEndpointForTab(tabId)
-    for (const endpoint of frameEndpoints.values()) {
+    for (const endpoint of [...frameEndpoints.values(), ...fanoutEndpoints.values()]) {
       if (endpoint.tabId !== tabId) continue
       const persistentOrigin = top
         ? persistentSiteScope(endpoint.origin, endpoint.url, top.origin)
@@ -136,22 +139,81 @@
     }
   }
   /**
-   * Retires one endpoint and all state owned by its document lifetime.
+   * @param {object} endpoint
+   * @returns {boolean}
+   */
+  function hasOtherLiveEndpoint(endpoint) {
+    for (const candidate of frameEndpoints.values()) {
+      if (
+        candidate !== endpoint &&
+        !candidate.retired &&
+        candidate.tabId === endpoint.tabId &&
+        candidate.frameId === endpoint.frameId &&
+        candidate.documentId === endpoint.documentId
+      )
+        return true
+    }
+    for (const candidate of fanoutEndpoints.values()) {
+      if (
+        candidate !== endpoint &&
+        !candidate.retired &&
+        candidate.tabId === endpoint.tabId &&
+        candidate.frameId === endpoint.frameId &&
+        candidate.documentId === endpoint.documentId
+      )
+        return true
+    }
+    return false
+  }
+  /**
+   * Retires one endpoint and all state owned by its document lifetime. A
+   * top-frame endpoint's retirement cascades to every logical fanout endpoint
+   * multiplexed over the same runtime port.
    * @param {object} endpoint
    * @returns {Promise<void>|null}
    */
   function retireEndpoint(endpoint) {
     clearPendingPickerForEndpoint(endpoint)
     if (endpoint.retired) return null
+    const preserveDocumentState = hasOtherLiveEndpoint(endpoint)
     endpoint.retired = true
+    const cascades = []
+    if (!endpoint.channel) {
+      for (const candidate of [...fanoutEndpoints.values()]) {
+        if (candidate.port === endpoint.port && !candidate.retired) {
+          const retired = retireEndpoint(candidate)
+          if (retired) cascades.push(retired)
+        }
+      }
+    }
+    fanoutEndpoints.delete(endpoint.channel)
     if (frameEndpoints.get(endpoint.port) === endpoint) frameEndpoints.delete(endpoint.port)
     cancelEndpointDelegations(endpoint)
     const exactKey = documentFrameKey(endpoint.tabId, endpoint.frameId, endpoint.documentId)
-    frameDelegations.delete(exactKey)
-    permissionsPolicy.delete(exactKey)
-    return purgeFrame(endpoint.tabId, endpoint.frameKey, (deviceId, token) =>
+    if (!preserveDocumentState) {
+      frameDelegations.delete(exactKey)
+      permissionsPolicy.delete(exactKey)
+    }
+    const purge = purgeFrame(endpoint.tabId, endpoint.frameKey, (deviceId, token) =>
       NativeMessaging.closeDevice(deviceId, token)
     ).catch((e) => logger.debug('frame endpoint cleanup failed', e))
+    if (cascades.length === 0) return purge
+    return Promise.all([...cascades, purge]).catch((e) =>
+      logger.debug('fanout retire cascade failed', e)
+    )
+  }
+  /**
+   * Whether `endpoint` is still registered as live against the delivery port.
+   * Logical fanout endpoints share the top frame's runtime port.
+   * @param {object} endpoint
+   * @param {object} port
+   * @returns {boolean}
+   */
+  function endpointRegistryIsCurrent(endpoint, port) {
+    if (endpoint.channel) {
+      return fanoutEndpoints.get(endpoint.channel) === endpoint && endpoint.port === port
+    }
+    return frameEndpoints.get(port) === endpoint
   }
   /**
    * @param {object} endpoint
@@ -161,7 +223,7 @@
    */
   function endpointAuthorityIsCurrent(endpoint, port, persistentOrigin) {
     return (
-      frameEndpoints.get(port) === endpoint &&
+      endpointRegistryIsCurrent(endpoint, port) &&
       isFrameLifetimeActive(endpoint.tabId, endpoint.frameKey) &&
       endpoint.persistentOrigin === persistentOrigin
     )
@@ -172,7 +234,7 @@
    */
   function endpointDocumentIsLive(endpoint) {
     return (
-      frameEndpoints.get(endpoint.port) === endpoint &&
+      endpointRegistryIsCurrent(endpoint, endpoint.port) &&
       isFrameLifetimeActive(endpoint.tabId, endpoint.frameKey)
     )
   }
@@ -194,7 +256,7 @@
    * @returns {{endpoint: object|null, port: object|undefined, persistentOrigin: string}|null}
    */
   function scopeAuthorityForRequest(request, _sender, port) {
-    const endpoint = port ? endpointForPort(port) : null
+    const endpoint = port ? endpointForRequest(request, port) : null
     if (port && !endpoint) return null
     const persistentOrigin = endpoint
       ? endpoint.persistentOrigin
@@ -231,6 +293,10 @@
       if (candidate.tabId === tabId && (frameId === 0 || candidate.frameId === frameId))
         retireEndpoint(candidate)
     }
+    for (const candidate of [...fanoutEndpoints.values()]) {
+      if (candidate.tabId === tabId && (frameId === 0 || candidate.frameId === frameId))
+        retireEndpoint(candidate)
+    }
     const endpoint = {
       id: 'endpoint-' + ++nextEndpointId,
       port,
@@ -248,6 +314,24 @@
       return null
     }
     refreshEndpointPersistence(tabId)
+    for (const logical of [...fanoutEndpoints.values()]) {
+      if (
+        !logical.pendingSeed ||
+        logical.tabId !== tabId ||
+        logical.frameId !== frameId ||
+        logical.documentId !== documentId ||
+        !endpointDocumentIsLive(logical)
+      )
+        continue
+      const seed = logical.pendingSeed
+      delete logical.pendingSeed
+      postToContentPort(port, {
+        action: 'fanoutPairSeed',
+        channel: logical.channel,
+        pairOtp: seed.pairOtp,
+        ackOtp: seed.ackOtp
+      })
+    }
     return endpoint
   }
   /**
@@ -258,17 +342,37 @@
     return (port && frameEndpoints.get(port)) || null
   }
   /**
+   * Resolves the endpoint a request is attributed to. Requests carrying a
+   * fanout channel tag resolve to that logical endpoint, validated against the
+   * delivery port; unknown or retired channels never fall back to the top
+   * endpoint.
+   * @param {object} request
+   * @param {object} port
+   * @returns {object|null}
+   */
+  function endpointForRequest(request, port) {
+    if (typeof request.channel === 'string' && request.channel) {
+      const logical = fanoutEndpoints.get(request.channel) || null
+      if (!logical || logical.retired || logical.port !== port) return null
+      return logical
+    }
+    return endpointForPort(port)
+  }
+  /**
+   * Backwards-compatible alias used by handlers that resolve by sender.
+   * @param {object} request
    * @param {object} sender
    * @param {object} port
    * @returns {object|null}
    */
-  function endpointForRequest(sender, port) {
-    return endpointForPort(port)
+  function endpointForSender(request, sender, port) {
+    return endpointForRequest(request, port)
   }
   const delegationPending = new Map()
   let nextDelegationId = 0
   /**
-   * Resolves the parent endpoint for an exact child document.
+   * Resolves the parent endpoint for an exact child document. Logical fanout
+   * endpoints can be parents of other fanout endpoints sharing the same port.
    * @param {object} endpoint
    * @returns {object|null}
    */
@@ -282,13 +386,14 @@
     const parentFrameId = entry && entry.parentFrameId >= 0 ? entry.parentFrameId : 0
     const parentDocumentId = entry && entry.parentDocumentId
     if (endpoint.frameId === 0) return null
-    for (const candidate of frameEndpoints.values()) {
+    for (const candidate of [...frameEndpoints.values(), ...fanoutEndpoints.values()]) {
       if (
         candidate.tabId === endpoint.tabId &&
         candidate.frameId === parentFrameId &&
         (!parentDocumentId || candidate.documentId === parentDocumentId) &&
         candidate.documentId &&
-        candidate.port !== endpoint.port
+        candidate !== endpoint &&
+        (endpoint.channel || candidate.port !== endpoint.port)
       )
         return candidate
     }
@@ -708,7 +813,7 @@
    * @returns {boolean}
    */
   function handleClose(request, sender, sendResponse, port) {
-    const endpoint = endpointForRequest(sender, port)
+    const endpoint = endpointForSender(request, sender, port)
     const tabId = endpoint?.tabId
     if (!endpoint || !isTabAuthorizedForDevice(tabId, request.deviceId)) {
       sendResponse({ s: 403 })
@@ -750,7 +855,7 @@
    * @returns {boolean}
    */
   async function handleFrameDestroyed(request, sender, sendResponse, port) {
-    const endpoint = endpointForRequest(sender, port)
+    const endpoint = endpointForSender(request, sender, port)
     if (endpoint) {
       const cleanup = retireEndpoint(endpoint)
       refreshEndpointPersistence(endpoint.tabId)
@@ -758,6 +863,113 @@
     }
     sendResponse({ s: 204 })
     return true
+  }
+
+  /**
+   * Registers a logical fanout endpoint on behalf of one exact child document.
+   * The top-frame bridge requests it after authenticating the child through
+   * browser-owned frame identity; persistent partitioning follows the same
+   * site scope as any other endpoint. The background issues two pairing
+   * nonces: the child presents pairOtp over the mux channel to prove the
+   * port's page end is the real polyfill, and the bridge presents ackOtp to
+   * prove its end is the background-brokered bridge. ackOtp reaches the
+   * child bridge only over its control port, never a page-visible surface.
+   * @param {object} request
+   * @param {object} sender
+   * @param {function(*): void} sendResponse
+   * @param {object} port
+   * @returns {boolean}
+   */
+  function handleFanoutOpen(request, sender, sendResponse, port) {
+    const top = endpointForPort(port)
+    if (
+      !top ||
+      top.frameId !== 0 ||
+      !endpointDocumentIsLive(top) ||
+      typeof request.channel !== 'string' ||
+      !request.channel ||
+      fanoutEndpoints.has(request.channel) ||
+      !Number.isInteger(request.frameId) ||
+      request.frameId <= 0 ||
+      typeof request.documentId !== 'string' ||
+      !request.documentId ||
+      request.origin !== top.origin
+    ) {
+      sendResponse({ ok: false })
+      return false
+    }
+    for (const candidate of [...fanoutEndpoints.values()]) {
+      if (candidate.tabId === top.tabId && candidate.frameId === request.frameId)
+        retireEndpoint(candidate)
+    }
+    const endpoint = {
+      id: 'fanout-' + ++nextEndpointId,
+      channel: request.channel,
+      port,
+      tabId: top.tabId,
+      frameId: request.frameId,
+      documentId: request.documentId,
+      origin: request.origin,
+      url: typeof request.url === 'string' ? request.url : '',
+      persistentOrigin: undefined,
+      frameKey: 'fanout-' + nextEndpointId
+    }
+    fanoutEndpoints.set(request.channel, endpoint)
+    if (!registerFrameLifetime(endpoint.tabId, endpoint.frameKey)) {
+      fanoutEndpoints.delete(request.channel)
+      sendResponse({ ok: false })
+      return false
+    }
+    endpoint.persistentOrigin = top.persistentOrigin
+      ? persistentSiteScope(endpoint.origin, endpoint.url, top.origin)
+      : null
+    const pairOtp = pristine.host.cryptoRandomUUID()
+    const ackOtp = pristine.host.cryptoRandomUUID()
+    endpoint.pairOtp = pairOtp
+    endpoint.ackOtp = ackOtp
+    deliverFanoutPairSeed(endpoint, pairOtp, ackOtp)
+    sendResponse({
+      ok: true,
+      endpointId: endpoint.id,
+      channel: endpoint.channel,
+      persistentOrigin: endpoint.persistentOrigin,
+      pairOtp,
+      ackOtp
+    })
+    return false
+  }
+  /**
+   * Sends the pairing nonces to the child frame's own bridge over its control
+   * port, deferring when the child bridge has not connected yet (the MAIN
+   * world boots first and may relay the request before its bridge registers).
+   * @param {object} endpoint
+   * @param {string} pairOtp
+   * @param {string} ackOtp
+   * @returns {void}
+   */
+  function deliverFanoutPairSeed(endpoint, pairOtp, ackOtp) {
+    let childPort = null
+    for (const candidate of frameEndpoints.values()) {
+      if (
+        candidate.tabId === endpoint.tabId &&
+        candidate.frameId === endpoint.frameId &&
+        candidate.documentId === endpoint.documentId &&
+        endpointDocumentIsLive(candidate)
+      ) {
+        childPort = candidate
+        break
+      }
+    }
+    if (childPort) {
+      postToContentPort(childPort.port, {
+        action: 'fanoutPairSeed',
+        channel: endpoint.channel,
+        pairOtp,
+        ackOtp
+      })
+    } else {
+      endpoint.pendingSeed = { pairOtp, ackOtp }
+    }
   }
 
   /**
@@ -833,7 +1045,7 @@
    * @returns {boolean}
    */
   function handleSetDataPlane(request, sender, sendResponse, port) {
-    const endpoint = endpointForRequest(sender, port)
+    const endpoint = endpointForSender(request, sender, port)
     if (!endpoint || !tabAllowsDevice(sender, request.deviceId)) {
       sendResponse({ s: 403 })
       return true
@@ -1071,7 +1283,7 @@
    */
   function handleGetDataPlaneStatus(request, sender, sendResponse, port) {
     const tabId = Number.isInteger(request.tabId) ? request.tabId : sender.tab?.id
-    const endpoint = endpointForRequest(sender, port)
+    const endpoint = endpointForSender(request, sender, port)
     const requestedOrigin =
       typeof request.statusOrigin === 'string' ? request.statusOrigin : null
     const endpointOrigin = endpoint ? endpoint.persistentOrigin || endpoint.origin : ''
@@ -1112,7 +1324,7 @@
    * @returns {boolean}
    */
   function handleSetDataPlaneStatus(request, sender, sendResponse, port) {
-    const endpoint = endpointForRequest(sender, port)
+    const endpoint = endpointForSender(request, sender, port)
     const deviceId = Number(request.deviceId)
     const ok =
       endpoint &&
@@ -1435,7 +1647,7 @@
    * @returns {boolean}
    */
   function handleShowPicker(request, sender, sendResponse, port) {
-    const endpoint = endpointForRequest(sender, port)
+    const endpoint = endpointForSender(request, sender, port)
     const tabId = endpoint?.tabId
     if (!endpoint) {
       sendResponse({ error: 'no frame endpoint' })
@@ -1611,7 +1823,7 @@
    * @returns {boolean}
    */
   async function handleGetPolicy(request, sender, sendResponse, port) {
-    const endpoint = endpointForRequest(sender, port)
+    const endpoint = endpointForSender(request, sender, port)
     if (
       !endpoint ||
       !(await ensureFrameDelegations(endpoint)) ||
@@ -1730,6 +1942,7 @@
     open: handleOpen,
     close: handleClose,
     frameDestroyed: handleFrameDestroyed,
+    fanoutOpen: handleFanoutOpen,
     revokeDevice: handleRevokeDevice,
     cleanupSession: handleCleanupSession,
     setDataPlane: handleSetDataPlane,
@@ -1764,6 +1977,24 @@
   }
 
   /**
+   * Posts one uncorrelated response onto a control port for requests rejected
+   * before handler dispatch.
+   * @param {object} port
+   * @param {object} request
+   * @param {object} response
+   * @returns {void}
+   */
+  function sendPortResponseStatic(port, request, response) {
+    const responseMessage = { ...(response || {}) }
+    if (request.reqId != null) responseMessage.reqId = request.reqId
+    try {
+      port.postMessage(responseMessage)
+    } catch {
+      void 0
+    }
+  }
+
+  /**
    * Registers the background message dispatcher.
    * @param {{actionApi: object|null}} deps
    * @returns {void}
@@ -1787,11 +2018,29 @@
           pending.resolve(request.delegated === true)
           return
         }
-        const effectiveRequest = endpoint
+        const logical =
+          typeof request.channel === 'string' && request.channel
+            ? fanoutEndpoints.get(request.channel) || null
+            : null
+        if (logical && (logical.retired || logical.port !== port)) {
+          sendPortResponseStatic(port, request, { s: 403 })
+          return
+        }
+        const attributed = logical || endpoint
+        const sender = attributed
+          ? {
+              ...(port.sender || {}),
+              frameId: attributed.frameId,
+              documentId: attributed.documentId,
+              origin: attributed.origin,
+              url: attributed.url
+            }
+          : port.sender
+        const effectiveRequest = attributed
           ? {
               ...request,
-              origin: endpoint.origin,
-              persistentOrigin: endpoint.persistentOrigin,
+              origin: attributed.origin,
+              persistentOrigin: attributed.persistentOrigin,
               ...(request.action === 'getDataPlaneStatusForOrigin' &&
               typeof request.statusOrigin === 'string'
                 ? { statusOrigin: request.statusOrigin }
@@ -1813,7 +2062,7 @@
           }
         }
         try {
-          const result = handler(effectiveRequest, port.sender, sendPortResponse, port)
+          const result = handler(effectiveRequest, sender, sendPortResponse, port)
           if (result && typeof result.then === 'function') {
             result.catch(() => sendPortResponse({ s: 500 }))
           } else if (result !== true && !responded) {

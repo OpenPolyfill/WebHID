@@ -44,9 +44,11 @@ async function waitForPlaneCount(backgroundPage: FirefoxBgPage, count: number): 
           const tabs = await browser.tabs.query({ active: true, currentWindow: true })
           const tab = tabs[0]
           if (!tab || tab.id == null) return 0
-          const status = (await browser.tabs.sendMessage(tab.id, {
-            action: 'getDataPlaneStatus'
-          })) as { planes?: unknown[] } | null
+          const status = (await browser.tabs.sendMessage(
+            tab.id,
+            { action: 'getDataPlaneStatus' },
+            { frameId: 0 }
+          )) as { planes?: unknown[] } | null
           return status?.planes?.length || 0
         }),
       { timeout: 15000 }

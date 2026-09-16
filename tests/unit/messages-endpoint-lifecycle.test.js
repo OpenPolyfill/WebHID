@@ -11,6 +11,7 @@ const source = readFileSync(
 function loadMessages() {
   let registerMessageHandlers
   const frameEndpoints = new Map()
+  const fanoutEndpoints = new Map()
   const pendingPicker = new Map()
   const permissionsPolicy = new Map()
   const frameDelegations = new Map()
@@ -103,10 +104,12 @@ function loadMessages() {
     openDevice: async () => ({ s: 403 })
   }
   const imports = {
+    pristine: { host: { cryptoRandomUUID: () => 'test-otp' } },
     'content-ports': {
       registerContentPort() {},
       postToContentPort() {}
     },
+    loadEffectiveSettings: async () => ({ dataPlane: 'nm' }),
     http: { isOk: (status) => status >= 200 && status < 300 },
     logger: { debug() {}, warn() {}, error() {} },
     isChromium: false,
@@ -118,6 +121,7 @@ function loadMessages() {
       permissionsPolicy,
       frameDelegations,
       frameEndpoints,
+      fanoutEndpoints,
       pageActionVisibility: {}
     },
     bgStorage: {

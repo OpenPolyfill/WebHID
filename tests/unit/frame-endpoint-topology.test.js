@@ -39,7 +39,7 @@ test('background owns endpoint registry and exact input fanout', () => {
 test('persistent permission events cannot cross opaque partitions', () => {
   assert.match(messages, /function postToPersistentOriginEndpoints/)
   assert.match(messages, /endpoint\.persistentOrigin === persistentOrigin/)
-  assert.match(bridge, /messageEvent\.persistentOrigin === frameContext\?\.persistentOrigin/)
+  assert.match(bridge, /messageEvent\.persistentOrigin === context\.persistentOrigin/)
   assert.match(bridge, /message\.persistentOrigin === persistentOrigin/)
 })
 
@@ -81,10 +81,12 @@ test('MAIN settings readiness waits for the initial snapshot', () => {
   assert.match(main, /sendRequest\('getSettings', \{\}\)[\s\S]*markSettingsReady/)
 })
 
-test('MAIN does not bootstrap through a top WindowProxy', () => {
-  assert.doesNotMatch(main, /nativeWindowPostMessage/)
-  assert.doesNotMatch(main, /windowObject\.top/)
+test('MAIN keeps same-document capture and only posts fanout intent to top', () => {
+  assert.doesNotMatch(main, /capturePageBridge\(windowObject\.top/)
+  assert.doesNotMatch(main, /bridgePort = windowObject\.top/)
   assert.match(main, /reflect\.deleteProperty\(globalThis, 'webhid'\)/)
+  assert.match(main, /windowTopPostMessage/)
+  assert.match(main, /webhidFanoutRequest/)
 })
 
 test('endpoint replacement retires prior document authorities', () => {
@@ -105,4 +107,35 @@ test('iframe delegation is not a presence-only grant', () => {
   assert.match(bridge, /token === 'self'/)
   assert.match(bridge, /token === 'src'/)
   assert.doesNotMatch(bridge, /some\(\(directive\) => \^\\\\s\*hid/)
+})
+
+test('top bridge multiplexes same-origin child frame contexts', () => {
+  assert.match(bridge, /const fanoutContexts = new Map\(\)/)
+  assert.match(bridge, /fanoutContexts\.set\(context\.channel, context\)/)
+  assert.match(bridge, /fanoutRequest: handleFanoutRequestMessage/)
+  assert.match(bridge, /frameContexts\.get\(context\.key\) !== context/)
+  assert.match(bridge, /frameContexts\.values\(\)/)
+})
+
+test('fanout registration is browser-authenticated and same-origin only', () => {
+  assert.match(bridge, /origin !== window\.location\.origin/)
+  assert.match(bridge, /identity\.frameId == null \|\| identity\.documentId == null/)
+  assert.match(messages, /function handleFanoutOpen/)
+  assert.match(messages, /request\.origin !== top\.origin/)
+  assert.match(messages, /fanoutEndpoints\.set\(request\.channel, endpoint\)/)
+  assert.match(messages, /fanoutOpen: handleFanoutOpen/)
+})
+
+test('fanout endpoints resolve before falling back to top authority', () => {
+  assert.match(messages, /function endpointForRequest\(request, port\)/)
+  assert.match(messages, /fanoutEndpoints\.get\(request\.channel\)/)
+  assert.match(messages, /logical\.retired \|\| logical\.port !== port/)
+  assert.match(messages, /function endpointRegistryIsCurrent/)
+})
+
+test('top retirement cascades to logical fanout endpoints', () => {
+  assert.match(messages, /candidate\.port === endpoint\.port && !candidate\.retired/)
+  assert.match(messages, /Promise\.all\(\[\.\.\.cascades, purge\]\)/)
+  assert.match(bridge, /frameContexts\.delete\(context\.key\)/)
+  assert.match(bridge, /context\.channel\) fanoutContexts\.delete/)
 })

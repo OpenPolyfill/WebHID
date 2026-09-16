@@ -17,7 +17,6 @@
   if (typeof pristine.host.cryptoRandomUUID !== 'function')
     throw new Error('WebHID bridge requires pristine crypto.randomUUID')
   const frameInstanceId = 'frame-' + pristine.host.cryptoRandomUUID()
-  const controlPort = browser.runtime.connect({ name: 'webhid-control' })
   const pageChannel = new MessageChannel()
   if (isChromium) window.postMessage(null, '*', [pageChannel.port2])
   else
@@ -26,6 +25,7 @@
     })
   const pagePort = pageChannel.port1
   const controlQueue = []
+  let controlPort = null
   let controlPending = null
   let nextHandshakeReqId = 0
   const handshakePending = new Map()
@@ -38,25 +38,54 @@
   const authorityReady = new Promise((resolve) => {
     resolveAuthorityReady = resolve
   })
+  const FANOUT_RESERVATION_TIMEOUT_MS = 5000
+  let handedOff = false
+  const fanoutCandidate = (function () {
+    if (window === window.top) return false
+    const origin = window.location.origin
+    if (!origin || origin === 'null') return false
+    try {
+      if (window.top.location.origin !== origin) return false
+    } catch {
+      return false
+    }
+    return true
+  })()
+  const fanoutNonce = pristine.host.cryptoRandomUUID()
+  /** @type {Map<string, FrameContext>} channel tag -> adopted child context */
+  const fanoutContexts = new Map()
+  /** @type {Map<string, {channel: string, frameIndex: number, frameId: number}>} */
+  const fanoutHandoffs = new Map()
+  let nextFanoutChannel = 0
+  /** @type {FrameContext|null} */
+  let pumpChannelContext = null
   /** @returns {void} */
   function pumpControlQueue() {
     if (controlPending || controlQueue.length === 0) return
     controlPending = controlQueue.shift()
+    pumpChannelContext = controlPending.context || null
     try {
-      controlPort.postMessage(controlPending.request)
+      const request = pumpChannelContext?.channel
+        ? { ...controlPending.request, channel: pumpChannelContext.channel }
+        : controlPending.request
+      controlPort.postMessage(request)
     } catch (error) {
       controlPending.reject(error)
       controlPending = null
+      pumpChannelContext = null
       pumpControlQueue()
     }
   }
   /**
+   * Sends one background control request, optionally attributed to a frame
+   * context so multiplexed fanout frames keep their exact endpoint authority.
    * @param {object} request
+   * @param {FrameContext|null} [context]
    * @returns {Promise<object>}
    */
-  function sendBackgroundRequest(request) {
+  function sendBackgroundRequest(request, context = null) {
     return new Promise((resolve, reject) => {
-      controlQueue.push({ request, resolve, reject })
+      controlQueue.push({ request, resolve, reject, context })
       pumpControlQueue()
     })
   }
@@ -77,90 +106,162 @@
       }
     })
   }
-  controlPort.onMessage.addListener((message) => {
-    if (message && message.action === 'endpointMetadata') {
-      initializeAuthorityMetadata(message)
-      return
-    }
-    if (message && message.action === 'pickerResult') {
-      const handler = pickerResultHandlers.get(message.requestId)
-      if (handler) handler(message)
-      return
-    }
-    if (message && message.action === 'frameDelegationQuery') {
-      controlPort.postMessage({
-        action: 'frameDelegationResult',
-        requestId: message.requestId,
-        delegated: frameDelegationForChild(message)
-      })
-      return
-    }
-    if (message && message.action === 'showInlinePicker') {
-      if (!devicePicker) return
-      devicePicker
-        .show(message.filters || [], message.exclusionFilters || [])
-        .then((result) =>
-          sendBackgroundRequest({
-            action: 'inlinePickerResult',
-            requestId: message.requestId,
-            selected: !!(result.devices && result.devices.length),
-            devices: result.devices || null
+  /** @param {MessagePort} port @returns {void} */
+  function wireControlPort(port) {
+    port.onMessage.addListener((message) => {
+      if (message && message.action === 'fanoutPairSeed') {
+        try {
+          pagePort.postMessage({
+            type: 'fanoutPairSeed',
+            channel: message.channel,
+            pairOtp: message.pairOtp,
+            ackOtp: message.ackOtp
           })
-        )
-        .catch((e) => logger.debug('inline picker failed', e))
-      return
-    }
-    if (message && message.action === 'globalReset') {
-      handleGlobalReset()
-      return
-    }
-    if (
-      message &&
-      message.action === 'allowedDevicesChanged' &&
-      Array.isArray(message.deviceIds) &&
-      message.persistentOrigin === persistentOrigin
-    ) {
-      const origin = message.persistentOrigin
-      allowedByOrigin.set(origin, new Set(message.deviceIds))
-      loadedOrigins.add(origin)
-      flushAllowedDeviceIdsQueue(origin)
-      return
-    }
-    if (message && message.action === 'webhidDeviceEvent' && message.event) {
-      handleBackgroundEvent(message)
-      return
-    }
-    if (message && message.reqId != null) {
-      const pending = handshakePending.get(message.reqId)
-      if (pending) {
-        handshakePending.delete(message.reqId)
-        pending.resolve(message)
+        } catch (e) {
+          logger.debug('fanout pair seed relay failed', e)
+        }
         return
       }
+      if (message && message.action === 'endpointMetadata') {
+        if (typeof message.channel === 'string' && message.channel) {
+          const fanoutContext = fanoutContexts.get(message.channel)
+          if (fanoutContext) applyContextMetadata(fanoutContext, message)
+        } else {
+          initializeAuthorityMetadata(message)
+        }
+        return
+      }
+      if (message && message.action === 'pickerResult') {
+        const handler = pickerResultHandlers.get(message.requestId)
+        if (handler) handler(message)
+        return
+      }
+      if (message && message.action === 'frameDelegationQuery') {
+        port.postMessage({
+          action: 'frameDelegationResult',
+          requestId: message.requestId,
+          delegated: frameDelegationForChild(message)
+        })
+        return
+      }
+      if (message && message.action === 'showInlinePicker') {
+        if (!devicePicker) return
+        devicePicker
+          .show(message.filters || [], message.exclusionFilters || [])
+          .then((result) =>
+            sendBackgroundRequest({
+              action: 'inlinePickerResult',
+              requestId: message.requestId,
+              selected: !!(result.devices && result.devices.length),
+              devices: result.devices || null
+            })
+          )
+          .catch((e) => logger.debug('inline picker failed', e))
+        return
+      }
+      if (message && message.action === 'globalReset') {
+        handleGlobalReset()
+        return
+      }
+      if (
+        message &&
+        message.action === 'allowedDevicesChanged' &&
+        Array.isArray(message.deviceIds) &&
+        message.persistentOrigin === persistentOrigin
+      ) {
+        const origin = message.persistentOrigin
+        allowedByOrigin.set(origin, new Set(message.deviceIds))
+        loadedOrigins.add(origin)
+        flushAllowedDeviceIdsQueue(origin)
+        return
+      }
+      if (message && message.action === 'webhidDeviceEvent' && message.event) {
+        handleBackgroundEvent(message)
+        return
+      }
+      if (message && message.reqId != null) {
+        const pending = handshakePending.get(message.reqId)
+        if (pending) {
+          handshakePending.delete(message.reqId)
+          pending.resolve(message)
+          return
+        }
+      }
+      if (controlPending) {
+        const pending = controlPending
+        controlPending = null
+        pumpChannelContext = null
+        pending.resolve(message)
+        pumpControlQueue()
+      }
+    })
+    port.onDisconnect.addListener(() => {
+      if (handedOff) return
+      const error = new Error('background port disconnected')
+      authorityFailed = true
+      settleAuthorityReady()
+      for (const pending of handshakePending.values()) pending.reject(error)
+      handshakePending.clear()
+      if (controlPending) {
+        controlPending.reject(error)
+        controlPending = null
+      }
+      pumpChannelContext = null
+      for (const pending of controlQueue) pending.reject(error)
+      controlQueue.length = 0
+      handleGlobalReset()
+    })
+  }
+  /** @type {object|null} */
+  let devicePicker = null
+  let localStarted = false
+  /**
+   * Runs the full local bridge path: owns its endpoint, serves its own frame,
+   * and connects the control port. Same-origin non-top frames boot this way
+   * and later hand off to the top multiplexer once its pairing completes.
+   * @returns {void}
+   */
+  function startLocal() {
+    if (localStarted) return
+    localStarted = true
+    controlPort = browser.runtime.connect({ name: 'webhid-control' })
+    wireControlPort(controlPort)
+    wireStatusListener()
+    wireBackgroundEventListener()
+    wireStorageListener()
+    wireAllowedDevicesListener()
+    if (window === window.top) {
+      devicePicker = new WebHidDevicePicker()
+      document.documentElement.appendChild(devicePicker.host)
     }
-    if (controlPending) {
-      const pending = controlPending
-      controlPending = null
-      pending.resolve(message)
-      pumpControlQueue()
-    }
-  })
-  controlPort.onDisconnect.addListener(() => {
-    const error = new Error('background port disconnected')
-    authorityFailed = true
-    settleAuthorityReady()
-    for (const pending of handshakePending.values()) pending.reject(error)
-    handshakePending.clear()
-    if (controlPending) {
-      controlPending.reject(error)
-      controlPending = null
-    }
-    for (const pending of controlQueue) pending.reject(error)
-    controlQueue.length = 0
-    handleGlobalReset()
-  })
-  const devicePicker = window === window.top ? new WebHidDevicePicker() : null
-  if (devicePicker) document.documentElement.appendChild(devicePicker.host)
+    acceptBootstrapPort(pagePort, window, authorityOrigin || '', browserFrameIdentity(window))
+    ;(async () => {
+      let resp = null
+      try {
+        resp = await sendHandshakeRequest()
+      } catch (e) {
+        logger.warn('handshake failed:', e.message)
+      }
+      await authorityReady
+      if (!authorityOrigin || authorityFailed) {
+        logger.warn('endpoint authority metadata unavailable')
+        return
+      }
+      if (!http.isOk(resp && resp.s) || !resp.w) return
+      wsPort = resp.w
+      wsNonce = resp.N || null
+      wtPort = resp.W || null
+      wtCertHash = resp.H || null
+      if (!wsNonce) {
+        logger.warn(
+          'handshake: daemon did not send ws_nonce (old version?); ' +
+            'WS data plane will fall back to NM'
+        )
+      }
+      await loadSettingsForOrigin(persistentOrigin || '')
+      loadAllowedDeviceIds(persistentOrigin || '')
+    })()
+  }
 
   const PAGE_BLOCKED_ACTIONS = new Set([
     'pairDevice',
@@ -215,8 +316,8 @@
    * @property {boolean} destroyed
    * @property {Map<string, string>} sessions
    */
-  /** @type {FrameContext|null} */
-  let frameContext = null
+  /** @type {Map<string, FrameContext>} context key -> adopted context */
+  const frameContexts = new Map()
   /** @type {Map<MessagePort, FrameContext>} */
   const frameContextByPort = new Map()
   /** @type {Map<MessagePort, Map<string, string>>} */
@@ -253,15 +354,14 @@
     }
   }
   /**
-   * Installs the exact same-document page endpoint.
+   * Installs the request dispatch wiring on a page port for a context that
+   * has already been created and registered.
    * @param {MessagePort} port
    * @param {Window} source
-   * @param {string} origin
-   * @param {{frameId: number|null, documentId: string|null}} identity
-   * @returns {FrameContext}
+   * @param {FrameContext} context
+   * @returns {void}
    */
-  function acceptBootstrapPort(port, source, origin, identity) {
-    const context = createFrameContext(port, source, origin, identity)
+  function wirePagePort(port, source) {
     port.onmessage = (event) => {
       const data = event.data
       if (!data) return
@@ -273,6 +373,18 @@
       dispatchPortMessage(port, event, source)
     }
     if (typeof port.start === 'function') port.start()
+  }
+  /**
+   * Installs the exact same-document page endpoint.
+   * @param {MessagePort} port
+   * @param {Window} source
+   * @param {string} origin
+   * @param {{frameId: number|null, documentId: string|null}} identity
+   * @returns {FrameContext}
+   */
+  function acceptBootstrapPort(port, source, origin, identity) {
+    const context = createFrameContext(port, source, origin, identity)
+    wirePagePort(port, source)
     logger.debug('[bridge] exact page port established', context.key)
     return context
   }
@@ -296,18 +408,12 @@
       destroyed: false,
       sessions: new Map()
     }
-    frameContext = context
+    frameContexts.set(context.key, context)
     frameContextByPort.set(port, context)
     clientSessions.set(port, context.sessions)
     clientKeysByPort.set(port, 'window')
     return context
   }
-  frameContext = acceptBootstrapPort(
-    pagePort,
-    window,
-    authorityOrigin || '',
-    browserFrameIdentity(window)
-  )
 
   /**
    * @param {MessagePort} port
@@ -315,6 +421,13 @@
    */
   function frameContextForPort(port) {
     return (port && frameContextByPort.get(port)) || null
+  }
+  /**
+   * Resolves this bridge's own frame context (never a fanout child's).
+   * @returns {FrameContext|null}
+   */
+  function ownContext() {
+    return frameContextForPort(pagePort)
   }
   /**
    * @param {FrameContext} context
@@ -343,8 +456,8 @@
    */
   function contextForPlaneKey(key) {
     const separator = key.indexOf('\u0000')
-    if (!frameContext || separator < 0) return null
-    return frameContext.key === key.slice(0, separator) ? frameContext : null
+    if (separator < 0) return null
+    return frameContexts.get(key.slice(0, separator)) || null
   }
 
   /**
@@ -431,42 +544,45 @@
     return null
   }
 
-  browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    const isStatusRequest =
-      request.action === 'getDataPlaneStatus' || request.action === 'getDataPlaneStatusForOrigin'
-    if (
-      request.action !== 'getOpenDeviceIds' &&
-      !isStatusRequest &&
-      request.action !== 'getFrameOrigins'
-    )
-      return false
-    const trustedOriginRequest =
-      request.action === 'getDataPlaneStatusForOrigin' &&
-      sender?.id === browser.runtime.id &&
-      typeof request.origin === 'string'
-    const origin = trustedOriginRequest
-      ? request.origin
-      : frameContext?.persistentOrigin || frameContext?.origin || window.location.origin
-    const backgroundRequest = {
-      action: trustedOriginRequest ? 'getDataPlaneStatusForOrigin' : request.action,
-      ...(request.action === 'getDataPlaneStatus'
-        ? {}
-        : trustedOriginRequest
-          ? { statusOrigin: origin }
-          : { origin })
-    }
-    sendBackgroundRequest(backgroundRequest)
-      .then(async (response) => {
-        if (!isStatusRequest) {
-          sendResponse(response)
-          return
-        }
-        const settings = await loadSettingsForOrigin(origin)
-        sendResponse({ ...response, defaultPlane: settings.dataPlane })
-      })
-      .catch(() => sendResponse({ ids: [], planes: [], origins: [] }))
-    return true
-  })
+  function wireStatusListener() {
+    browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
+      const isStatusRequest =
+        request.action === 'getDataPlaneStatus' ||
+        request.action === 'getDataPlaneStatusForOrigin'
+      if (
+        request.action !== 'getOpenDeviceIds' &&
+        !isStatusRequest &&
+        request.action !== 'getFrameOrigins'
+      )
+        return false
+      const trustedOriginRequest =
+        request.action === 'getDataPlaneStatusForOrigin' &&
+        sender?.id === browser.runtime.id &&
+        typeof request.origin === 'string'
+      const origin = trustedOriginRequest
+        ? request.origin
+        : persistentOrigin || authorityOrigin || window.location.origin
+      const backgroundRequest = {
+        action: trustedOriginRequest ? 'getDataPlaneStatusForOrigin' : request.action,
+        ...(request.action === 'getDataPlaneStatus'
+          ? {}
+          : trustedOriginRequest
+            ? { statusOrigin: origin }
+            : { origin })
+      }
+      sendBackgroundRequest(backgroundRequest)
+        .then(async (response) => {
+          if (!isStatusRequest) {
+            sendResponse(response)
+            return
+          }
+          const settings = await loadSettingsForOrigin(origin)
+          sendResponse({ ...response, defaultPlane: settings.dataPlane })
+        })
+        .catch(() => sendResponse({ ids: [], planes: [], origins: [] }))
+      return true
+    })
+  }
   /**
    * @param {string} deviceId
    * @returns {object}
@@ -659,6 +775,24 @@
     resolveAuthorityReady = null
   }
   /**
+   * Applies browser-authenticated endpoint metadata to one frame context.
+   * @param {FrameContext} context
+   * @param {object} metadata
+   * @returns {void}
+   */
+  function applyContextMetadata(context, metadata) {
+    if (!context || !metadata || typeof metadata.origin !== 'string' || !metadata.origin) return
+    if (context.origin && context.origin !== metadata.origin) return
+    context.origin = metadata.origin
+    context.persistentOrigin =
+      typeof metadata.persistentOrigin === 'string' && metadata.persistentOrigin
+        ? metadata.persistentOrigin
+        : null
+    if (Number.isInteger(metadata.frameId)) context.frameId = metadata.frameId
+    if (typeof metadata.documentId === 'string' && metadata.documentId)
+      context.documentId = metadata.documentId
+  }
+  /**
    * Applies browser-authenticated endpoint metadata before origin-sensitive work.
    * @param {object} metadata
    * @returns {void}
@@ -675,12 +809,8 @@
     const scopeChanged = persistentOrigin !== nextPersistentOrigin
     authorityOrigin = metadata.origin
     persistentOrigin = nextPersistentOrigin
-    if (frameContext) {
-      frameContext.origin = authorityOrigin
-      frameContext.persistentOrigin = persistentOrigin
-      if (Number.isInteger(metadata.frameId)) frameContext.frameId = metadata.frameId
-      if (typeof metadata.documentId === 'string' && metadata.documentId)
-        frameContext.documentId = metadata.documentId
+    if (frameContexts.size > 0) {
+      applyContextMetadata(ownContext(), metadata)
     }
     if (firstInitialization || scopeChanged) {
       settingsByOrigin.clear()
@@ -697,17 +827,18 @@
       const expectedScope = persistentOrigin
       const generation = ++scopeLoadGeneration
       void loadSettingsForOrigin(authorityOrigin).then((store) => {
-        if (
-          generation !== scopeLoadGeneration ||
-          persistentOrigin !== expectedScope ||
-          !frameContext ||
-          frameContext.destroyed
-        )
-          return
-        frameContext.port.postMessage({
-          type: 'persistentScopeChanged',
-          settings: store.getAll()
-        })
+        if (generation !== scopeLoadGeneration || persistentOrigin !== expectedScope) return
+        for (const context of frameContexts.values()) {
+          if (context.destroyed || context.persistentOrigin !== expectedScope) continue
+          try {
+            context.port.postMessage({
+              type: 'persistentScopeChanged',
+              settings: store.getAll()
+            })
+          } catch (e) {
+            logger.debug('scope resync delivery failed', e)
+          }
+        }
       })
     }
     settleAuthorityReady()
@@ -829,16 +960,19 @@
         ? 'wt'
         : deviceTransports.get(key) || settingsForOrigin(context.origin).dataPlane
     const mode = plane === 'nm' ? null : inPageDevices.has(key) ? 'inpage' : 'worker'
-    sendBackgroundRequest({
-      action: 'setDataPlaneStatus',
-      deviceId,
-      sessionToken: token,
-      clientKey,
-      plane: available ? plane : null,
-      mode,
-      generation,
-      ready
-    }).catch((e) => logger.debug('data plane status update failed', e))
+    sendBackgroundRequest(
+      {
+        action: 'setDataPlaneStatus',
+        deviceId,
+        sessionToken: token,
+        clientKey,
+        plane: available ? plane : null,
+        mode,
+        generation,
+        ready
+      },
+      context
+    ).catch((e) => logger.debug('data plane status update failed', e))
   }
 
   /**
@@ -1355,20 +1489,27 @@
       })
       generation = spawnGen.get(key)
     }
-    if (context.destroyed || frameContext !== context || spawnGen.get(key) !== generation)
+    if (
+      context.destroyed ||
+      frameContexts.get(context.key) !== context ||
+      spawnGen.get(key) !== generation
+    )
       return null
     ensureRuntimeDataPort(deviceId)
     let response
     try {
-      response = await sendBackgroundRequest({
-        action: 'setDataPlane',
-        deviceId,
-        mode: 'nm',
-        sessionToken,
-        frameKey: context.key,
-        origin: context.origin,
-        clientKey
-      })
+      response = await sendBackgroundRequest(
+        {
+          action: 'setDataPlane',
+          deviceId,
+          mode: 'nm',
+          sessionToken,
+          frameKey: context.key,
+          origin: context.origin,
+          clientKey
+        },
+        context
+      )
     } catch (e) {
       logger.debug('setDataPlane NM fallback failed', e)
     }
@@ -1379,7 +1520,11 @@
       }
       return null
     }
-    if (context.destroyed || frameContext !== context || spawnGen.get(key) !== generation) {
+    if (
+      context.destroyed ||
+      frameContexts.get(context.key) !== context ||
+      spawnGen.get(key) !== generation
+    ) {
       if (spawnGen.get(key) === generation)
         await despawnDataPlane(context, deviceId, { clientKey, clientPort })
       return null
@@ -1459,7 +1604,7 @@
    */
   function waitForPlaneReady(context, deviceId, clientKey, generation, sessionToken) {
     const key = planeKeyForClient(context, deviceId, clientKey)
-    if (context.destroyed || frameContext !== context)
+    if (context.destroyed || frameContexts.get(context.key) !== context)
       return Promise.resolve({ ok: false, destroyed: true })
     if (spawnGen.get(key) !== generation) return Promise.resolve({ ok: false, stale: true })
     if (readyGenerations.get(key) === generation) return Promise.resolve({ ok: true })
@@ -1513,33 +1658,6 @@
     replyToPage({ type: 'response', id: data.id, result })
   }
 
-  ;(async () => {
-    let resp = null
-    try {
-      resp = await sendHandshakeRequest()
-    } catch (e) {
-      logger.warn('handshake failed:', e.message)
-    }
-    await authorityReady
-    if (!authorityOrigin || authorityFailed) {
-      logger.warn('endpoint authority metadata unavailable')
-      return
-    }
-    if (!http.isOk(resp && resp.s) || !resp.w) return
-    wsPort = resp.w
-    wsNonce = resp.N || null
-    wtPort = resp.W || null
-    wtCertHash = resp.H || null
-    if (!wsNonce) {
-      logger.warn(
-        'handshake: daemon did not send ws_nonce (old version?); ' +
-          'WS data plane will fall back to NM'
-      )
-    }
-    await loadSettingsForOrigin(persistentOrigin || '')
-    loadAllowedDeviceIds(persistentOrigin || '')
-  })()
-
   /**
    * @param {object} msg
    * @param {ArrayBuffer[]} [transfer]
@@ -1555,10 +1673,12 @@
       }
     }
     if (msg != null && (msg.type === 'event' || msg.type === 'settings')) {
-      try {
-        frameContext.port.postMessage(msg, transfer)
-      } catch (e) {
-        logger.debug('page event delivery failed', e)
+      for (const context of frameContexts.values()) {
+        try {
+          context.port.postMessage(msg, transfer)
+        } catch (e) {
+          logger.debug('page event delivery failed', e)
+        }
       }
     }
   }
@@ -1647,7 +1767,7 @@
       unavailableReason: 'data plane recovery'
     })
     const generation = spawnGen.get(key)
-    if (context.destroyed || frameContext !== context) return null
+    if (context.destroyed || frameContexts.get(context.key) !== context) return null
     const originSettings = settingsForOrigin(context.origin)
     if (originSettings.dataPlane === 'nm') {
       return fallbackToNm(context, deviceId, token, clientKey, generation, {
@@ -1713,11 +1833,147 @@
     if (context) destroyFrameContext(context).catch((e) => logger.debug('frame cleanup failed', e))
   }
 
+  /**
+   * Retires the local context after its MAIN world switched this frame to the
+   * top multiplexer port. Notifies the page so open devices surface
+   * disconnects and can be re-opened through the shared mux port.
+   * @param {object} data
+   * @param {MessagePort} port
+   * @returns {void}
+   */
+  function handleFanoutSwitchedMessage(data, port) {
+    const context = frameContextForPort(port)
+    if (!context || context.handedOff) return
+    context.handedOff = true
+    const teardown = destroyFrameContext(context, { notify: true })
+    void (teardown || Promise.resolve()).then(() => {
+      handedOff = true
+      if (controlPort) {
+        try {
+          controlPort.disconnect()
+        } catch (e) {
+          logger.debug('handed-off control port disconnect failed', e)
+        }
+      }
+    })
+  }
+
+  /**
+   * Relays a same-origin child frame's fanout request (forwarded by this
+   * frame's MAIN world after it observed the child's window postMessage). The
+   * child's identity is re-verified here through browser-authenticated frame
+   * APIs before any endpoint is registered.
+   * @param {object} data
+   * @param {MessagePort} port
+   * @returns {void}
+   */
+  function handleFanoutRequestMessage(data, port) {
+    if (!localStarted || window !== window.top) return
+    if (port !== pagePort) return
+    const nonce = data.nonce
+    const frameIndex = data.frameIndex
+    if (typeof nonce !== 'string' || !nonce || !Number.isInteger(frameIndex)) return
+    if (fanoutContexts.size >= 32) return
+    let childWindow = null
+    let frameElement = null
+    try {
+      childWindow = window.frames[frameIndex]
+      frameElement = document.querySelectorAll('iframe,frame')[frameIndex]
+    } catch {
+      void 0
+    }
+    if (!childWindow || !frameElement) return
+    const origin = (function () {
+      try {
+        return childWindow.location.origin
+      } catch {
+        return null
+      }
+    })()
+    if (!origin || origin === 'null' || origin !== window.location.origin) return
+    const identity = browserFrameIdentity(frameElement)
+    if (identity.frameId == null || identity.documentId == null) return
+    for (const existing of fanoutContexts.values()) {
+      if (existing.frameId === identity.frameId) return
+    }
+    const channel = 'fanout:' + frameInstanceId + ':' + ++nextFanoutChannel
+    sendBackgroundRequest({
+      action: 'fanoutOpen',
+      channel,
+      frameId: identity.frameId,
+      documentId: identity.documentId,
+      origin,
+      url: (function () {
+        try {
+          return childWindow.location.href
+        } catch {
+          return ''
+        }
+      })()
+    })
+      .then((response) => {
+        if (!response || !response.ok) return
+        const reservation = { channel: response.channel, frameIndex, frameId: identity.frameId }
+        fanoutHandoffs.set(nonce, reservation)
+        setTimeout(() => {
+          if (fanoutHandoffs.get(nonce) === reservation) fanoutHandoffs.delete(nonce)
+        }, FANOUT_RESERVATION_TIMEOUT_MS)
+        const childPort = new MessageChannel()
+        const context = createFrameContext(childPort.port1, childWindow, origin, identity)
+        context.channel = response.channel
+        context.persistentOrigin = persistentOrigin
+        context.pairOtp = response.pairOtp
+        fanoutContexts.set(context.channel, context)
+        childPort.port1.onmessage = (event) => {
+          const pairData = event.data
+          if (
+            pairData &&
+            pairData.type === 'fanoutPair' &&
+            pairData.otp === context.pairOtp &&
+            !context.destroyed
+          ) {
+            context.paired = true
+            wirePagePort(childPort.port1, childWindow)
+            try {
+              childPort.port1.postMessage({ type: 'fanoutPairAck', otp: response.ackOtp })
+            } catch (e) {
+              logger.debug('fanout pair ack failed', e)
+            }
+            logger.debug('[bridge] fanout context paired', context.channel)
+            return
+          }
+          logger.debug('dropping pre-pair mux traffic', pairData && pairData.type)
+        }
+        const pairTimer = setTimeout(() => {
+          if (!context.paired) destroyFrameContext(context).catch(() => {})
+        }, FANOUT_RESERVATION_TIMEOUT_MS)
+        void pairTimer
+        try {
+          pagePort.postMessage(
+            {
+              type: 'fanoutDeliver',
+              nonce,
+              channel: response.channel,
+              frameIndex
+            },
+            [childPort.port2]
+          )
+        } catch (e) {
+          logger.debug('fanout delivery failed', e)
+          destroyFrameContext(context).catch(() => {})
+        }
+        logger.debug('[bridge] fanout context adopted', context.channel)
+      })
+      .catch((e) => logger.debug('fanout open failed', e))
+  }
+
   /** @type {object} */
   const PAGE_PORT_HANDLERS = {
     spawnWorkerResponse: handleSpawnWorkerResponse,
     dataPlaneResponse: handlePlaneResponse,
     dataPlaneEvent: handleDataPlaneEvent,
+    fanoutSwitched: handleFanoutSwitchedMessage,
+    fanoutRequest: handleFanoutRequestMessage,
     workerError: (data, port) =>
       handleWorkerErrorEvent(data, port).catch((e) =>
         logger.debug('worker error recovery failed', e)
@@ -1901,11 +2157,13 @@
   }
   /**
    * @param {object} data
+   * @param {MessagePort} requestPort
    * @returns {Promise<void>}
    */
-  async function handleGetCspInfoRequest(data) {
+  async function handleGetCspInfoRequest(data, _ports, requestPort) {
+    const context = frameContextForPort(requestPort)
     try {
-      const resp = await sendBackgroundRequest({ action: 'getCspInfo' })
+      const resp = await sendBackgroundRequest({ action: 'getCspInfo' }, context)
       replyToPage({ type: 'response', id: data.id, result: resp || {} })
     } catch {
       replyToPage({ type: 'response', id: data.id, result: {} })
@@ -2027,13 +2285,17 @@
     try {
       let response = null
       if (hasHidDelegation(context)) {
-        const delegationResponse = await sendBackgroundRequest({
-          action: 'setFrameDelegation',
-          delegated: true
-        })
-        if (delegationResponse?.ok) response = await sendBackgroundRequest({ action: 'getPolicy' })
+        const delegationResponse = await sendBackgroundRequest(
+          {
+            action: 'setFrameDelegation',
+            delegated: true
+          },
+          context
+        )
+        if (delegationResponse?.ok)
+          response = await sendBackgroundRequest({ action: 'getPolicy' }, context)
       } else {
-        response = await sendBackgroundRequest({ action: 'getPolicy' })
+        response = await sendBackgroundRequest({ action: 'getPolicy' }, context)
       }
       replyToPage({
         type: 'response',
@@ -2080,20 +2342,26 @@
         ? 'modal'
         : originSettings.devicePickerMode
 
-    sendBackgroundRequest({
-      action: 'showPicker',
-      requestId: data.id,
-      filters,
-      exclusionFilters,
-      mode: pickerMode,
-      origin
-    }).catch((e) => logger.debug('showPicker send failed', e))
+    sendBackgroundRequest(
+      {
+        action: 'showPicker',
+        requestId: data.id,
+        filters,
+        exclusionFilters,
+        mode: pickerMode,
+        origin
+      },
+      context
+    ).catch((e) => logger.debug('showPicker send failed', e))
     const pickerTimeout = setTimeout(() => {
       pickerResultHandlers.delete(data.id)
-      sendBackgroundRequest({
-        action: 'cancelPicker',
-        requestId: data.id
-      }).catch((e) => logger.debug('cancelPicker send failed', e))
+      sendBackgroundRequest(
+        {
+          action: 'cancelPicker',
+          requestId: data.id
+        },
+        context
+      ).catch((e) => logger.debug('cancelPicker send failed', e))
       replyToPage({
         type: 'response',
         id: data.id,
@@ -2136,7 +2404,7 @@
     if (
       !context ||
       context.destroyed ||
-      frameContext !== context ||
+      frameContexts.get(context.key) !== context ||
       !client ||
       client.sessions !== sessions
     )
@@ -2271,7 +2539,7 @@
         const currentClient = clientForPort(context, requestPort)
         if (
           context.destroyed ||
-          frameContext !== context ||
+          frameContexts.get(context.key) !== context ||
           frameContextForPort(requestPort) !== context ||
           !currentClient ||
           currentClient.port !== client.port ||
@@ -2304,7 +2572,7 @@
         reservedToken = sessions.get(deviceId) || null
         if (reservedToken) msg.T = reservedToken
       }
-      response = await sendBackgroundRequest(msg)
+      response = await sendBackgroundRequest(msg, context)
       if (action === 'open' && http.isOk(response.s) && response.t) {
         const openResult = await handleOpenSuccess(response, context, sessions, client)
         if (!openResult.accepted) {
@@ -2386,14 +2654,17 @@
     const sessions = clientSessions.get(workerPort)
     if (sessions) {
       for (const [deviceId, token] of sessions) {
-        await sendBackgroundRequest({
-          action: 'close',
-          deviceId,
-          T: token,
-          origin: context.origin,
-          frameKey: context.key,
-          clientKey
-        }).catch(() => {})
+        await sendBackgroundRequest(
+          {
+            action: 'close',
+            deviceId,
+            T: token,
+            origin: context.origin,
+            frameKey: context.key,
+            clientKey
+          },
+          context
+        ).catch(() => {})
         await despawnDataPlane(context, deviceId, { clientKey })
       }
       sessions.clear()
@@ -2463,7 +2734,7 @@
    * @returns {Promise<void>}
    */
   async function destroyFrameContext(context, { close = true, notify = false } = {}) {
-    if (!context || context.destroyed || frameContext !== context) return
+    if (!context || context.destroyed || frameContexts.get(context.key) !== context) return
     const clientRecords = sessionsForContext(context).map(({ port, sessions, clientKey }) => ({
       port,
       sessions,
@@ -2522,12 +2793,15 @@
       pending.reject(new Error('frame destroyed'))
     }
     if (close) {
-      await sendBackgroundRequest({
-        action: 'frameDestroyed',
-        frameKey: context.key,
-        frameId: context.frameId,
-        documentId: context.documentId
-      }).catch((e) => logger.debug('frame session cleanup request failed', e))
+      await sendBackgroundRequest(
+        {
+          action: 'frameDestroyed',
+          frameKey: context.key,
+          frameId: context.frameId,
+          documentId: context.documentId
+        },
+        context
+      ).catch((e) => logger.debug('frame session cleanup request failed', e))
     }
     const notifiedDevices = new Set()
     for (const { deviceId, clientKey, clientPort } of planes.values()) {
@@ -2559,7 +2833,8 @@
     } catch (e) {
       logger.debug('frame page port cleanup failed', e)
     }
-    if (frameContext === context) frameContext = null
+    frameContexts.delete(context.key)
+    if (context.channel) fanoutContexts.delete(context.channel)
   }
 
   /**
@@ -2567,7 +2842,7 @@
    * @returns {Promise<void>}
    */
   async function resetAuthorityState() {
-    const contexts = frameContext ? [frameContext] : []
+    const contexts = [...frameContexts.values()]
     for (const context of contexts) {
       const clientSessionsForFrame = sessionsForContext(context)
       const deviceIds = new Set()
@@ -2634,7 +2909,7 @@
    */
   function forwardInputReportToPage(messageEvent) {
     let handled = false
-    for (const context of frameContext ? [frameContext] : []) {
+    for (const context of frameContexts.values()) {
       for (const { port, sessions, clientKey } of sessionsForContext(context)) {
         if (!sessions.has(messageEvent.deviceId)) continue
         const key = planeKeyForClient(context, messageEvent.deviceId, clientKey)
@@ -2666,18 +2941,18 @@
       return
     }
     if (messageEvent.eventType === 'disconnect') {
-      const contexts = frameContext ? [frameContext] : []
+      const contexts = [...frameContexts.values()]
       for (const context of contexts) {
         reconcileFrameDevice(context, messageEvent.deviceId, messageEvent).catch((e) =>
           logger.debug('disconnect reconciliation failed', e)
         )
       }
     } else if (messageEvent.eventType === 'revoked') {
-      const contexts =
-        messageEvent.persistentOrigin &&
-        messageEvent.persistentOrigin === frameContext?.persistentOrigin
-          ? [frameContext]
-          : []
+      const contexts = [...frameContexts.values()].filter(
+        (context) =>
+          messageEvent.persistentOrigin &&
+          messageEvent.persistentOrigin === context.persistentOrigin
+      )
       for (const context of contexts) {
         reconcileFrameDevice(context, messageEvent.deviceId, messageEvent).catch((e) =>
           logger.debug('revoke reconciliation failed', e)
@@ -2695,15 +2970,17 @@
     }
   }
 
-  browser.runtime.onMessage.addListener((message) => {
-    if (message.action === 'globalReset') {
-      handleGlobalReset()
-      return
-    }
-    if (message.action === 'webhidDeviceEvent' && message.event) {
-      handleBackgroundEvent(message)
-    }
-  })
+  function wireBackgroundEventListener() {
+    browser.runtime.onMessage.addListener((message) => {
+      if (message.action === 'globalReset') {
+        handleGlobalReset()
+        return
+      }
+      if (message.action === 'webhidDeviceEvent' && message.event) {
+        handleBackgroundEvent(message)
+      }
+    })
+  }
 
   /**
    * Sends the report result back over the device's data port.
@@ -2795,7 +3072,7 @@
    */
   function respawnPlanesForMode(dp, origin) {
     if (dp !== 'ws' && dp !== 'wt') return
-    for (const context of frameContext ? [frameContext] : []) {
+    for (const context of frameContexts.values()) {
       if (context.origin !== origin) continue
       for (const { sessions } of sessionsForContext(context)) {
         const clientKey = clientKeyForSessions(sessions)
@@ -2823,7 +3100,7 @@
    */
   async function applyDataPlane(dp, origin) {
     const active = []
-    for (const context of frameContext ? [frameContext] : []) {
+    for (const context of frameContexts.values()) {
       if (context.origin !== origin) continue
       for (const { sessions } of sessionsForContext(context)) {
         const clientKey = clientKeyForSessions(sessions)
@@ -2846,15 +3123,18 @@
         const key = planeKeyForClient(context, deviceId, clientKey)
         let response
         try {
-          response = await sendBackgroundRequest({
-            action: 'setDataPlane',
-            deviceId,
-            mode: dp,
-            sessionToken: token,
-            frameKey: context.key,
-            origin: context.origin,
-            clientKey
-          })
+          response = await sendBackgroundRequest(
+            {
+              action: 'setDataPlane',
+              deviceId,
+              mode: dp,
+              sessionToken: token,
+              frameKey: context.key,
+              origin: context.origin,
+              clientKey
+            },
+            context
+          )
         } catch (e) {
           logger.debug('applyDataPlane failed for device', deviceId, e)
         }
@@ -2875,15 +3155,18 @@
     } else {
       respawnPlanesForMode(dp, origin)
       for (const { context, deviceId, token, clientKey } of active) {
-        sendBackgroundRequest({
-          action: 'setDataPlane',
-          deviceId,
-          mode: dp,
-          sessionToken: token,
-          frameKey: context.key,
-          origin: context.origin,
-          clientKey
-        }).catch((e) => logger.debug('applyDataPlane failed for device', deviceId, e))
+        sendBackgroundRequest(
+          {
+            action: 'setDataPlane',
+            deviceId,
+            mode: dp,
+            sessionToken: token,
+            frameKey: context.key,
+            origin: context.origin,
+            clientKey
+          },
+          context
+        ).catch((e) => logger.debug('applyDataPlane failed for device', deviceId, e))
       }
     }
     logger.info('data plane changed:', dp, 'open devices:', active.length)
@@ -2932,29 +3215,35 @@
     ])
   }
 
-  browser.storage.onChanged.addListener((changes, area) => {
-    if (area !== 'local') return
-    for (const [key, change] of Object.entries(changes)) {
-      const parsed = parseSettingsKey(key)
-      if (!parsed) continue
-      if (parsed.scope === 'global') {
-        for (const store of settingsByOrigin.values()) store.set({ [parsed.name]: change.newValue })
-      } else if (persistentOrigin && parsed.origin === persistentOrigin) {
-        settingsForOrigin(authorityOrigin).set({ [parsed.name]: change.newValue })
+  function wireStorageListener() {
+    browser.storage.onChanged.addListener((changes, area) => {
+      if (area !== 'local') return
+      for (const [key, change] of Object.entries(changes)) {
+        const parsed = parseSettingsKey(key)
+        if (!parsed) continue
+        if (parsed.scope === 'global') {
+          for (const store of settingsByOrigin.values()) {
+            store.set({ [parsed.name]: change.newValue })
+          }
+        } else if (persistentOrigin && parsed.origin === persistentOrigin) {
+          settingsForOrigin(authorityOrigin).set({ [parsed.name]: change.newValue })
+        }
       }
-    }
-  })
-
-  browser.runtime.onMessage.addListener((message) => {
-    if (
-      message.action === 'allowedDevicesChanged' &&
-      Array.isArray(message.deviceIds) &&
-      message.persistentOrigin === persistentOrigin
-    ) {
-      const origin = message.persistentOrigin
-      allowedByOrigin.set(origin, new Set(message.deviceIds))
-      loadedOrigins.add(origin)
-      flushAllowedDeviceIdsQueue(origin)
-    }
-  })
+    })
+  }
+  function wireAllowedDevicesListener() {
+    browser.runtime.onMessage.addListener((message) => {
+      if (
+        message.action === 'allowedDevicesChanged' &&
+        Array.isArray(message.deviceIds) &&
+        message.persistentOrigin === persistentOrigin
+      ) {
+        const origin = message.persistentOrigin
+        allowedByOrigin.set(origin, new Set(message.deviceIds))
+        loadedOrigins.add(origin)
+        flushAllowedDeviceIdsQueue(origin)
+      }
+    })
+  }
+  startLocal()
 })()

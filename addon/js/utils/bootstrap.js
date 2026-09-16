@@ -354,6 +354,13 @@
       : null,
     windowAddEventListener: nativeWindowAddEventListener,
     windowRemoveEventListener: nativeWindowRemoveEventListener,
+    windowTopPostMessage: (function () {
+      if (!root.window || !root.window.top) return null
+      const topPost = root.window.top.postMessage
+      return typeof topPost === 'function'
+        ? call(nativeFunctionBind, topPost, [root.window.top])
+        : null
+    })(),
     permissionsQuery,
     permissions: nativePermissions,
     numberIsFinite: root.Number && root.Number.isFinite,
