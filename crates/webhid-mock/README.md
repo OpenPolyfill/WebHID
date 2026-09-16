@@ -43,8 +43,8 @@ cross-platform CI.
 `/dev/uhid` requires write permission. The repo ships
 `manifests/99-webhid-e2e.rules`, which grants the `webhid` group write
 access to `/dev/uhid` plus read/write on hidraw nodes of devices with VID
-0x16C0 (the e2e mock VID), so both `webhid-mock` and the daemon run as a
-normal user. One-time setup (root):
+0x16C0 (the E2E mock and daemon UHID identity tests), so both
+`webhid-mock` and the daemon run as a normal user. One-time setup (root):
 
 ```sh
 sudo make install-e2e-udev-rule   # installs the rule, creates the
