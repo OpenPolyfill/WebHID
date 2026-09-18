@@ -154,4 +154,7 @@ test('fanout pairing uses captured MessagePort operations', () => {
   assert.doesNotMatch(bootstrap, /root\.window\.top/)
   assert.match(bootstrap, /'MessageEvent'/)
   assert.doesNotMatch(main, /event\.(data|source|origin|ports)/)
+  assert.doesNotMatch(main, /Object\.values|Number\.isInteger/)
+  assert.match(main, /makePristineIterable\(object\.values\(pending\)\)/)
+  assert.match(main, /nativeNumberIsInteger/)
 })

@@ -141,6 +141,7 @@
   const stringConstructor = types.String.constructor
   const uint8Ops = types.Uint8Array.proto.methods
   const nativeNumberIsFinite = host.numberIsFinite
+  const nativeNumberIsInteger = host.numberIsInteger
   const nativeMathTrunc = host.mathTrunc
   const nativeJsonStringify = host.jsonStringify
   /**
@@ -923,7 +924,7 @@
   function handleFanoutDeliverMessage(data, ports) {
     const port = ports && ports[0]
     const frameIndex = data.frameIndex
-    if (!port || !Number.isInteger(frameIndex)) return
+    if (!port || !nativeNumberIsInteger(frameIndex)) return
     const nav = host.windowFrameNavigator(frameIndex)
     const hid = nav && nav.hid ? nav.hid : null
     if (!hid) return
@@ -2382,7 +2383,7 @@
       }
     }
     setupBridgePort()
-    for (const entry of Object.values(pending)) {
+    for (const entry of makePristineIterable(object.values(pending))) {
       try {
         callNative(
           nativeMessagePortPostMessage,

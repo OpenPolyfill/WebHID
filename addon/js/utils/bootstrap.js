@@ -418,6 +418,7 @@
     permissionsQuery,
     permissions: nativePermissions,
     numberIsFinite: root.Number && root.Number.isFinite,
+    numberIsInteger: root.Number && root.Number.isInteger,
     mathTrunc: root.Math && root.Math.trunc,
     jsonStringify: root.JSON && root.JSON.stringify,
     parseInt: root.parseInt,
