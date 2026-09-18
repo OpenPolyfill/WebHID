@@ -3,7 +3,6 @@
 
   /** @type {import("./types.js").Logger} */
   const logger = webhid.import('logger')
-  const pristine = webhid.import('pristine')
   const isChromium = webhid.import('isChromium')
   const http = webhid.import('http')
   const createSettingsStore = webhid.import('createSettingsStore')
@@ -14,9 +13,7 @@
   const parseSettingsKey = webhid.import('parseSettingsKey')
   const WebHidDevicePicker = webhid.import('WebHidDevicePicker')
   logger.initLogger('bridge')
-  if (typeof pristine.host.cryptoRandomUUID !== 'function')
-    throw new Error('WebHID bridge requires pristine crypto.randomUUID')
-  const frameInstanceId = 'frame-' + pristine.host.cryptoRandomUUID()
+  const frameInstanceId = 'frame-' + crypto.randomUUID()
   const pageChannel = new MessageChannel()
   if (isChromium) window.postMessage(null, '*', [pageChannel.port2])
   else
@@ -51,11 +48,11 @@
     }
     return true
   })()
-  const fanoutNonce = pristine.host.cryptoRandomUUID()
   /** @type {Map<string, FrameContext>} channel tag -> adopted child context */
   const fanoutContexts = new Map()
-  /** @type {Map<string, {channel: string, frameIndex: number, frameId: number}>} */
-  const fanoutHandoffs = new Map()
+  /** @type {Set<string>} frame/document identities awaiting mux setup */
+  const fanoutPending = new Set()
+  const observedFrameElements = new Set()
   let nextFanoutChannel = 0
   /** @type {FrameContext|null} */
   let pumpChannelContext = null
@@ -235,6 +232,7 @@
       document.documentElement.appendChild(devicePicker.host)
     }
     acceptBootstrapPort(pagePort, window, authorityOrigin || '', browserFrameIdentity(window))
+    if (window === window.top) installTopFanoutObserver()
     ;(async () => {
       let resp = null
       try {
@@ -1859,43 +1857,65 @@
   }
 
   /**
-   * Relays a same-origin child frame's fanout request (forwarded by this
-   * frame's MAIN world after it observed the child's window postMessage). The
-   * child's identity is re-verified here through browser-authenticated frame
-   * APIs before any endpoint is registered.
-   * @param {object} data
-   * @param {MessagePort} port
+   * @param {{frameId: number|null, documentId: string|null}} identity
+   * @returns {string}
+   */
+  function fanoutDocumentKey(identity) {
+    return String(identity.frameId) + ':' + identity.documentId
+  }
+
+  /**
+   * @param {Window} childWindow
+   * @returns {number}
+   */
+  function frameIndexForWindow(childWindow) {
+    for (let index = 0; index < window.frames.length; index++) {
+      if (window.frames[index] === childWindow) return index
+    }
+    return -1
+  }
+
+  /**
+   * Creates and delivers one authenticated mux channel for an observed child
+   * document. The child MAIN world is already armed by its document_start
+   * setter when the frame load event reaches this bridge.
+   * @param {HTMLIFrameElement|HTMLFrameElement} frameElement
    * @returns {void}
    */
-  function handleFanoutRequestMessage(data, port) {
-    if (!localStarted || window !== window.top) return
-    if (port !== pagePort) return
-    const nonce = data.nonce
-    const frameIndex = data.frameIndex
-    if (typeof nonce !== 'string' || !nonce || !Number.isInteger(frameIndex)) return
-    if (fanoutContexts.size >= 32) return
+  function observeChildFrame(frameElement) {
     let childWindow = null
-    let frameElement = null
+    let origin = null
+    let url = ''
+    let readyState = 'loading'
     try {
-      childWindow = window.frames[frameIndex]
-      frameElement = document.querySelectorAll('iframe,frame')[frameIndex]
+      childWindow = frameElement.contentWindow
+      origin = childWindow.location.origin
+      url = childWindow.location.href
+      readyState = childWindow.document.readyState
     } catch {
-      void 0
+      return
     }
-    if (!childWindow || !frameElement) return
-    const origin = (function () {
-      try {
-        return childWindow.location.origin
-      } catch {
-        return null
-      }
-    })()
-    if (!origin || origin === 'null' || origin !== window.location.origin) return
-    const identity = browserFrameIdentity(frameElement)
+    if (
+      !childWindow ||
+      !origin ||
+      origin === 'null' ||
+      origin !== window.location.origin ||
+      readyState === 'loading' ||
+      url === 'about:blank'
+    )
+      return
+    const frameIndex = frameIndexForWindow(childWindow)
+    if (frameIndex < 0) return
+    const identity = browserFrameIdentity(childWindow)
     if (identity.frameId == null || identity.documentId == null) return
+    const documentKey = fanoutDocumentKey(identity)
     for (const existing of fanoutContexts.values()) {
-      if (existing.frameId === identity.frameId) return
+      if (existing.frameId !== identity.frameId) continue
+      if (existing.documentId === identity.documentId) return
+      destroyFrameContext(existing).catch((e) => logger.debug('stale fanout cleanup failed', e))
     }
+    if (fanoutPending.has(documentKey) || fanoutContexts.size >= 32) return
+    fanoutPending.add(documentKey)
     const channel = 'fanout:' + frameInstanceId + ':' + ++nextFanoutChannel
     sendBackgroundRequest({
       action: 'fanoutOpen',
@@ -1903,21 +1923,13 @@
       frameId: identity.frameId,
       documentId: identity.documentId,
       origin,
-      url: (function () {
-        try {
-          return childWindow.location.href
-        } catch {
-          return ''
-        }
-      })()
+      url
     })
       .then((response) => {
         if (!response || !response.ok) return
-        const reservation = { channel: response.channel, frameIndex, frameId: identity.frameId }
-        fanoutHandoffs.set(nonce, reservation)
-        setTimeout(() => {
-          if (fanoutHandoffs.get(nonce) === reservation) fanoutHandoffs.delete(nonce)
-        }, FANOUT_RESERVATION_TIMEOUT_MS)
+        const current = browserFrameIdentity(childWindow)
+        if (current.frameId !== identity.frameId || current.documentId !== identity.documentId)
+          return
         const childPort = new MessageChannel()
         const context = createFrameContext(childPort.port1, childWindow, origin, identity)
         context.channel = response.channel
@@ -1944,15 +1956,13 @@
           }
           logger.debug('dropping pre-pair mux traffic', pairData && pairData.type)
         }
-        const pairTimer = setTimeout(() => {
+        setTimeout(() => {
           if (!context.paired) destroyFrameContext(context).catch(() => {})
         }, FANOUT_RESERVATION_TIMEOUT_MS)
-        void pairTimer
         try {
           pagePort.postMessage(
             {
               type: 'fanoutDeliver',
-              nonce,
               channel: response.channel,
               frameIndex
             },
@@ -1965,6 +1975,42 @@
         logger.debug('[bridge] fanout context adopted', context.channel)
       })
       .catch((e) => logger.debug('fanout open failed', e))
+      .finally(() => fanoutPending.delete(documentKey))
+  }
+
+  /**
+   * @param {HTMLIFrameElement|HTMLFrameElement} frame
+   * @returns {void}
+   */
+  function observeFrameElement(frame) {
+    if (observedFrameElements.has(frame)) return
+    observedFrameElements.add(frame)
+    frame.addEventListener('load', () => observeChildFrame(frame))
+    observeChildFrame(frame)
+  }
+
+  /**
+   * @param {Element|Document} root
+   * @returns {void}
+   */
+  function observeChildFrames(root) {
+    if (root.localName === 'iframe' || root.localName === 'frame') observeFrameElement(root)
+    const frames = root.querySelectorAll('iframe,frame')
+    for (const frame of frames) observeFrameElement(frame)
+  }
+
+  /** @returns {void} */
+  function installTopFanoutObserver() {
+    if (window !== window.top) return
+    observeChildFrames(document)
+    const observer = new MutationObserver((records) => {
+      for (const record of records) {
+        for (const node of record.addedNodes) {
+          if (node.nodeType === 1) observeChildFrames(node)
+        }
+      }
+    })
+    observer.observe(document.documentElement, { childList: true, subtree: true })
   }
 
   /** @type {object} */
@@ -1973,7 +2019,6 @@
     dataPlaneResponse: handlePlaneResponse,
     dataPlaneEvent: handleDataPlaneEvent,
     fanoutSwitched: handleFanoutSwitchedMessage,
-    fanoutRequest: handleFanoutRequestMessage,
     workerError: (data, port) =>
       handleWorkerErrorEvent(data, port).catch((e) =>
         logger.debug('worker error recovery failed', e)
@@ -2191,9 +2236,8 @@
    */
   function originFromDelegationUrl(value, base) {
     try {
-      const urlType = pristine.types.URL
-      const url = urlType.construct(base ? [value, base] : [value])
-      const origin = urlType.proto.getters.origin(url)
+      const url = base ? new URL(value, base) : new URL(value)
+      const origin = url.origin
       return typeof origin === 'string' && origin !== 'null' ? origin : null
     } catch {
       return null

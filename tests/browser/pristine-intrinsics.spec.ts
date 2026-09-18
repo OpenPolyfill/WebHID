@@ -117,6 +117,35 @@ test.describe('MAIN-world pristine intrinsics', () => {
     expect(result.deviceIsSame).toBe(true)
     expect(result.nativeConstructorsStillAvailable).toBe(true)
   })
+
+  test('MAIN captures Symbol before page code can replace it', async ({ sharedPage }) => {
+    const result = await sharedPage.evaluate(() => {
+      const originalSymbol = globalThis.Symbol
+      const hostileSymbol = function HostileSymbol(): never {
+        throw new Error('poisoned Symbol')
+      } as unknown as typeof Symbol
+      globalThis.Symbol = hostileSymbol
+      try {
+        const connection = new HIDConnectionEvent('probe', { device: navigator.hid })
+        const input = new HIDInputReportEvent('inputreport', {
+          device: navigator.hid,
+          reportId: 0,
+          data: new Uint8Array(0)
+        })
+        return {
+          connectionType: connection.type,
+          inputType: input.type,
+          deviceIsSame: connection.device === navigator.hid && input.device === navigator.hid
+        }
+      } finally {
+        globalThis.Symbol = originalSymbol
+      }
+    })
+    expect(result.connectionType).toBe('probe')
+    expect(result.inputType).toBe('inputreport')
+    expect(result.deviceIsSame).toBe(true)
+  })
+
   test('live settings updates survive a poisoned array iterator', async ({
     sharedPage,
     backgroundPage

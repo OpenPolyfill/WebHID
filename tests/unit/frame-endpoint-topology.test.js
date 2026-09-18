@@ -82,12 +82,12 @@ test('MAIN settings readiness waits for the initial snapshot', () => {
   assert.match(main, /sendRequest\('getSettings', \{\}\)[\s\S]*markSettingsReady/)
 })
 
-test('MAIN keeps same-document capture and only posts fanout intent to top', () => {
+test('MAIN keeps direct capture without child fanout intent', () => {
   assert.doesNotMatch(main, /capturePageBridge\(windowObject\.top/)
   assert.doesNotMatch(main, /bridgePort = windowObject\.top/)
   assert.match(main, /reflect\.deleteProperty\(globalThis, 'webhid'\)/)
-  assert.match(main, /windowTopPostMessage/)
-  assert.match(main, /webhidFanoutRequest/)
+  assert.doesNotMatch(main, /windowTopPostMessage/)
+  assert.doesNotMatch(main, /webhidFanoutRequest/)
 })
 
 test('endpoint replacement retires prior document authorities', () => {
@@ -110,14 +110,13 @@ test('iframe delegation is not a presence-only grant', () => {
   assert.doesNotMatch(bridge, /some\(\(directive\) => \^\\\\s\*hid/)
 })
 
-test('top bridge multiplexes same-origin child frame contexts', () => {
+test('top bridge multiplexes same-origin child contexts proactively', () => {
   assert.match(bridge, /const fanoutContexts = new Map\(\)/)
   assert.match(bridge, /fanoutContexts\.set\(context\.channel, context\)/)
-  assert.match(bridge, /fanoutRequest: handleFanoutRequestMessage/)
+  assert.doesNotMatch(bridge, /fanoutRequest: handleFanoutRequestMessage/)
   assert.match(bridge, /frameContexts\.get\(context\.key\) !== context/)
   assert.match(bridge, /frameContexts\.values\(\)/)
 })
-
 test('fanout registration is browser-authenticated and same-origin only', () => {
   assert.match(bridge, /origin !== window\.location\.origin/)
   assert.match(bridge, /identity\.frameId == null \|\| identity\.documentId == null/)
@@ -146,7 +145,6 @@ test('fanout pairing uses captured MessagePort operations', () => {
   assert.doesNotMatch(main, /port\.close\(\)/)
   assert.doesNotMatch(main, /typeof (candidate|source)\.postMessage/)
   assert.doesNotMatch(main, /windowObject\.(top|location|frames|isSecureContext)/)
-  assert.match(main, /host\.windowFrameAt/)
   assert.match(main, /callNative\(nativeMessagePortAddEventListener, port, 'message', handler\)/)
   assert.match(main, /callNative\(nativeMessagePortRemoveEventListener, port, 'message', handler\)/)
   assert.match(main, /callNative\(nativeMessagePortStart, port\)/)

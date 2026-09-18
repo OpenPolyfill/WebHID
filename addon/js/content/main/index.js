@@ -34,9 +34,9 @@
   const nativeEventStopImmediatePropagation = types.Event
     ? types.Event.getDescriptor('stopImmediatePropagation').value
     : null
-  const nativeSymbolIterator = types.Symbol
-    ? types.Symbol.getStaticDescriptor('iterator').value
-    : null
+  const NativeSymbol = types.Symbol.constructor
+  const nativeSymbolIterator = types.Symbol.getStaticDescriptor('iterator').value
+  const nativeSymbolToStringTag = types.Symbol.getStaticDescriptor('toStringTag').value
   const NativeDOMException = types.DOMException ? types.DOMException.constructor : null
   const NativeError = types.Error.constructor
   const NativeTypeError = types.TypeError.constructor
@@ -81,7 +81,6 @@
   const nativeWorkerTerminate = types.Worker ? types.Worker.getDescriptor('terminate').value : null
   const nativeWindowAddEventListener = host.windowAddEventListener
   const nativeWindowRemoveEventListener = host.windowRemoveEventListener
-  const nativeWindowTopPostMessage = host.windowTopPostMessage
   const nativeCreateObjectURL = host.url.createObjectURL
   const nativeRevokeObjectURL = host.url.revokeObjectURL
   const nativeCryptoRandomUUID = host.cryptoRandomUUID
@@ -778,7 +777,6 @@
     return true
   }
   const fanoutCandidate = sameOriginTopCandidate()
-  const fanoutNonce = nativeCryptoRandomUUID()
   const bridgeReady = isWorker
     ? (() => {
         const ch = new NativeMessageChannel()
@@ -822,38 +820,6 @@
             configurable: true,
             set: capturePageBridge
           })
-          if (!isWorker && windowObject === host.windowTop) {
-            callNative(nativeWindowAddEventListener, windowObject, 'message', (event) => {
-              const data = readMessageEventData(event)
-              if (!data || data.type !== 'webhidFanoutRequest') return
-              logger.warn('fanout: top relay observed request')
-              const source = readMessageEventSource(event)
-              if (!source) return
-              const origin = readMessageEventOrigin(event)
-              if (typeof data.nonce !== 'string' || !data.nonce) return
-              if (!origin || origin === 'null') return
-              let frameIndex = -1
-              try {
-                for (let index = 0; index < host.windowFrameCount(); index++) {
-                  if (host.windowFrameAt(index) === source) {
-                    frameIndex = index
-                    break
-                  }
-                }
-              } catch {
-                frameIndex = -1
-              }
-              if (frameIndex < 0) return
-              promiseOps.then(bridgeReady, () => {
-                if (!bridgePort) return
-                callNative(nativeMessagePortPostMessage, bridgePort, {
-                  type: 'fanoutRequest',
-                  nonce: data.nonce,
-                  frameIndex
-                })
-              })
-            })
-          }
         })
   if (!isWorker) setupTrustedTypesSharing()
 
@@ -1117,7 +1083,7 @@
   /** @type {WeakMap<object, object>} */
   const evtState = hardenWeakMap(new NativeWeakMap())
   /** @type {symbol} */
-  const irState = Symbol('webhid_ir')
+  const irState = NativeSymbol('webhid_ir')
   /** @type {Map<string, object>} */
   const deviceRegistry = hardenMap(new NativeMap())
 
@@ -1193,7 +1159,7 @@
   }
   HIDDevice.prototype = object.create(EventTarget.prototype)
   HIDDevice.prototype.constructor = HIDDevice
-  object.defineProperty(HIDDevice.prototype, Symbol.toStringTag, {
+  object.defineProperty(HIDDevice.prototype, nativeSymbolToStringTag, {
     value: 'HIDDevice',
     configurable: true
   })
@@ -1949,7 +1915,7 @@
   }
   HIDInputReportEvent.prototype = object.create(Event.prototype)
   HIDInputReportEvent.prototype.constructor = HIDInputReportEvent
-  object.defineProperty(HIDInputReportEvent.prototype, Symbol.toStringTag, {
+  object.defineProperty(HIDInputReportEvent.prototype, nativeSymbolToStringTag, {
     value: 'HIDInputReportEvent',
     configurable: true
   })
@@ -1999,7 +1965,7 @@
   }
   HIDConnectionEvent.prototype = object.create(Event.prototype)
   HIDConnectionEvent.prototype.constructor = HIDConnectionEvent
-  object.defineProperty(HIDConnectionEvent.prototype, Symbol.toStringTag, {
+  object.defineProperty(HIDConnectionEvent.prototype, nativeSymbolToStringTag, {
     value: 'HIDConnectionEvent',
     configurable: true
   })
@@ -2021,7 +1987,7 @@
   }
   HID.prototype = object.create(EventTarget.prototype)
   HID.prototype.constructor = HID
-  object.defineProperty(HID.prototype, Symbol.toStringTag, {
+  object.defineProperty(HID.prototype, nativeSymbolToStringTag, {
     value: 'HID',
     configurable: true
   })
@@ -2480,17 +2446,6 @@
       configurable: true,
       enumerable: true
     })
-    try {
-      if (!nativeWindowTopPostMessage) throw new Error('no top postMessage')
-      callNative(
-        nativeWindowTopPostMessage,
-        null,
-        { type: 'webhidFanoutRequest', nonce: fanoutNonce },
-        '*'
-      )
-    } catch (e) {
-      logger.warn('fanout request delivery failed', e)
-    }
   }
   installFanoutHandoff()
 
