@@ -10,7 +10,7 @@
   const windowObject = host.window
   const isWorker =
     typeof windowObject === 'undefined' || !NativeWindow || !(windowObject instanceof NativeWindow)
-  if (!isWorker && !windowObject.isSecureContext) {
+  if (!isWorker && !host.windowIsSecureContext) {
     webhid.import('logger').warn('NO POLYFILL')
     return
   }
@@ -54,6 +54,24 @@
     types.MessagePort.getDescriptor('removeEventListener').value
   const nativeMessagePortClose = types.MessagePort.getDescriptor('close').value
   const nativeMessagePortStart = types.MessagePort.getDescriptor('start').value
+  const messageEventDataDescriptor = types.MessageEvent
+    ? types.MessageEvent.getDescriptor('data')
+    : null
+  const messageEventSourceDescriptor = types.MessageEvent
+    ? types.MessageEvent.getDescriptor('source')
+    : null
+  const messageEventOriginDescriptor = types.MessageEvent
+    ? types.MessageEvent.getDescriptor('origin')
+    : null
+  const messageEventPortsDescriptor = types.MessageEvent
+    ? types.MessageEvent.getDescriptor('ports')
+    : null
+  const nativeMessageEventData = messageEventDataDescriptor && messageEventDataDescriptor.get
+  const nativeMessageEventSource =
+    messageEventSourceDescriptor && messageEventSourceDescriptor.get
+  const nativeMessageEventOrigin =
+    messageEventOriginDescriptor && messageEventOriginDescriptor.get
+  const nativeMessageEventPorts = messageEventPortsDescriptor && messageEventPortsDescriptor.get
   const nativeWorkerPostMessage = types.Worker
     ? types.Worker.getDescriptor('postMessage').value
     : null
@@ -84,6 +102,14 @@
   const nativeUserActivation = host.userActivation
   const nativeIsActiveGetter = host.userActivationIsActive
   const callNative = (fn, receiver, ...args) => reflect.apply(fn, receiver, args)
+  const readMessageEventData = (event) =>
+    nativeMessageEventData ? callNative(nativeMessageEventData, event) : undefined
+  const readMessageEventSource = (event) =>
+    nativeMessageEventSource ? callNative(nativeMessageEventSource, event) : null
+  const readMessageEventOrigin = (event) =>
+    nativeMessageEventOrigin ? callNative(nativeMessageEventOrigin, event) : ''
+  const readMessageEventPorts = (event) =>
+    nativeMessageEventPorts ? callNative(nativeMessageEventPorts, event) : null
   const nativeBind = types.Function.proto.methods.bind
   const permissionsObject = host.permissions
   /**
@@ -102,6 +128,7 @@
     return items
   }
   const executionGlobal = isWorker ? host.self : windowObject
+  const executionLocationHref = isWorker ? host.selfHref : host.windowHref
   const trustedTypes = host.trustedTypes
   const Navigator = types.Navigator ? types.Navigator.constructor : null
   const TrustedTypePolicy = types.TrustedTypePolicy ? types.TrustedTypePolicy.constructor : null
@@ -407,13 +434,13 @@
       } else {
         await sendRequest(
           'armShadowSpawn',
-          { url: executionGlobal.location.href },
+          { url: executionLocationHref },
           { timeoutMs: 2000 }
         )
-        worker = new NativeWorker(makeUrl(executionGlobal.location.href))
+        worker = new NativeWorker(makeUrl(executionLocationHref))
       }
     } catch (e) {
-      sendRequest('unarmShadowSpawn', { url: executionGlobal.location.href }, { timeoutMs: 500 })
+      sendRequest('unarmShadowSpawn', { url: executionLocationHref }, { timeoutMs: 500 })
       return { result: { ok: false, error: stringConstructor(e && e.message) }, transfer: null }
     }
     const previous = mainWorldWorkers.get(payload.deviceId)
@@ -424,7 +451,7 @@
       logger.debug('worker error:', event && event.message)
       if (mainWorldWorkers.get(payload.deviceId) === entry) {
         mainWorldWorkers.delete(payload.deviceId)
-        sendRequest('unarmShadowSpawn', { url: executionGlobal.location.href }, { timeoutMs: 500 })
+        sendRequest('unarmShadowSpawn', { url: executionLocationHref }, { timeoutMs: 500 })
         if (bridgePort) {
           callNative(nativeMessagePortPostMessage, bridgePort, {
             type: 'workerError',
@@ -462,7 +489,7 @@
     const dataChannel = new NativeMessageChannel()
     state.dataPort = dataChannel.port1
     state.dataPortGeneration = generation
-    state.dataPortHandler = (event) => onDataPortMessage(state, event.data)
+    state.dataPortHandler = (event) => onDataPortMessage(state, readMessageEventData(event))
     callNative(nativeMessagePortAddEventListener, state.dataPort, 'message', state.dataPortHandler)
     callNative(nativeMessagePortStart, state.dataPort)
     const workerEntry = mainWorldWorkers.get(state.deviceId)
@@ -743,14 +770,10 @@
    * @returns {boolean}
    */
   function sameOriginTopCandidate() {
-    if (isWorker || windowObject === windowObject.top) return false
-    const origin = host.window && windowObject.location ? windowObject.location.origin : null
+    if (isWorker || windowObject === host.windowTop) return false
+    const origin = host.windowOrigin
     if (!origin || origin === 'null') return false
-    try {
-      if (windowObject.top.location.origin !== origin) return false
-    } catch {
-      return false
-    }
+    if (host.windowTopOrigin !== origin) return false
     return true
   }
   const fanoutCandidate = sameOriginTopCandidate()
@@ -766,15 +789,12 @@
     : isChromium
       ? new Promise((resolve) => {
           const onBridgeMessage = (event) => {
-            if (
-              event.source !== windowObject ||
-              event.data !== null ||
-              !event.ports ||
-              event.ports.length !== 1
-            )
-              return
+            const source = readMessageEventSource(event)
+            const data = readMessageEventData(event)
+            const ports = readMessageEventPorts(event)
+            if (source !== windowObject || data !== null || !ports || ports.length !== 1) return
             nativeWindowRemoveEventListener(windowObject, 'message', onBridgeMessage)
-            bridgePort = event.ports[0]
+            bridgePort = ports[0]
             setupBridgePort()
             resolve()
           }
@@ -782,11 +802,15 @@
         })
       : new Promise((resolve) => {
           const capturePageBridge = (candidate) => {
-            if (!candidate || typeof candidate.postMessage !== 'function') return
-            reflect.deleteProperty(globalThis, 'webhid')
-            bridgePort = candidate
-            setupBridgePort()
-            resolve()
+            if (!candidate) return
+            try {
+              reflect.deleteProperty(globalThis, 'webhid')
+              bridgePort = candidate
+              setupBridgePort()
+              resolve()
+            } catch {
+              bridgePort = null
+            }
           }
           try {
             capturePageBridge(windowObject.webhid)
@@ -797,18 +821,20 @@
             configurable: true,
             set: capturePageBridge
           })
-          if (!isWorker && windowObject === windowObject.top) {
+          if (!isWorker && windowObject === host.windowTop) {
             callNative(nativeWindowAddEventListener, windowObject, 'message', (event) => {
-              if (!event.data || event.data.type !== 'webhidFanoutRequest') return
+              const data = readMessageEventData(event)
+              if (!data || data.type !== 'webhidFanoutRequest') return
               logger.warn('fanout: top relay observed request')
-              const source = event.source
-              if (!source || typeof source.postMessage !== 'function') return
-              if (typeof event.data.nonce !== 'string' || !event.data.nonce) return
-              if (!event.origin || event.origin === 'null') return
+              const source = readMessageEventSource(event)
+              if (!source) return
+              const origin = readMessageEventOrigin(event)
+              if (typeof data.nonce !== 'string' || !data.nonce) return
+              if (!origin || origin === 'null') return
               let frameIndex = -1
               try {
-                for (let index = 0; index < windowObject.frames.length; index++) {
-                  if (windowObject.frames[index] === source) {
+                for (let index = 0; index < host.windowFrameCount(); index++) {
+                  if (host.windowFrameAt(index) === source) {
                     frameIndex = index
                     break
                   }
@@ -821,7 +847,7 @@
                 if (!bridgePort) return
                 callNative(nativeMessagePortPostMessage, bridgePort, {
                   type: 'fanoutRequest',
-                  nonce: event.data.nonce,
+                  nonce: data.nonce,
                   frameIndex
                 })
               })
@@ -834,9 +860,11 @@
   function setupBridgePort() {
     if (!bridgePort) return
     callNative(nativeMessagePortAddEventListener, bridgePort, 'message', (event) => {
-      if (!event.data) return
-      const handler = BRIDGE_MESSAGE_HANDLERS[event.data.type]
-      if (handler) handler(event.data, event.ports)
+      const data = readMessageEventData(event)
+      const ports = readMessageEventPorts(event)
+      if (!data) return
+      const handler = BRIDGE_MESSAGE_HANDLERS[data.type]
+      if (handler) handler(data, ports)
     })
     callNative(nativeMessagePortStart, bridgePort)
   }
@@ -896,13 +924,7 @@
     const port = ports && ports[0]
     const frameIndex = data.frameIndex
     if (!port || !Number.isInteger(frameIndex)) return
-    let childWindow = null
-    try {
-      childWindow = windowObject.frames[frameIndex]
-    } catch {
-      void 0
-    }
-    const nav = childWindow && childWindow.navigator ? childWindow.navigator : null
+    const nav = host.windowFrameNavigator(frameIndex)
     const hid = nav && nav.hid ? nav.hid : null
     if (!hid) return
     try {
@@ -2285,7 +2307,7 @@
 
   /** @returns {void} */
   function installNavigatorHid() {
-    const target = isWorker ? object.getPrototypeOf(executionGlobal.navigator) : Navigator.prototype
+    const target = isWorker ? object.getPrototypeOf(host.navigator) : Navigator.prototype
     object.defineProperty(target, 'hid', {
       get() {
         return hidInstance
@@ -2302,19 +2324,53 @@
   let pendingHandoffPort = null
   /** @type {number|null} */
   let muxPairTimer = null
+  /** @type {((event: MessageEvent) => void)|null} */
+  let muxPairHandler = null
+  /**
+   * @param {MessagePort} port
+   * @param {((event: MessageEvent) => void)|null} handler
+   * @returns {void}
+   */
+  function removeMuxPairHandler(port, handler) {
+    if (!handler) return
+    try {
+      callNative(nativeMessagePortRemoveEventListener, port, 'message', handler)
+    } catch {
+      void 0
+    }
+    if (muxPairHandler === handler) muxPairHandler = null
+  }
+  /**
+   * @param {MessagePort} port
+   * @param {((event: MessageEvent) => void)|null} handler
+   * @returns {void}
+   */
+  function closeMuxPairCandidate(port, handler) {
+    removeMuxPairHandler(port, handler)
+    try {
+      callNative(nativeMessagePortClose, port)
+    } catch {
+      void 0
+    }
+  }
   /**
    * Completes the handoff after the mutual OTP pairing succeeded: adopts the
    * multiplexer port, retires the direct endpoint, and re-drives traffic.
    * @param {MessagePort} port
+   * @param {((event: MessageEvent) => void)} handler
    * @returns {void}
    */
-  function completeHandoff(port) {
+  function completeHandoff(port, handler) {
+    if (pendingHandoffPort !== port || muxPairHandler !== handler) {
+      closeMuxPairCandidate(port, handler)
+      return
+    }
     pendingHandoffPort = null
     if (muxPairTimer) {
       nativeClearTimeout(muxPairTimer)
       muxPairTimer = null
     }
-    port.onmessage = null
+    removeMuxPairHandler(port, handler)
     installNavigatorHid()
     const directPort = bridgePort
     bridgePort = port
@@ -2352,15 +2408,23 @@
   function startMuxPairing() {
     const port = pendingHandoffPort
     if (!muxPairSeed || !port) return
-    port.onmessage = (event) => {
-      const data = event.data
-      if (data && data.type === 'fanoutPairAck' && data.otp === muxPairSeed.ackOtp) {
-        completeHandoff(port)
+    const handler = (event) => {
+      const data = readMessageEventData(event)
+      if (
+        data &&
+        muxPairSeed &&
+        data.type === 'fanoutPairAck' &&
+        data.otp === muxPairSeed.ackOtp
+      ) {
+        completeHandoff(port, handler)
         return
       }
       void 0
     }
+    muxPairHandler = handler
     try {
+      callNative(nativeMessagePortAddEventListener, port, 'message', handler)
+      callNative(nativeMessagePortStart, port)
       callNative(
         nativeMessagePortPostMessage,
         port,
@@ -2368,24 +2432,18 @@
       )
     } catch (e) {
       pendingHandoffPort = null
-      try {
-        port.close()
-      } catch {
-        void 0
-      }
+      closeMuxPairCandidate(port, handler)
       logger.warn('fanout pair send failed', e)
       return
     }
     muxPairTimer = nativeSetTimeout(() => {
-      if (pendingHandoffPort !== port) return
+      if (pendingHandoffPort !== port || muxPairHandler !== handler) {
+        closeMuxPairCandidate(port, handler)
+        return
+      }
       pendingHandoffPort = null
       muxPairSeed = null
-      try {
-        port.onmessage = null
-        port.close()
-      } catch {
-        void 0
-      }
+      closeMuxPairCandidate(port, handler)
     }, 2000)
   }
   /**
@@ -2399,7 +2457,17 @@
   function installFanoutHandoff() {
     if (isWorker || !fanoutCandidate || !hidInstance) return
     const captureTopBridge = (candidate) => {
-      if (!candidate || typeof candidate.postMessage !== 'function') return
+      if (!candidate) return
+      if (pendingHandoffPort && pendingHandoffPort !== candidate) {
+        const previousPort = pendingHandoffPort
+        const previousHandler = muxPairHandler
+        pendingHandoffPort = null
+        if (muxPairTimer) {
+          nativeClearTimeout(muxPairTimer)
+          muxPairTimer = null
+        }
+        closeMuxPairCandidate(previousPort, previousHandler)
+      }
       pendingHandoffPort = candidate
       startMuxPairing()
     }

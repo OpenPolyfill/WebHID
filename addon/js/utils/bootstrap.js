@@ -258,6 +258,7 @@
     'Function',
     'Map',
     'MessageChannel',
+    'MessageEvent',
     'MessagePort',
     'Navigator',
     'Promise',
@@ -301,6 +302,46 @@
   let activationProto = activationObject
     ? nativeGetPrototypeOf(activationObject)
     : null
+  const nativeWindow = root.window
+  const nativeWindowTop = nativeWindow ? nativeGet(nativeWindow, 'top') : null
+  const nativeWindowFrames = nativeWindow ? nativeGet(nativeWindow, 'frames') : null
+  const readLocationOrigin = (value) => {
+    if (!value) return null
+    try {
+      const location = nativeGet(value, 'location')
+      return location ? nativeGet(location, 'origin') : null
+    } catch {
+      return null
+    }
+  }
+  const readLocationHref = (value) => {
+    if (!value) return null
+    try {
+      const location = nativeGet(value, 'location')
+      return location ? nativeGet(location, 'href') : null
+    } catch {
+      return null
+    }
+  }
+  const nativeWindowHref = readLocationHref(nativeWindow)
+  const nativeSelfHref = readLocationHref(root.self)
+  const nativeWindowOrigin = readLocationOrigin(nativeWindow)
+  const nativeWindowTopOrigin = readLocationOrigin(nativeWindowTop)
+  const nativeWindowIsSecureContext = nativeWindow
+    ? nativeGet(nativeWindow, 'isSecureContext')
+    : false
+  const nativeWindowFrameCount = () =>
+    nativeWindowFrames ? nativeGet(nativeWindowFrames, 'length') : 0
+  const nativeWindowFrameAt = (index) =>
+    nativeWindowFrames ? nativeGet(nativeWindowFrames, index) : null
+  const nativeWindowFrameNavigator = (index) => {
+    try {
+      const frame = nativeWindowFrameAt(index)
+      return frame ? nativeGet(frame, 'navigator') : null
+    } catch {
+      return null
+    }
+  }
   const nativeWindowPostMessage =
     root.window && typeof root.window.postMessage === 'function' ? root.window.postMessage : null
   const nativeWindowAddEventListener =
@@ -342,11 +383,20 @@
         : () => {}
   })
   const host = nativeFreeze({
-    window: root.window,
+    window: nativeWindow,
     self: root.self,
     navigator: root.navigator,
     crypto: root.crypto,
     trustedTypes: root.trustedTypes,
+    windowTop: nativeWindowTop,
+    windowOrigin: nativeWindowOrigin,
+    windowHref: nativeWindowHref,
+    selfHref: nativeSelfHref,
+    windowTopOrigin: nativeWindowTopOrigin,
+    windowIsSecureContext: nativeWindowIsSecureContext,
+    windowFrameCount: nativeWindowFrameCount,
+    windowFrameAt: nativeWindowFrameAt,
+    windowFrameNavigator: nativeWindowFrameNavigator,
     console: consoleOps,
     userActivation: activationObject,
     userActivationIsActive: activationGetter
@@ -355,11 +405,15 @@
     windowAddEventListener: nativeWindowAddEventListener,
     windowRemoveEventListener: nativeWindowRemoveEventListener,
     windowTopPostMessage: (function () {
-      if (!root.window || !root.window.top) return null
-      const topPost = root.window.top.postMessage
-      return typeof topPost === 'function'
-        ? call(nativeFunctionBind, topPost, [root.window.top])
-        : null
+      if (!nativeWindowTop) return null
+      try {
+        const topPost = nativeGet(nativeWindowTop, 'postMessage')
+        return typeof topPost === 'function'
+          ? call(nativeFunctionBind, topPost, [nativeWindowTop])
+          : null
+      } catch {
+        return null
+      }
     })(),
     permissionsQuery,
     permissions: nativePermissions,

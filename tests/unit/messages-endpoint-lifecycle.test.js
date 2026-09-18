@@ -107,7 +107,9 @@ function loadMessages() {
     pristine: { host: { cryptoRandomUUID: () => 'test-otp' } },
     'content-ports': {
       registerContentPort() {},
-      postToContentPort() {}
+      postToContentPort(port, message) {
+        port.postMessage(message)
+      }
     },
     loadEffectiveSettings: async () => ({ dataPlane: 'nm' }),
     http: { isOk: (status) => status >= 200 && status < 300 },
@@ -169,6 +171,7 @@ function loadMessages() {
   function connect(sender) {
     const messageListeners = []
     const disconnectListeners = []
+    const postedMessages = []
     const port = {
       name: 'webhid-control',
       sender,
@@ -182,7 +185,13 @@ function loadMessages() {
           disconnectListeners.push(listener)
         }
       },
-      postMessage() {},
+      postMessage(message) {
+        postedMessages.push(message)
+      },
+      postedMessages,
+      receive(request) {
+        for (const listener of messageListeners) listener(request)
+      },
       disconnect() {
         for (const listener of disconnectListeners) listener()
       }
@@ -192,7 +201,14 @@ function loadMessages() {
     return port
   }
 
-  return { connect, pendingPicker, frameEndpoints, ports, getPurgeCalls: () => purgeCalls }
+  return {
+    connect,
+    pendingPicker,
+    frameEndpoints,
+    fanoutEndpoints,
+    ports,
+    getPurgeCalls: () => purgeCalls
+  }
 }
 
 const sender = (frameId, documentId) => ({
@@ -203,29 +219,51 @@ const sender = (frameId, documentId) => ({
   url: 'https://frame-' + frameId + '.test/'
 })
 
-test('proactive retirement clears picker requests owned by request port', () => {
+const sameOriginSender = (frameId, documentId) => ({
+  tab: { id: 1 },
+  frameId,
+  documentId,
+  origin: 'https://same.test',
+  url: 'https://same.test/frame-' + frameId
+})
+
+test('proactive retirement clears picker requests owned by request endpoint', () => {
   const state = loadMessages()
   const oldPort = state.connect(sender(0, 'old'))
-  state.pendingPicker.set(1, { port: oldPort, uiPort: null })
+  state.pendingPicker.set(1, {
+    port: oldPort,
+    ownerEndpointId: state.frameEndpoints.get(oldPort).id,
+    uiEndpointId: null
+  })
   state.connect(sender(0, 'new'))
   assert.equal(state.pendingPicker.size, 0)
   assert.equal(state.getPurgeCalls(), 1)
 })
 
-test('proactive retirement clears modal pickers owned by UI port', () => {
+test('proactive retirement clears modal pickers owned by UI endpoint', () => {
   const state = loadMessages()
   const oldUiPort = state.connect(sender(0, 'old'))
   const requestPort = state.connect(sender(1, 'request'))
-  state.pendingPicker.set(1, { port: requestPort, uiPort: oldUiPort })
+  state.pendingPicker.set(1, {
+    port: requestPort,
+    ownerEndpointId: state.frameEndpoints.get(requestPort).id,
+    uiPort: oldUiPort,
+    uiEndpointId: state.frameEndpoints.get(oldUiPort).id
+  })
   state.connect(sender(0, 'new'))
   assert.equal(state.pendingPicker.size, 0)
 })
 
 test('retiring an unrelated sibling leaves the picker intact', () => {
   const state = loadMessages()
-  const requestPort = state.connect(sender(1, 'request'))
   const uiPort = state.connect(sender(0, 'ui'))
-  state.pendingPicker.set(1, { port: requestPort, uiPort })
+  const requestPort = state.connect(sender(1, 'request'))
+  state.pendingPicker.set(1, {
+    port: requestPort,
+    ownerEndpointId: state.frameEndpoints.get(requestPort).id,
+    uiPort,
+    uiEndpointId: state.frameEndpoints.get(uiPort).id
+  })
   const sibling = state.connect(sender(2, 'sibling'))
   state.connect(sender(2, 'replacement'))
   assert.equal(state.pendingPicker.size, 1)
@@ -237,10 +275,75 @@ test('disconnect after proactive retirement is idempotent', () => {
   const state = loadMessages()
   const oldPort = state.connect(sender(0, 'old'))
   const sibling = state.connect(sender(1, 'sibling'))
-  state.pendingPicker.set(1, { port: sibling, uiPort: oldPort })
+  state.pendingPicker.set(1, {
+    port: sibling,
+    ownerEndpointId: state.frameEndpoints.get(sibling).id,
+    uiPort: oldPort,
+    uiEndpointId: state.frameEndpoints.get(oldPort).id
+  })
   state.connect(sender(0, 'new'))
   assert.equal(state.pendingPicker.size, 0)
   const purgeCalls = state.getPurgeCalls()
   assert.doesNotThrow(() => oldPort.disconnect())
   assert.equal(state.getPurgeCalls(), purgeCalls)
+})
+
+test('pending fanout seed survives child endpoint registration race', () => {
+  const state = loadMessages()
+  const topPort = state.connect(sameOriginSender(0, 'top'))
+  topPort.receive({
+    action: 'fanoutOpen',
+    channel: 'child-channel',
+    frameId: 1,
+    documentId: 'child',
+    origin: 'https://same.test',
+    url: 'https://same.test/frame-1'
+  })
+  const logical = state.fanoutEndpoints.get('child-channel')
+  assert.ok(logical)
+  assert.ok(logical.pendingSeed)
+  const childPort = state.connect(sameOriginSender(1, 'child'))
+  assert.equal(state.fanoutEndpoints.get('child-channel'), logical)
+  assert.equal(logical.pendingSeed, undefined)
+  const seedMessages = childPort.postedMessages.filter(
+    (message) => message.action === 'fanoutPairSeed'
+  )
+  assert.equal(seedMessages.length, 1)
+  assert.equal(seedMessages[0].channel, 'child-channel')
+  assert.equal(seedMessages[0].pairOtp, logical.pairOtp)
+  assert.equal(seedMessages[0].ackOtp, logical.ackOtp)
+})
+
+test('retiring one logical fanout endpoint does not clear a sibling picker', () => {
+  const state = loadMessages()
+  const topPort = state.connect(sameOriginSender(0, 'top'))
+  const siblingA = {
+    id: 'fanout-a',
+    channel: 'a',
+    port: topPort,
+    tabId: 1,
+    frameId: 1,
+    documentId: 'a',
+    frameKey: 'a',
+    retired: false
+  }
+  const siblingB = {
+    id: 'fanout-b',
+    channel: 'b',
+    port: topPort,
+    tabId: 1,
+    frameId: 2,
+    documentId: 'b',
+    frameKey: 'b',
+    retired: false
+  }
+  state.fanoutEndpoints.set('a', siblingA)
+  state.fanoutEndpoints.set('b', siblingB)
+  state.pendingPicker.set(1, {
+    port: topPort,
+    ownerEndpointId: siblingB.id,
+    uiEndpointId: null
+  })
+  state.connect(sameOriginSender(1, 'replacement'))
+  assert.equal(state.pendingPicker.size, 1)
 })

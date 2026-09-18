@@ -134,7 +134,7 @@
    */
   function clearPendingPickerForEndpoint(endpoint) {
     for (const [tabId, request] of pendingPicker) {
-      if (request.port !== endpoint.port && request.uiPort !== endpoint.port) continue
+      if (request.ownerEndpointId !== endpoint.id && request.uiEndpointId !== endpoint.id) continue
       pendingPicker.delete(tabId)
     }
   }
@@ -173,8 +173,8 @@
    * @returns {Promise<void>|null}
    */
   function retireEndpoint(endpoint) {
-    clearPendingPickerForEndpoint(endpoint)
     if (endpoint.retired) return null
+    clearPendingPickerForEndpoint(endpoint)
     const preserveDocumentState = hasOtherLiveEndpoint(endpoint)
     endpoint.retired = true
     const cascades = []
@@ -294,7 +294,8 @@
         retireEndpoint(candidate)
     }
     for (const candidate of [...fanoutEndpoints.values()]) {
-      if (candidate.tabId === tabId && (frameId === 0 || candidate.frameId === frameId))
+      if (candidate.tabId !== tabId) continue
+      if (frameId === 0 || (candidate.frameId === frameId && candidate.documentId !== documentId))
         retireEndpoint(candidate)
     }
     const endpoint = {
@@ -1656,6 +1657,8 @@
     const req = {
       requestId: request.requestId,
       tabId,
+      ownerEndpointId: endpoint.id,
+      uiEndpointId: null,
       port,
       filters: request.filters || [],
       exclusionFilters: request.exclusionFilters || [],
@@ -1671,6 +1674,7 @@
         return false
       }
       req.uiPort = top.port
+      req.uiEndpointId = top.id
       pendingPicker.set(tabId, req)
       postToContentPort(top.port, {
         action: 'showInlinePicker',
