@@ -11,7 +11,6 @@ const source = readFileSync(
 function loadMessages() {
   let registerMessageHandlers
   const frameEndpoints = new Map()
-  const fanoutEndpoints = new Map()
   const pendingPicker = new Map()
   const permissionsPolicy = new Map()
   const frameDelegations = new Map()
@@ -123,7 +122,6 @@ function loadMessages() {
       permissionsPolicy,
       frameDelegations,
       frameEndpoints,
-      fanoutEndpoints,
       pageActionVisibility: {}
     },
     bgStorage: {
@@ -205,7 +203,6 @@ function loadMessages() {
     connect,
     pendingPicker,
     frameEndpoints,
-    fanoutEndpoints,
     ports,
     getPurgeCalls: () => purgeCalls
   }
@@ -288,7 +285,29 @@ test('disconnect after proactive retirement is idempotent', () => {
   assert.equal(state.getPurgeCalls(), purgeCalls)
 })
 
-test('pending fanout seed survives child endpoint registration race', () => {
+test('fanoutOpen delivers one fresh seed without background state', () => {
+  const state = loadMessages()
+  const topPort = state.connect(sameOriginSender(0, 'top'))
+  const childPort = state.connect(sameOriginSender(1, 'child'))
+  topPort.receive({
+    action: 'fanoutOpen',
+    channel: 'child-channel',
+    frameId: 1,
+    documentId: 'child',
+    origin: 'https://same.test',
+    url: 'https://same.test/frame-1'
+  })
+  const seedMessages = childPort.postedMessages.filter(
+    (message) => message.action === 'fanoutPairSeed'
+  )
+  assert.equal(seedMessages.length, 1)
+  assert.equal(seedMessages[0].channel, 'child-channel')
+  assert.equal(seedMessages[0].pairOtp, 'test-otp')
+  assert.equal(seedMessages[0].ackOtp, 'test-otp')
+  assert.equal(state.frameEndpoints.size, 2)
+})
+
+test('fanoutOpen fails closed when exact child control endpoint is absent', () => {
   const state = loadMessages()
   const topPort = state.connect(sameOriginSender(0, 'top'))
   topPort.receive({
@@ -299,51 +318,6 @@ test('pending fanout seed survives child endpoint registration race', () => {
     origin: 'https://same.test',
     url: 'https://same.test/frame-1'
   })
-  const logical = state.fanoutEndpoints.get('child-channel')
-  assert.ok(logical)
-  assert.ok(logical.pendingSeed)
-  const childPort = state.connect(sameOriginSender(1, 'child'))
-  assert.equal(state.fanoutEndpoints.get('child-channel'), logical)
-  assert.equal(logical.pendingSeed, undefined)
-  const seedMessages = childPort.postedMessages.filter(
-    (message) => message.action === 'fanoutPairSeed'
-  )
-  assert.equal(seedMessages.length, 1)
-  assert.equal(seedMessages[0].channel, 'child-channel')
-  assert.equal(seedMessages[0].pairOtp, logical.pairOtp)
-  assert.equal(seedMessages[0].ackOtp, logical.ackOtp)
-})
-
-test('retiring one logical fanout endpoint does not clear a sibling picker', () => {
-  const state = loadMessages()
-  const topPort = state.connect(sameOriginSender(0, 'top'))
-  const siblingA = {
-    id: 'fanout-a',
-    channel: 'a',
-    port: topPort,
-    tabId: 1,
-    frameId: 1,
-    documentId: 'a',
-    frameKey: 'a',
-    retired: false
-  }
-  const siblingB = {
-    id: 'fanout-b',
-    channel: 'b',
-    port: topPort,
-    tabId: 1,
-    frameId: 2,
-    documentId: 'b',
-    frameKey: 'b',
-    retired: false
-  }
-  state.fanoutEndpoints.set('a', siblingA)
-  state.fanoutEndpoints.set('b', siblingB)
-  state.pendingPicker.set(1, {
-    port: topPort,
-    ownerEndpointId: siblingB.id,
-    uiEndpointId: null
-  })
-  state.connect(sameOriginSender(1, 'replacement'))
-  assert.equal(state.pendingPicker.size, 1)
+  assert.equal(topPort.postedMessages.at(-1).ok, false)
+  assert.equal(state.frameEndpoints.size, 1)
 })

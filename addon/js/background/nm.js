@@ -324,12 +324,7 @@
       try {
         if (bin.length < 8 || bin[0] !== PKG_INPUT_REPORT) return
         const deviceId = (bin[1] | (bin[2] << 8) | (bin[3] << 16) | (bin[4] << 24)) >>> 0
-        const targets = new Set(
-          collectDeviceSessionOwners(deviceId)
-            .map((owner) => owner.port)
-            .filter((port) => port != null)
-        )
-        if (targets.size === 0) return
+        const dataPortName = 'webhid-data:' + deviceId
         let offset = 5
         while (offset + 3 <= bin.length) {
           const reportId = bin[offset]
@@ -345,6 +340,17 @@
             reportId,
             data: payload
           }
+          const dataPortReached = postToContentPorts(
+            null,
+            { event },
+            dataPortName
+          )
+          if (dataPortReached.size > 0) continue
+          const targets = new Set(
+            collectDeviceSessionOwners(deviceId)
+              .map((owner) => owner.port)
+              .filter((port) => port != null)
+          )
           for (const port of targets) {
             const copy = payloadLen > 0 ? new Uint8Array(payload) : payload
             postToContentPort(port, {

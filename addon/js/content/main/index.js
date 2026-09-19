@@ -60,17 +60,12 @@
   const messageEventSourceDescriptor = types.MessageEvent
     ? types.MessageEvent.getDescriptor('source')
     : null
-  const messageEventOriginDescriptor = types.MessageEvent
-    ? types.MessageEvent.getDescriptor('origin')
-    : null
   const messageEventPortsDescriptor = types.MessageEvent
     ? types.MessageEvent.getDescriptor('ports')
     : null
   const nativeMessageEventData = messageEventDataDescriptor && messageEventDataDescriptor.get
   const nativeMessageEventSource =
     messageEventSourceDescriptor && messageEventSourceDescriptor.get
-  const nativeMessageEventOrigin =
-    messageEventOriginDescriptor && messageEventOriginDescriptor.get
   const nativeMessageEventPorts = messageEventPortsDescriptor && messageEventPortsDescriptor.get
   const nativeWorkerPostMessage = types.Worker
     ? types.Worker.getDescriptor('postMessage').value
@@ -105,8 +100,6 @@
     nativeMessageEventData ? callNative(nativeMessageEventData, event) : undefined
   const readMessageEventSource = (event) =>
     nativeMessageEventSource ? callNative(nativeMessageEventSource, event) : null
-  const readMessageEventOrigin = (event) =>
-    nativeMessageEventOrigin ? callNative(nativeMessageEventOrigin, event) : ''
   const readMessageEventPorts = (event) =>
     nativeMessageEventPorts ? callNative(nativeMessageEventPorts, event) : null
   const nativeBind = types.Function.proto.methods.bind
@@ -126,7 +119,6 @@
     })
     return items
   }
-  const executionGlobal = isWorker ? host.self : windowObject
   const executionLocationHref = isWorker ? host.selfHref : host.windowHref
   const trustedTypes = host.trustedTypes
   const Navigator = types.Navigator ? types.Navigator.constructor : null
@@ -608,6 +600,88 @@
       return
     wireDevicePort(state, data.generation)
   }
+  /**
+   * Installs the top-owned NM data port for a brokered child attachment.
+   * @param {object} data
+   * @param {MessagePort[]} ports
+   * @returns {void}
+   */
+  function handleBrokerDataPortMessage(data, ports) {
+    const device = data.deviceId ? deviceRegistry.get(data.deviceId) : null
+    const state = device ? devState.get(device) : null
+    const port = ports && ports[0]
+    const validGeneration =
+      state &&
+      typeof data.generation === 'number' &&
+      Number.isInteger(data.generation) &&
+      ((state.opening && (state.planeGeneration === 0 || data.generation === state.planeGeneration)) ||
+        (state.opened && data.generation >= state.planeGeneration))
+    if (
+      !state ||
+      !port ||
+      !validGeneration ||
+      state.planeUnavailableGeneration === data.generation ||
+      (!state.opened && !state.opening)
+    ) {
+      if (port) {
+        try {
+          callNative(nativeMessagePortClose, port)
+        } catch {
+          void 0
+        }
+      }
+      return
+    }
+    if (state.dataPort && state.dataPortGeneration === data.generation) {
+      try {
+        callNative(nativeMessagePortClose, port)
+      } catch {
+        void 0
+      }
+      return
+    }
+    state.planeGeneration = data.generation
+    if (state.dataPort) {
+      rejectPendingReports(state, new NativeDOMException('Data plane replaced', 'NetworkError'))
+      detachDataPort(state)
+    }
+    state.dataPort = port
+    state.dataPortGeneration = data.generation
+    state.dataPortHandler = (event) => onDataPortMessage(state, readMessageEventData(event))
+    callNative(nativeMessagePortAddEventListener, state.dataPort, 'message', state.dataPortHandler)
+    callNative(nativeMessagePortStart, state.dataPort)
+  }
+  /**
+   * @param {object} data
+   * @returns {void}
+   */
+  function handleBrokerDataPortUnavailable(data) {
+    const device = data.deviceId ? deviceRegistry.get(data.deviceId) : null
+    const state = device ? devState.get(device) : null
+    if (
+      !state ||
+      typeof data.generation !== 'number' ||
+      state.dataPortGeneration !== data.generation
+    )
+      return
+    state.planeReady = false
+    state.planeUnavailable = true
+    state.planeUnavailableGeneration = data.generation
+    rejectPendingReports(
+      state,
+      new NativeDOMException('Data plane unavailable', 'NetworkError')
+    )
+    detachDataPort(state)
+  }
+
+  /**
+   * @param {object} data
+   * @param {MessagePort[]} [ports]
+   * @returns {void}
+   */
+  function handleBrokerDataPort(data, ports) {
+    handleBrokerDataPortMessage(data, ports || [])
+  }
 
   /** @returns {void} */
   function setupTrustedTypesSharing() {
@@ -764,9 +838,9 @@
   /** @type {MessagePort|null} */
   let bridgePort = null
   /**
-   * Whether this document is a same-origin non-top frame that should hand its
-   * bridge endpoint to the top frame's multiplexer. Uses only browser-owned
-   * frame relationships, never page-visible state.
+   * Whether this document is a same-origin non-top frame eligible for a
+   * private top-owned NM broker. Uses only browser-owned frame relationships,
+   * never page-visible state.
    * @returns {boolean}
    */
   function sameOriginTopCandidate() {
@@ -880,24 +954,40 @@
   }
 
   /**
-   * Receives the top bridge's fanout delivery on behalf of one child frame and
-   * assigns the multiplexer port into that child's navigator.hid so its
-   * polyfill can switch from the direct endpoint port to the shared mux port.
+   * Relays a top-frame broker candidate into this frame's existing direct
+   * isolated-world bridge. The candidate never becomes the page control port.
    * @param {object} data
    * @param {MessagePort[]} [ports]
    * @returns {void}
    */
   function handleFanoutDeliverMessage(data, ports) {
     const port = ports && ports[0]
-    const frameIndex = data.frameIndex
-    if (!port || !nativeNumberIsInteger(frameIndex)) return
-    const nav = host.windowFrameNavigator(frameIndex)
+    if (!port || !nativeNumberIsInteger(data.frameIndex) || !bridgePort) {
+      try {
+        if (port) callNative(nativeMessagePortClose, port)
+      } catch {
+        void 0
+      }
+      return
+    }
+    const nav = host.windowFrameNavigator(data.frameIndex)
     const hid = nav && nav.hid ? nav.hid : null
-    if (!hid) return
+    if (!hid) {
+      try {
+        callNative(nativeMessagePortClose, port)
+      } catch {
+        void 0
+      }
+      return
+    }
     try {
       nav.hid = port
     } catch {
-      void 0
+      try {
+        callNative(nativeMessagePortClose, port)
+      } catch {
+        void 0
+      }
     }
   }
 
@@ -909,13 +999,9 @@
     dataPlaneUnavailable: handleDataPlaneUnavailable,
     spawnWorkerRequest: handleSpawnWorkerMessage,
     wireWorkerPort: handleWireWorkerPort,
+    brokerDataPort: handleBrokerDataPort,
+    brokerDataPortUnavailable: handleBrokerDataPortUnavailable,
     fanoutDeliver: handleFanoutDeliverMessage,
-    fanoutPairSeed: (data) => {
-      if (typeof data.channel !== 'string' || typeof data.pairOtp !== 'string') return
-      if (typeof data.ackOtp !== 'string') return
-      muxPairSeed = { channel: data.channel, pairOtp: data.pairOtp, ackOtp: data.ackOtp }
-      startMuxPairing()
-    },
     response: handleResponseMessage,
     settings: (data) => {
       settings.set(data.settings || {})
@@ -1259,7 +1345,9 @@
               throw new NativeError('Open did not establish a client data plane')
             }
             state.planeGeneration = response.clientPlaneGeneration
-            wireDevicePort(state, state.planeGeneration)
+            if (response.clientPlaneOwner !== 'top') {
+              wireDevicePort(state, state.planeGeneration)
+            }
             const ready = await sendRequest('waitDataPlaneReady', {
               deviceId: state.deviceId,
               generation: state.planeGeneration
@@ -2285,169 +2373,40 @@
   }
   installNavigatorHid()
 
-  /** @type {{channel: string, pairOtp: string, ackOtp: string}|null} */
-  let muxPairSeed = null
-  /** @type {MessagePort|null} */
-  let pendingHandoffPort = null
-  /** @type {number|null} */
-  let muxPairTimer = null
-  /** @type {((event: MessageEvent) => void)|null} */
-  let muxPairHandler = null
   /**
-   * @param {MessagePort} port
-   * @param {((event: MessageEvent) => void)|null} handler
+   * Relays a broker candidate to the isolated bridge without changing the
+   * direct MAIN control endpoint.
    * @returns {void}
    */
-  function removeMuxPairHandler(port, handler) {
-    if (!handler) return
-    try {
-      callNative(nativeMessagePortRemoveEventListener, port, 'message', handler)
-    } catch {
-      void 0
-    }
-    if (muxPairHandler === handler) muxPairHandler = null
-  }
-  /**
-   * @param {MessagePort} port
-   * @param {((event: MessageEvent) => void)|null} handler
-   * @returns {void}
-   */
-  function closeMuxPairCandidate(port, handler) {
-    removeMuxPairHandler(port, handler)
-    try {
-      callNative(nativeMessagePortClose, port)
-    } catch {
-      void 0
-    }
-  }
-  /**
-   * Completes the handoff after the mutual OTP pairing succeeded: adopts the
-   * multiplexer port, retires the direct endpoint, and re-drives traffic.
-   * @param {MessagePort} port
-   * @param {((event: MessageEvent) => void)} handler
-   * @returns {void}
-   */
-  function completeHandoff(port, handler) {
-    if (pendingHandoffPort !== port || muxPairHandler !== handler) {
-      closeMuxPairCandidate(port, handler)
-      return
-    }
-    pendingHandoffPort = null
-    if (muxPairTimer) {
-      nativeClearTimeout(muxPairTimer)
-      muxPairTimer = null
-    }
-    removeMuxPairHandler(port, handler)
-    installNavigatorHid()
-    const directPort = bridgePort
-    bridgePort = port
-    if (directPort) {
-      try {
-        callNative(nativeMessagePortPostMessage, directPort, { type: 'fanoutSwitched' })
-      } catch {
-        void 0
-      }
-    }
-    setupBridgePort()
-    for (const entry of makePristineIterable(object.values(pending))) {
+  function installBrokerCandidateRelay() {
+    if (isWorker || !fanoutCandidate || !hidInstance) return
+    const relayCandidate = (candidate) => {
+      if (!candidate || !bridgePort) return
       try {
         callNative(
           nativeMessagePortPostMessage,
           bridgePort,
-          entry.msg,
-          entry.transfers.length ? makePristineIterable(entry.transfers) : undefined
+          { type: 'fanoutCandidate' },
+          makePristineIterable([candidate])
         )
       } catch {
-        void 0
-      }
-    }
-    promiseOps.then(sendRequest('getSettings', {}), (result) => {
-      if (result) settings.set(result)
-    })
-  }
-  /**
-   * Runs the mutual pairing on a delivered candidate port: proves the child
-   * polyfill with pairOtp over the mux channel, then adopts only after the
-   * bridge proves itself with ackOtp on the same channel. On mismatch or
-   * timeout the candidate is discarded and the direct port keeps serving.
-   * @returns {void}
-   */
-  function startMuxPairing() {
-    const port = pendingHandoffPort
-    if (!muxPairSeed || !port) return
-    const handler = (event) => {
-      const data = readMessageEventData(event)
-      if (
-        data &&
-        muxPairSeed &&
-        data.type === 'fanoutPairAck' &&
-        data.otp === muxPairSeed.ackOtp
-      ) {
-        completeHandoff(port, handler)
-        return
-      }
-      void 0
-    }
-    muxPairHandler = handler
-    try {
-      callNative(nativeMessagePortAddEventListener, port, 'message', handler)
-      callNative(nativeMessagePortStart, port)
-      callNative(
-        nativeMessagePortPostMessage,
-        port,
-        { type: 'fanoutPair', channel: muxPairSeed.channel, otp: muxPairSeed.pairOtp }
-      )
-    } catch (e) {
-      pendingHandoffPort = null
-      closeMuxPairCandidate(port, handler)
-      logger.warn('fanout pair send failed', e)
-      return
-    }
-    muxPairTimer = nativeSetTimeout(() => {
-      if (pendingHandoffPort !== port || muxPairHandler !== handler) {
-        closeMuxPairCandidate(port, handler)
-        return
-      }
-      pendingHandoffPort = null
-      muxPairSeed = null
-      closeMuxPairCandidate(port, handler)
-    }, 2000)
-  }
-  /**
-   * Installs the fanout handoff on the navigator.hid accessor itself for
-   * same-origin child frames: reads keep returning the polyfill while the set
-   * holds a delivered candidate port until the mutual OTP pairing completes.
-   * The direct port keeps serving the page until then and is retired only by
-   * the completed handoff. Announces the frame to the top multiplexer.
-   * @returns {void}
-   */
-  function installFanoutHandoff() {
-    if (isWorker || !fanoutCandidate || !hidInstance) return
-    const captureTopBridge = (candidate) => {
-      if (!candidate) return
-      if (pendingHandoffPort && pendingHandoffPort !== candidate) {
-        const previousPort = pendingHandoffPort
-        const previousHandler = muxPairHandler
-        pendingHandoffPort = null
-        if (muxPairTimer) {
-          nativeClearTimeout(muxPairTimer)
-          muxPairTimer = null
+        try {
+          callNative(nativeMessagePortClose, candidate)
+        } catch {
+          void 0
         }
-        closeMuxPairCandidate(previousPort, previousHandler)
       }
-      pendingHandoffPort = candidate
-      startMuxPairing()
     }
     object.defineProperty(Navigator.prototype, 'hid', {
       get() {
         return hidInstance
       },
-      set: captureTopBridge,
+      set: relayCandidate,
       configurable: true,
       enumerable: true
     })
   }
-  installFanoutHandoff()
+  installBrokerCandidateRelay()
 
   /**
    * @param {{clientKey: string|null, terminated: boolean, sent: boolean}} state

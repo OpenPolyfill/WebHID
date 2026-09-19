@@ -36,6 +36,18 @@ There is no implemented worker-to-bridge-to-page relay fallback. A worker spawn 
 
 - Data plane switches mid-session (WS ↔ NM) via one control-plane command; a duplicated/dropped report in the switch instant is accepted as user-caused.
 
+### Same-origin NM sharing runs through a private top broker (2026-09)
+
+A same-origin child iframe used to adopt a top-multiplexed port as its general WebHID control bridge. That let one frame's traffic impersonate another's control authority, so the architecture was replaced: the child keeps its own direct `webhid-control` port and its own `navigator.hid`, and NM data-plane traffic for same-origin children is delegated instead.
+
+**Final NM sharing architecture**: `child MAIN/ISOLATED <-direct control port-> background` stays untouched; a second, private broker MessageChannel connects child ISOLATED to top ISOLATED and carries setup and lifecycle only (`nmAttach`/`nmDetach`/pairing/teardown). Report traffic uses transferred per-attachment data MessagePorts, not broker messages.
+
+- The top observes eligible same-origin child frames and asks the background for a one-shot pairing seed (`fanoutOpen`). The background validates the top sender plus the exact child frame/document/origin, delivers fresh pair/ack OTPs over the child's real control port, and retains no fanout state; it never routes later requests by channel.
+- The broker candidate travels top MAIN → child MAIN through the page-visible `navigator.hid` setter (a second setter armed only in fanout-candidate frames) and is relayed over the child's existing direct control port. The child never swaps its `bridgePort`; a failed or timed-out pairing leaves the candidate closed and the child unpaired.
+- A paired child never opens its own `webhid-data:<deviceId>` runtime port. On open, the child bridge creates an attachment MessageChannel, transfers one endpoint to the top broker and the other to child MAIN. The top keeps exactly one shared `webhid-data:<deviceId>` runtime port per device, sends child report requests through the attachment port, and fans input reports from that shared port to the top and same-origin child attachment ports. Once a plane was brokered, losing the broker fails requests (503) instead of silently reopening a child-local port; only an unpaired child (broker unavailable at open) may use its own runtime port.
+- Background input delivery is authoritative through the shared data port: `PKG_INPUT_REPORT` goes to `webhid-data:<deviceId>` first and falls back to session-owner control ports only when no data port exists, so a brokered child never receives an event twice.
+- Fanout contexts are invisible to the background: they send no `frameDestroyed`, own no endpoint, and their teardown is top-ISOLATED-local (`brokerClosing` plus attachment cleanup). Regression coverage: `tests/e2e/fanout-mux-transport.spec.ts`, `tests/e2e/input-report-fanout.spec.ts`.
+
 ### SAB removed entirely (2026-07)
 
 After the ring-buffer alloc bug was fixed, SAB lost to the simpler no-SAB path while carrying ongoing costs (COOP/COEP, Atomics/ring-buffer complexity). It was a necessary rung: it found the alloc bug and the CPU contention. Ring buffer detail: 8192 slots sized by an _estimated_ max report size was a 16MB init allocation; exact per-report size at parse time + 64 slots fixed it (later removed with SAB). Drain never needed >1 occupied slot, even at 8000Hz.

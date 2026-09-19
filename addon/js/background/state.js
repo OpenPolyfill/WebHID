@@ -15,8 +15,6 @@
   const pendingPicker = new Map()
   /** @type {Map<object, object>} */
   const frameEndpoints = new Map()
-  /** @type {Map<string, object>} channel tag -> logical fanout endpoint */
-  const fanoutEndpoints = new Map()
   const workerPolyfillSites = new Set()
   const shadowArms = new Map()
   const pageActionVisibility = {
@@ -86,7 +84,6 @@
     permissionsPolicy,
     frameDelegations,
     frameEndpoints,
-    fanoutEndpoints,
     pageActionVisibility,
     pendingPicker,
     workerPolyfillSites,

@@ -36,7 +36,6 @@
     resolveAuthorityReady = resolve
   })
   const FANOUT_RESERVATION_TIMEOUT_MS = 5000
-  let handedOff = false
   const fanoutCandidate = (function () {
     if (window === window.top) return false
     const origin = window.location.origin
@@ -48,34 +47,45 @@
     }
     return true
   })()
-  /** @type {Map<string, FrameContext>} channel tag -> adopted child context */
+  /** @type {MessagePort|null} */
+  let brokerPort = null
+  /** @type {{channel: string, pairOtp: string, ackOtp: string}|null} */
+  let brokerPairSeed = null
+  /** @type {MessagePort|null} */
+  let pendingBrokerPort = null
+  /** @type {number|null} */
+  let brokerPairTimer = null
+  /** @type {((event: MessageEvent) => void)|null} */
+  let brokerPairHandler = null
+  let brokerPairReady = false
+  /** @type {Map<string, {resolve: Function, reject: Function}>} */
+  const brokerPending = new Map()
+  /** @type {Set<string>} plane keys whose NM traffic was ever brokered */
+  const brokerAttachedKeys = new Set()
+  let nextBrokerRequestId = 0
+  /** @type {Map<string, {deviceId: string, clientKey: string, generation: number}>} */
+  const brokerAttachments = new Map()
   const fanoutContexts = new Map()
-  /** @type {Set<string>} frame/document identities awaiting mux setup */
   const fanoutPending = new Set()
   const observedFrameElements = new Set()
   let nextFanoutChannel = 0
-  /** @type {FrameContext|null} */
-  let pumpChannelContext = null
   /** @returns {void} */
   function pumpControlQueue() {
     if (controlPending || controlQueue.length === 0) return
     controlPending = controlQueue.shift()
-    pumpChannelContext = controlPending.context || null
     try {
-      const request = pumpChannelContext?.channel
-        ? { ...controlPending.request, channel: pumpChannelContext.channel }
-        : controlPending.request
-      controlPort.postMessage(request)
+      controlPort.postMessage(controlPending.request)
     } catch (error) {
       controlPending.reject(error)
       controlPending = null
-      pumpChannelContext = null
       pumpControlQueue()
     }
   }
   /**
-   * Sends one background control request, optionally attributed to a frame
-   * context so multiplexed fanout frames keep their exact endpoint authority.
+   * Sends one background control request over the serialized control queue.
+   * The context argument documents the requesting frame for call sites;
+   * the background attributes every request to the control port's own
+   * registered endpoint.
    * @param {object} request
    * @param {FrameContext|null} [context]
    * @returns {Promise<object>}
@@ -107,25 +117,22 @@
   function wireControlPort(port) {
     port.onMessage.addListener((message) => {
       if (message && message.action === 'fanoutPairSeed') {
-        try {
-          pagePort.postMessage({
-            type: 'fanoutPairSeed',
+        if (
+          typeof message.channel === 'string' &&
+          typeof message.pairOtp === 'string' &&
+          typeof message.ackOtp === 'string'
+        ) {
+          brokerPairSeed = {
             channel: message.channel,
             pairOtp: message.pairOtp,
             ackOtp: message.ackOtp
-          })
-        } catch (e) {
-          logger.debug('fanout pair seed relay failed', e)
+          }
+          startBrokerPairing()
         }
         return
       }
       if (message && message.action === 'endpointMetadata') {
-        if (typeof message.channel === 'string' && message.channel) {
-          const fanoutContext = fanoutContexts.get(message.channel)
-          if (fanoutContext) applyContextMetadata(fanoutContext, message)
-        } else {
-          initializeAuthorityMetadata(message)
-        }
+        initializeAuthorityMetadata(message)
         return
       }
       if (message && message.action === 'pickerResult') {
@@ -187,13 +194,11 @@
       if (controlPending) {
         const pending = controlPending
         controlPending = null
-        pumpChannelContext = null
         pending.resolve(message)
         pumpControlQueue()
       }
     })
     port.onDisconnect.addListener(() => {
-      if (handedOff) return
       const error = new Error('background port disconnected')
       authorityFailed = true
       settleAuthorityReady()
@@ -203,7 +208,6 @@
         controlPending.reject(error)
         controlPending = null
       }
-      pumpChannelContext = null
       for (const pending of controlQueue) pending.reject(error)
       controlQueue.length = 0
       handleGlobalReset()
@@ -352,11 +356,9 @@
     }
   }
   /**
-   * Installs the request dispatch wiring on a page port for a context that
-   * has already been created and registered.
+   * Installs the request dispatch wiring on a page port.
    * @param {MessagePort} port
    * @param {Window} source
-   * @param {FrameContext} context
    * @returns {void}
    */
   function wirePagePort(port, source) {
@@ -365,7 +367,7 @@
       if (!data) return
       const handler = PAGE_PORT_HANDLERS[data.type]
       if (handler) {
-        handler(data, port)
+        handler(data, port, event.ports || [])
         return
       }
       dispatchPortMessage(port, event, source)
@@ -373,7 +375,6 @@
     if (typeof port.start === 'function') port.start()
   }
   /**
-   * Installs the exact same-document page endpoint.
    * @param {MessagePort} port
    * @param {Window} source
    * @param {string} origin
@@ -595,19 +596,46 @@
         const pending = dataPending.get(message.reqId)
         if (!pending || pending.deviceId !== deviceId) return
         dataPending.delete(message.reqId)
-        handleWorkerReportResponse(pending.msg, pending.port, message)
+        if (pending.kind === 'broker-page') {
+          try {
+            pending.replyPort.postMessage({ ...message, reqId: pending.pageRequestId })
+          } catch {
+            void 0
+          }
+        } else {
+          handleWorkerReportResponse(pending.msg, pending.port, message)
+        }
         maybeDisconnectRuntimeDataPort(deviceId)
         return
       }
-      if (message && message.event) handleBackgroundEvent(message)
+      if (message && message.event) {
+        forwardInputReportToAttachments(deviceId, message.event)
+        handleBackgroundEvent(message)
+      }
     })
     port.onDisconnect.addListener(() => {
       if (runtimeDataPorts.get(deviceId) !== port) return
       runtimeDataPorts.delete(deviceId)
+      for (const attachment of brokerAttachments.values()) {
+        if (attachment.deviceId !== String(deviceId) || !attachment.dataPort) continue
+        try {
+          attachment.dataPort.postMessage({ type: 'disconnect' })
+        } catch {
+          void 0
+        }
+      }
       for (const [reqId, pending] of dataPending) {
         if (pending.deviceId !== deviceId) continue
         dataPending.delete(reqId)
-        handleWorkerReportResponse(pending.msg, pending.port, { s: 503 })
+        if (pending.kind === 'broker-page') {
+          try {
+            pending.replyPort.postMessage({ reqId: pending.pageRequestId, s: 503 })
+          } catch {
+            void 0
+          }
+        } else {
+          handleWorkerReportResponse(pending.msg, pending.port, { s: 503 })
+        }
       }
     })
     return port
@@ -698,6 +726,9 @@
    */
   function maybeDisconnectRuntimeDataPort(deviceId) {
     if (hasDeviceKey(nmPlanes, deviceId) || hasDeviceKey(nmOpenAttempts.keys(), deviceId)) return
+    for (const attachment of brokerAttachments.values()) {
+      if (attachment.deviceId === String(deviceId)) return
+    }
     for (const pending of dataPending.values()) {
       if (pending.deviceId === deviceId) return
     }
@@ -1113,6 +1144,7 @@
   ) {
     const key = planeKeyForClient(context, deviceId, clientKey)
     const currentGeneration = spawnGen.get(key)
+    if (brokerAttachments.has(key)) await detachNmBroker(context, deviceId, clientKey)
     if (notifyUnavailable && currentGeneration != null)
       notifyPlaneUnavailable(key, currentGeneration, unavailableReason)
     beginPlaneGeneration(key)
@@ -1170,7 +1202,15 @@
     for (const [reqId, pending] of dataPending) {
       if (pending.key !== key) continue
       dataPending.delete(reqId)
-      handleWorkerReportResponse(pending.msg, pending.port, { s: 503 })
+      if (pending.kind === 'broker-page') {
+        try {
+          pending.replyPort.postMessage({ reqId: pending.pageRequestId, s: 503 })
+        } catch {
+          void 0
+        }
+      } else {
+        handleWorkerReportResponse(pending.msg, pending.port, { s: 503 })
+      }
     }
     for (const [reqId, pending] of pendingPlaneSpawns) {
       if (pending.key !== key) continue
@@ -1493,7 +1533,8 @@
       spawnGen.get(key) !== generation
     )
       return null
-    ensureRuntimeDataPort(deviceId)
+    const brokered = fanoutCandidate && brokerPairReady
+    if (!brokered) ensureRuntimeDataPort(deviceId)
     let response
     try {
       response = await sendBackgroundRequest(
@@ -1527,10 +1568,18 @@
         await despawnDataPlane(context, deviceId, { clientKey, clientPort })
       return null
     }
+    if (brokered) {
+      const attached = await attachNmBroker(context, deviceId, sessionToken, clientKey, generation)
+      if (!attached) {
+        await despawnDataPlane(context, deviceId, { clientKey, clientPort })
+        notifyPlaneUnavailable(key, generation, 'NM broker attach failed')
+        return null
+      }
+    }
     nmPlanes.add(key)
     deviceTransports.delete(key)
     markPlaneAuthoritativeReady(key, generation)
-    if (rewire) {
+    if (rewire && !brokered) {
       const targetPort = clientPort || clientForKey(context, clientKey)?.port || context.port
       if (!targetPort) {
         if (spawnGen.get(key) === generation) {
@@ -1830,32 +1879,410 @@
     const context = frameContextForPort(port)
     if (context) destroyFrameContext(context).catch((e) => logger.debug('frame cleanup failed', e))
   }
-
   /**
-   * Retires the local context after its MAIN world switched this frame to the
-   * top multiplexer port. Notifies the page so open devices surface
-   * disconnects and can be re-opened through the shared mux port.
-   * @param {object} data
    * @param {MessagePort} port
    * @returns {void}
    */
-  function handleFanoutSwitchedMessage(data, port) {
-    const context = frameContextForPort(port)
-    if (!context || context.handedOff) return
-    context.handedOff = true
-    const teardown = destroyFrameContext(context, { notify: true })
-    void (teardown || Promise.resolve()).then(() => {
-      handedOff = true
-      if (controlPort) {
+  function closeBrokerCandidate(port) {
+    if (!port) return
+    try {
+      port.close()
+    } catch {
+      void 0
+    }
+  }
+
+  /**
+   * @returns {void}
+   */
+  function startBrokerPairing() {
+    const port = pendingBrokerPort
+    const seed = brokerPairSeed
+    if (!fanoutCandidate || brokerPort || !port || !seed || brokerPairHandler) return
+    const handler = (event) => {
+      const data = event.data
+      if (!data || data.type !== 'fanoutPairAck' || data.otp !== seed.ackOtp) return
+      if (brokerPairTimer) {
+        clearTimeout(brokerPairTimer)
+        brokerPairTimer = null
+      }
+      port.removeEventListener('message', handler)
+      brokerPairHandler = null
+      pendingBrokerPort = null
+      brokerPairSeed = null
+      brokerPort = port
+      brokerPairReady = true
+      port.onmessage = (brokerEvent) => handleChildBrokerMessage(brokerEvent.data, brokerEvent)
+      logger.debug('[bridge] private NM broker paired')
+    }
+    brokerPairHandler = handler
+    try {
+      port.addEventListener('message', handler)
+      port.start()
+      port.postMessage({ type: 'fanoutPair', channel: seed.channel, otp: seed.pairOtp })
+    } catch (e) {
+      brokerPairHandler = null
+      pendingBrokerPort = null
+      closeBrokerCandidate(port)
+      logger.debug('private broker pairing failed', e)
+      return
+    }
+    brokerPairTimer = setTimeout(() => {
+      if (pendingBrokerPort !== port || brokerPairHandler !== handler) return
+      brokerPairHandler = null
+      pendingBrokerPort = null
+      brokerPairSeed = null
+      closeBrokerCandidate(port)
+      logger.debug('private broker pairing timed out')
+    }, 2000)
+  }
+
+  /**
+   * @param {object} _data
+   * @param {MessagePort} requestPort
+   * @param {MessagePort[]} ports
+   * @returns {void}
+   */
+  function handleBrokerCandidate(_data, requestPort, ports) {
+    const candidate = ports && ports[0]
+    if (!fanoutCandidate || requestPort !== pagePort || !candidate) {
+      closeBrokerCandidate(candidate)
+      return
+    }
+    if (pendingBrokerPort && pendingBrokerPort !== candidate) {
+      closeBrokerCandidate(pendingBrokerPort)
+    }
+    pendingBrokerPort = candidate
+    startBrokerPairing()
+  }
+
+  /**
+   * @param {object} message
+   * @param {MessagePort} requestPort
+   * @returns {void}
+   */
+  function handleChildBrokerMessage(message, requestPort) {
+    if (
+      message.requestId &&
+      (message.type === 'nmAttachResult' || message.type === 'nmDetachResult')
+    ) {
+      const pending = brokerPending.get(message.requestId)
+      if (!pending) return
+      brokerPending.delete(message.requestId)
+      pending.resolve({
+        result: message.result || { ok: message.ok === true, s: message.s },
+        ports: requestPort && requestPort.ports ? requestPort.ports : []
+      })
+      return
+    }
+    if (message.type === 'nmPlaneUnavailable') {
+      const key = message.key
+      const attachment = brokerAttachments.get(key)
+      if (attachment) {
+        brokerAttachments.delete(key)
         try {
-          controlPort.disconnect()
-        } catch (e) {
-          logger.debug('handed-off control port disconnect failed', e)
+          pagePort.postMessage({
+            type: 'brokerDataPortUnavailable',
+            deviceId: attachment.deviceId,
+            generation: attachment.generation
+          })
+        } catch {
+          void 0
         }
+      }
+      brokerAttachedKeys.delete(key)
+      for (const [requestId, pending] of brokerPending) {
+        if (pending.key !== key) continue
+        brokerPending.delete(requestId)
+        pending.resolve({ s: 503 })
+      }
+      return
+    }
+  }
+  /**
+   * @param {FrameContext} context
+   * @param {string} deviceId
+   * @param {string} clientKey
+   * @returns {string}
+   */
+  function brokerAttachmentKey(context, deviceId, clientKey) {
+    return planeKeyForClient(context, deviceId, clientKey)
+  }
+
+  /**
+   * @param {object} message
+   * @param {string} key
+   * @param {MessagePort[]} [transfer]
+   * @returns {Promise<object>}
+   */
+  function sendBrokerRequest(message, key, transfer) {
+    if (!brokerPort || !brokerPairReady) return Promise.reject(new Error('NM broker unavailable'))
+    const requestId = frameInstanceId + ':broker:' + ++nextBrokerRequestId
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        const pending = brokerPending.get(requestId)
+        if (!pending) return
+        brokerPending.delete(requestId)
+        reject(new Error('NM broker request timed out'))
+      }, 10000)
+      brokerPending.set(requestId, {
+        resolve: (result) => {
+          clearTimeout(timer)
+          resolve(result)
+        },
+        reject: (error) => {
+          clearTimeout(timer)
+          reject(error)
+        },
+        key
+      })
+      try {
+        brokerPort.postMessage({ ...message, requestId, key }, transfer || [])
+      } catch (error) {
+        brokerPending.delete(requestId)
+        clearTimeout(timer)
+        reject(error)
       }
     })
   }
 
+  /**
+   * @param {FrameContext} context
+   * @param {string} deviceId
+   * @param {string} sessionToken
+   * @param {string} clientKey
+   * @param {number} generation
+   * @returns {Promise<boolean>}
+   */
+  async function attachNmBroker(context, deviceId, sessionToken, clientKey, generation) {
+    const key = brokerAttachmentKey(context, deviceId, clientKey)
+    if (!brokerPort || !brokerPairReady) return false
+    const dataChannel = new MessageChannel()
+    const pageDataPort = dataChannel.port2
+    try {
+      const response = await sendBrokerRequest(
+        {
+          type: 'nmAttach',
+          deviceId,
+          sessionToken,
+          clientKey,
+          generation
+        },
+        key,
+        [dataChannel.port1]
+      )
+      const result = response && response.result ? response.result : response
+      if (!result || result.ok !== true) {
+        pageDataPort.close()
+        return false
+      }
+      try {
+        pagePort.postMessage(
+          { type: 'brokerDataPort', deviceId, generation },
+          [pageDataPort]
+        )
+      } catch {
+        try {
+          pageDataPort.close()
+        } catch {
+          void 0
+        }
+        await sendBrokerRequest({ type: 'nmDetach', deviceId, clientKey }, key).catch(() => {})
+        return false
+      }
+      markPlaneLocalReady(key, generation)
+      brokerAttachments.set(key, { deviceId, clientKey, generation })
+      brokerAttachedKeys.add(key)
+      return true
+    } catch {
+      try {
+        pageDataPort.close()
+      } catch {
+        void 0
+      }
+      await sendBrokerRequest({ type: 'nmDetach', deviceId, clientKey }, key).catch(() => {})
+      return false
+    }
+  }
+
+  /**
+   * @param {FrameContext} context
+   * @param {string} deviceId
+   * @param {string} clientKey
+   * @returns {Promise<void>}
+   */
+  async function detachNmBroker(context, deviceId, clientKey) {
+    const key = brokerAttachmentKey(context, deviceId, clientKey)
+    if (!brokerAttachments.has(key)) return
+    brokerAttachments.delete(key)
+    brokerAttachedKeys.delete(key)
+    if (!brokerPort || !brokerPairReady) return
+    await sendBrokerRequest({ type: 'nmDetach', deviceId, clientKey }, key).catch(() => {})
+  }
+
+
+  /**
+   * Handles report requests arriving on the data port transferred to a child
+   * MAIN realm. The top owns the other endpoint and the shared NM runtime port.
+   * @param {FrameContext} context
+   * @param {string} deviceId
+   * @param {string} clientKey
+   * @param {object} message
+   * @param {MessagePort} replyPort
+   * @returns {void}
+   */
+  function handleTopChildDataMessage(context, deviceId, clientKey, message, replyPort) {
+    if (!message) return
+    if (message.type !== 'send' && message.type !== 'sendFeature' && message.type !== 'receiveFeature')
+      return
+    const key = brokerAttachmentKey(context, deviceId, clientKey)
+    if (!brokerAttachments.has(key)) {
+      replyPort.postMessage({ reqId: message.reqId, s: 503 })
+      return
+    }
+    const action =
+      message.type === 'send'
+        ? 'sendReport'
+        : message.type === 'sendFeature'
+          ? 'sendFeatureReport'
+          : 'receiveFeatureReport'
+    const reqId = allocateDataReqId()
+    const request = {
+      action,
+      reqId,
+      deviceId: Number(deviceId),
+      reportId: message.reportId
+    }
+    if (message.type !== 'receiveFeature') request.data = message.data
+    dataPending.set(reqId, {
+      kind: 'broker-page',
+      deviceId,
+      key,
+      replyPort,
+      pageRequestId: message.reqId
+    })
+    try {
+      ensureRuntimeDataPort(deviceId).postMessage(request)
+    } catch {
+      dataPending.delete(reqId)
+      replyPort.postMessage({ reqId: message.reqId, s: 503 })
+    }
+  }
+
+
+
+  /**
+   * Handles only the authenticated NM broker protocol on a top-owned private
+   * port. Ordinary page control never reaches this function.
+   * @param {FrameContext} context
+   * @param {MessageEvent} event
+   * @returns {void}
+   */
+  function handleTopBrokerMessage(context, event) {
+    const broker = context.brokerPort || context.port
+    const message = event.data
+    if (!message || !context.paired || context.destroyed) return
+    if (message.type === 'brokerClosing') {
+      for (const [attachmentKey, attachment] of brokerAttachments) {
+        if (attachment.context !== context) continue
+        brokerAttachments.delete(attachmentKey)
+        if (attachment.dataPort) {
+          try {
+            attachment.dataPort.close()
+          } catch {
+            void 0
+          }
+        }
+        for (const [reqId, pending] of dataPending) {
+          if (pending.key !== attachmentKey) continue
+          dataPending.delete(reqId)
+          if (pending.kind === 'broker-page') {
+            try {
+              pending.replyPort.postMessage({ reqId: pending.pageRequestId, s: 503 })
+            } catch {
+              void 0
+            }
+          }
+        }
+        maybeDisconnectRuntimeDataPort(attachment.deviceId)
+      }
+      return
+    }
+    if (message.type === 'nmAttach') {
+      const deviceId = String(message.deviceId)
+      const clientKey = typeof message.clientKey === 'string' ? message.clientKey : 'window'
+      const key = brokerAttachmentKey(context, deviceId, clientKey)
+      const attachmentDataPort = event.ports && event.ports[0]
+      if (!attachmentDataPort) {
+        broker.postMessage({
+          type: 'nmAttachResult',
+          requestId: message.requestId,
+          result: { ok: false, error: 'Missing broker data port' }
+        })
+        return
+      }
+      attachmentDataPort.onmessage = (dataEvent) =>
+        handleTopChildDataMessage(context, deviceId, clientKey, dataEvent.data, attachmentDataPort)
+      attachmentDataPort.start()
+      brokerAttachments.set(key, {
+        context,
+        deviceId,
+        clientKey,
+        generation: message.generation,
+        sessionToken: message.sessionToken,
+        dataPort: attachmentDataPort
+      })
+      ensureRuntimeDataPort(deviceId)
+      try {
+        broker.postMessage({
+          type: 'nmAttachResult',
+          requestId: message.requestId,
+          result: { ok: true }
+        })
+      } catch {
+        brokerAttachments.delete(key)
+        try {
+          attachmentDataPort.close()
+        } catch {
+          void 0
+        }
+        maybeDisconnectRuntimeDataPort(deviceId)
+      }
+      return
+    }
+    if (message.type === 'nmDetach') {
+      const deviceId = String(message.deviceId)
+      const clientKey = typeof message.clientKey === 'string' ? message.clientKey : 'window'
+      const key = brokerAttachmentKey(context, deviceId, clientKey)
+      const attachment = brokerAttachments.get(key)
+      brokerAttachments.delete(key)
+      if (attachment && attachment.dataPort) {
+        try {
+          attachment.dataPort.close()
+        } catch {
+          void 0
+        }
+      }
+      for (const [requestId, pending] of dataPending) {
+        if (pending.key !== key) continue
+        dataPending.delete(requestId)
+        if (pending.kind === 'broker-page') {
+          try {
+            pending.replyPort.postMessage({ reqId: pending.pageRequestId, s: 503 })
+          } catch {
+            void 0
+          }
+        }
+      }
+      maybeDisconnectRuntimeDataPort(deviceId)
+      broker.postMessage({
+        type: 'nmDetachResult',
+        requestId: message.requestId,
+        result: { ok: true }
+      })
+      return
+    }
+  }
   /**
    * @param {{frameId: number|null, documentId: string|null}} identity
    * @returns {string}
@@ -1885,8 +2312,8 @@
   function observeChildFrame(frameElement) {
     let childWindow = null
     let origin = null
-    let url = ''
-    let readyState = 'loading'
+    let url
+    let readyState
     try {
       childWindow = frameElement.contentWindow
       origin = childWindow.location.origin
@@ -1932,8 +2359,10 @@
           return
         const childPort = new MessageChannel()
         const context = createFrameContext(childPort.port1, childWindow, origin, identity)
-        context.channel = response.channel
         context.persistentOrigin = persistentOrigin
+        context.brokerPort = childPort.port1
+        context.channel = response.channel
+        context.isFanout = true
         context.pairOtp = response.pairOtp
         fanoutContexts.set(context.channel, context)
         childPort.port1.onmessage = (event) => {
@@ -1945,16 +2374,19 @@
             !context.destroyed
           ) {
             context.paired = true
-            wirePagePort(childPort.port1, childWindow)
             try {
               childPort.port1.postMessage({ type: 'fanoutPairAck', otp: response.ackOtp })
             } catch (e) {
               logger.debug('fanout pair ack failed', e)
             }
-            logger.debug('[bridge] fanout context paired', context.channel)
+            logger.debug('[bridge] fanout broker paired', context.channel)
             return
           }
-          logger.debug('dropping pre-pair mux traffic', pairData && pairData.type)
+          if (context.paired) {
+            handleTopBrokerMessage(context, event)
+            return
+          }
+          logger.debug('dropping pre-pair broker traffic', pairData && pairData.type)
         }
         setTimeout(() => {
           if (!context.paired) destroyFrameContext(context).catch(() => {})
@@ -2018,7 +2450,7 @@
     spawnWorkerResponse: handleSpawnWorkerResponse,
     dataPlaneResponse: handlePlaneResponse,
     dataPlaneEvent: handleDataPlaneEvent,
-    fanoutSwitched: handleFanoutSwitchedMessage,
+    fanoutCandidate: handleBrokerCandidate,
     workerError: (data, port) =>
       handleWorkerErrorEvent(data, port).catch((e) =>
         logger.debug('worker error recovery failed', e)
@@ -2474,7 +2906,23 @@
     if (dataPlane === 'nm' || nmPlanes.has(key)) {
       generation = beginPlaneGeneration(key)
       nmPlanes.add(key)
-      ensureRuntimeDataPort(deviceId)
+      const brokered = fanoutCandidate && brokerPairReady
+      if (brokered) {
+        const attached = await attachNmBroker(
+          context,
+          deviceId,
+          response.t,
+          clientKey,
+          generation
+        )
+        if (!attached) {
+          nmPlanes.delete(key)
+          return { accepted: false, error: 'NM broker attach failed' }
+        }
+        response.clientPlaneOwner = 'top'
+      } else {
+        ensureRuntimeDataPort(deviceId)
+      }
       markPlaneAuthoritativeReady(key, generation)
     } else if (dataPlane === 'ws') {
       generation = await spawnDataPlane(context, deviceId, response.t, response.w || wsPort, {
@@ -2594,7 +3042,7 @@
           return
         }
         if (settingsForOrigin(origin).dataPlane === 'nm' || nmPlanes.has(key)) {
-          ensureRuntimeDataPort(deviceId)
+          if (!(fanoutCandidate && brokerPairReady)) ensureRuntimeDataPort(deviceId)
           retainNmOpenAttempt(key)
           nmOpenAttempt = true
         }
@@ -2818,6 +3266,42 @@
     }
 
     context.destroyed = true
+    if (context.port === pagePort && brokerPort) {
+      try {
+        brokerPort.postMessage({ type: 'brokerClosing' })
+      } catch {
+        void 0
+      }
+      try {
+        brokerPort.close()
+      } catch {
+        void 0
+      }
+      brokerPort = null
+      brokerPairReady = false
+      brokerPairSeed = null
+      if (brokerPairTimer) {
+        clearTimeout(brokerPairTimer)
+        brokerPairTimer = null
+      }
+      for (const attachmentKey of [...brokerAttachments.keys()]) {
+        const attachment = brokerAttachments.get(attachmentKey)
+        brokerAttachments.delete(attachmentKey)
+        brokerAttachedKeys.delete(attachmentKey)
+        if (attachment?.dataPort) {
+          try {
+            attachment.dataPort.close()
+          } catch {
+            void 0
+          }
+        }
+        if (attachment) maybeDisconnectRuntimeDataPort(attachment.deviceId)
+      }
+      for (const [requestId, pending] of brokerPending) {
+        brokerPending.delete(requestId)
+        pending.reject(new Error('NM broker closed'))
+      }
+    }
     const workerPorts = new Set(workerPagePorts.get(context) || [])
     const allClientPorts = new Set(clientRecords.map(({ port }) => port))
     for (const port of workerPorts) allClientPorts.add(port)
@@ -2836,7 +3320,7 @@
       pendingSpawns.delete(id)
       pending.reject(new Error('frame destroyed'))
     }
-    if (close) {
+    if (close && !context.isFanout) {
       await sendBackgroundRequest(
         {
           action: 'frameDestroyed',
@@ -2870,6 +3354,35 @@
       } catch (e) {
         logger.debug('worker page port cleanup failed', e)
       }
+    }
+    for (const [attachmentKey, attachment] of brokerAttachments) {
+      if (attachment.context !== context) continue
+      brokerAttachments.delete(attachmentKey)
+      try {
+        const childBroker = attachment.context.brokerPort || attachment.context.port
+        childBroker.postMessage({ type: 'nmPlaneUnavailable', key: attachmentKey })
+      } catch {
+        void 0
+      }
+      if (attachment.dataPort) {
+        try {
+          attachment.dataPort.close()
+        } catch {
+          void 0
+        }
+      }
+      for (const [reqId, pending] of dataPending) {
+        if (pending.key !== attachmentKey) continue
+        dataPending.delete(reqId)
+        if (pending.kind === 'broker-page') {
+          try {
+            pending.replyPort.postMessage({ reqId: pending.pageRequestId, s: 503 })
+          } catch {
+            void 0
+          }
+        }
+      }
+      maybeDisconnectRuntimeDataPort(attachment.deviceId)
     }
     try {
       context.port.onmessage = null
@@ -2914,6 +3427,42 @@
       }
     }
   }
+  /**
+   * Routes shared-port NM input reports to paired child bridges.
+   * @param {string} deviceId
+   * @param {object} messageEvent
+   * @returns {void}
+   */
+  function forwardInputReportToAttachments(deviceId, messageEvent) {
+    const data = messageEvent && messageEvent.data
+    for (const attachment of brokerAttachments.values()) {
+      if (
+        attachment.deviceId !== String(deviceId) ||
+        !attachment.dataPort ||
+        messageEvent?.eventType !== 'input_report'
+      )
+        continue
+      try {
+        const copy =
+          data == null
+            ? new Uint8Array(0)
+            : ArrayBuffer.isView(data)
+              ? new Uint8Array(data)
+              : new Uint8Array(new Uint8Array(data))
+        attachment.dataPort.postMessage(
+          {
+            type: 'inputReport',
+            reportId: messageEvent.reportId,
+            data: copy.buffer
+          },
+          [copy.buffer]
+        )
+      } catch (e) {
+        logger.debug('forward inputReport to data port failed', e)
+      }
+    }
+  }
+
 
   /** @returns {void} */
   function handleGlobalReset() {
@@ -2957,7 +3506,13 @@
       for (const { port, sessions, clientKey } of sessionsForContext(context)) {
         if (!sessions.has(messageEvent.deviceId)) continue
         const key = planeKeyForClient(context, messageEvent.deviceId, clientKey)
-        if (workers.has(key) || inPageDevices.has(key) || !nmPlanes.has(key)) continue
+        if (
+          workers.has(key) ||
+          inPageDevices.has(key) ||
+          !nmPlanes.has(key) ||
+          brokerAttachments.has(key)
+        )
+          continue
         try {
           const data = messageEvent.data
           const copy = data != null && ArrayBuffer.isView(data) ? new Uint8Array(data) : data
@@ -3092,12 +3647,16 @@
             ? 'sendFeatureReport'
             : 'receiveFeatureReport'
       markPageActionUsed(context.origin)
+      const key = planeKeyForClient(context, deviceId, clientKey)
+      if (fanoutCandidate && brokerAttachedKeys.has(key)) {
+        handleWorkerReportResponse(msg, port, { s: 503 })
+        return
+      }
       const payload = { deviceId, reportId: msg.reportId }
       if (msg.type === 'send' || msg.type === 'sendFeature') payload.data = msg.data
       const reqId = allocateDataReqId()
       const request = Object.assign({ action, reqId }, payload)
       const dataPort = ensureRuntimeDataPort(deviceId)
-      const key = planeKeyForClient(context, deviceId, clientKey)
       dataPending.set(reqId, { msg, port, key, deviceId })
       try {
         dataPort.postMessage(request)
@@ -3154,10 +3713,10 @@
         }
       }
     }
-    for (const { context, deviceId, clientKey } of active) {
+    for (const { context, deviceId, clientKey, clientPort } of active) {
       await despawnDataPlane(context, deviceId, {
-        keepPort: true,
         clientKey,
+        clientPort,
         notifyUnavailable: true,
         unavailableReason: 'data plane switching'
       })
@@ -3187,14 +3746,29 @@
           notifyPlaneUnavailable(key, spawnGen.get(key), 'live NM switch rejected')
           continue
         }
-        ensureRuntimeDataPort(deviceId)
+        const generation = beginPlaneGeneration(key)
         nmPlanes.add(key)
-        markPlaneAuthoritativeReady(key, spawnGen.get(key))
-        clientPort.postMessage({
-          type: 'wireWorkerPort',
-          deviceId,
-          generation: spawnGen.get(key)
-        })
+        const brokered = fanoutCandidate && brokerPairReady
+        if (brokered) {
+          const attached = await attachNmBroker(context, deviceId, token, clientKey, generation)
+          if (!attached) {
+            nmPlanes.delete(key)
+            await despawnDataPlane(context, deviceId, { clientKey, clientPort })
+            notifyPlaneUnavailable(key, generation, 'NM broker attach failed')
+            continue
+          }
+        } else {
+          ensureRuntimeDataPort(deviceId)
+          markPlaneLocalReady(key, generation)
+        }
+        markPlaneAuthoritativeReady(key, generation)
+        if (!brokered) {
+          clientPort.postMessage({
+            type: 'wireWorkerPort',
+            deviceId,
+            generation
+          })
+        }
       }
     } else {
       respawnPlanesForMode(dp, origin)

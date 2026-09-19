@@ -117,42 +117,39 @@ test('top bridge multiplexes same-origin child contexts proactively', () => {
   assert.match(bridge, /frameContexts\.get\(context\.key\) !== context/)
   assert.match(bridge, /frameContexts\.values\(\)/)
 })
-test('fanout registration is browser-authenticated and same-origin only', () => {
+test('fanout registration is stateless and browser-authenticated', () => {
   assert.match(bridge, /origin !== window\.location\.origin/)
   assert.match(bridge, /identity\.frameId == null \|\| identity\.documentId == null/)
   assert.match(messages, /function handleFanoutOpen/)
   assert.match(messages, /request\.origin !== top\.origin/)
-  assert.match(messages, /fanoutEndpoints\.set\(request\.channel, endpoint\)/)
+  assert.match(messages, /postToContentPort\(child\.port/)
+  assert.match(messages, /pairOtp/)
+  assert.match(messages, /ackOtp/)
   assert.match(messages, /fanoutOpen: handleFanoutOpen/)
+  assert.doesNotMatch(messages, /fanoutEndpoints/)
 })
 
-test('fanout endpoints resolve before falling back to top authority', () => {
-  assert.match(messages, /function endpointForRequest\(request, port\)/)
-  assert.match(messages, /fanoutEndpoints\.get\(request\.channel\)/)
-  assert.match(messages, /logical\.retired \|\| logical\.port !== port/)
+test('ordinary requests resolve only through real control endpoints', () => {
+  assert.match(messages, /function endpointForRequest\(_request, port\)/)
+  assert.match(messages, /return endpointForPort\(port\)/)
   assert.match(messages, /function endpointRegistryIsCurrent/)
+  assert.doesNotMatch(messages, /fanoutEndpoints/)
 })
 
-test('top retirement cascades to logical fanout endpoints', () => {
-  assert.match(messages, /candidate\.port === endpoint\.port && !candidate\.retired/)
-  assert.match(messages, /Promise\.all\(\[\.\.\.cascades, purge\]\)/)
+test('fanout contexts stay isolated from background endpoint lifetimes', () => {
+  assert.match(bridge, /context\.isFanout = true/)
+  assert.match(bridge, /if \(close && !context\.isFanout\)/)
   assert.match(bridge, /frameContexts\.delete\(context\.key\)/)
   assert.match(bridge, /context\.channel\) fanoutContexts\.delete/)
+  assert.match(messages, /Background does not retain fanout state/)
 })
 
-test('fanout pairing uses captured MessagePort operations', () => {
-  assert.doesNotMatch(main, /port\.onmessage/)
-  assert.doesNotMatch(main, /port\.close\(\)/)
-  assert.doesNotMatch(main, /typeof (candidate|source)\.postMessage/)
-  assert.doesNotMatch(main, /windowObject\.(top|location|frames|isSecureContext)/)
-  assert.match(main, /callNative\(nativeMessagePortAddEventListener, port, 'message', handler\)/)
-  assert.match(main, /callNative\(nativeMessagePortRemoveEventListener, port, 'message', handler\)/)
-  assert.match(main, /callNative\(nativeMessagePortStart, port\)/)
-  assert.match(main, /callNative\(nativeMessagePortClose, port\)/)
-  assert.doesNotMatch(bootstrap, /root\.window\.top/)
-  assert.match(bootstrap, /'MessageEvent'/)
-  assert.doesNotMatch(main, /event\.(data|source|origin|ports)/)
-  assert.doesNotMatch(main, /Object\.values|Number\.isInteger/)
-  assert.match(main, /makePristineIterable\(object\.values\(pending\)\)/)
-  assert.match(main, /nativeNumberIsInteger/)
+test('fanout candidate relays through direct control without adoption', () => {
+  assert.match(main, /fanoutDeliver: handleFanoutDeliverMessage/)
+  assert.match(main, /nav\.hid = port/)
+  assert.match(main, /bridgePort/)
+  assert.match(main, /installBrokerCandidateRelay/)
+  assert.match(bridge, /fanoutCandidate: handleBrokerCandidate/)
+  assert.match(bridge, /brokerPairReady = true/)
+  assert.match(main, /type: 'fanoutCandidate'/)
 })
