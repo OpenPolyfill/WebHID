@@ -110,46 +110,67 @@ test('iframe delegation is not a presence-only grant', () => {
   assert.doesNotMatch(bridge, /some\(\(directive\) => \^\\\\s\*hid/)
 })
 
-test('top bridge multiplexes same-origin child contexts proactively', () => {
+test('top bridge consumes child offers without top-initiated pairing', () => {
   assert.match(bridge, /const fanoutContexts = new Map\(\)/)
-  assert.match(bridge, /fanoutContexts\.set\(context\.channel, context\)/)
-  assert.doesNotMatch(bridge, /fanoutRequest: handleFanoutRequestMessage/)
-  assert.match(bridge, /frameContexts\.get\(context\.key\) !== context/)
-  assert.match(bridge, /frameContexts\.values\(\)/)
-})
-test('fanout registration is stateless and browser-authenticated', () => {
-  assert.match(bridge, /origin !== window\.location\.origin/)
-  assert.match(bridge, /identity\.frameId == null \|\| identity\.documentId == null/)
-  assert.match(messages, /function handleFanoutOpen/)
-  assert.match(messages, /request\.origin !== top\.origin/)
-  assert.match(messages, /postToContentPort\(child\.port/)
-  assert.match(messages, /pairOtp/)
-  assert.match(messages, /ackOtp/)
-  assert.match(messages, /fanoutOpen: handleFanoutOpen/)
-  assert.doesNotMatch(messages, /fanoutEndpoints/)
+  assert.match(bridge, /fanoutContexts\.set\(channel, context\)/)
+  assert.match(bridge, /function handleFanoutBrokerOffer/)
+  assert.doesNotMatch(bridge, /fanoutOpen/)
+  assert.doesNotMatch(bridge, /fanoutPairSeed/)
 })
 
-test('ordinary requests resolve only through real control endpoints', () => {
-  assert.match(messages, /function endpointForRequest\(_request, port\)/)
-  assert.match(messages, /return endpointForPort\(port\)/)
-  assert.match(messages, /function endpointRegistryIsCurrent/)
-  assert.doesNotMatch(messages, /fanoutEndpoints/)
+test('child offer waits for its exact direct control endpoint', () => {
+  assert.match(bridge, /controlPort = browser\.runtime\.connect\(\{ name: 'webhid-control' \}\)[\s\S]*fanoutChildOffer/)
+  assert.match(messages, /function handleFanoutChildOffer/)
+  assert.match(messages, /const child = endpointForPort\(port\)/)
+  assert.match(messages, /const top = child && topEndpointForTab\(child\.tabId\)/)
+  assert.match(messages, /authOtp/)
+  assert.match(messages, /ackOtp/)
+  assert.doesNotMatch(messages, /fanoutOpen/)
 })
 
 test('fanout contexts stay isolated from background endpoint lifetimes', () => {
   assert.match(bridge, /context\.isFanout = true/)
   assert.match(bridge, /if \(close && !context\.isFanout\)/)
   assert.match(bridge, /frameContexts\.delete\(context\.key\)/)
-  assert.match(bridge, /context\.channel\) fanoutContexts\.delete/)
-  assert.match(messages, /Background does not retain fanout state/)
+  assert.match(bridge, /fanoutContexts\.delete\(context\.channel\)/)
+  assert.match(messages, /postToContentPort\(top\.port/)
+  assert.doesNotMatch(messages, /fanoutEndpoints/)
 })
 
-test('fanout candidate relays through direct control without adoption', () => {
-  assert.match(main, /fanoutDeliver: handleFanoutDeliverMessage/)
-  assert.match(main, /nav\.hid = port/)
-  assert.match(main, /bridgePort/)
-  assert.match(main, /installBrokerCandidateRelay/)
+test('stack OTP handoff and isolated mutual authentication remain separate', () => {
+  assert.match(main, /fanoutBrokerCandidate: handleFanoutBrokerCandidate/)
+  assert.match(main, /webhidBroker_/)
+  assert.match(main, /yieldNavigatorHid/)
+  assert.match(main, /brokerStackOtp = null/)
   assert.match(bridge, /fanoutCandidate: handleBrokerCandidate/)
+  assert.match(bridge, /type: 'fanoutAuthA'/)
+  assert.match(bridge, /type: 'fanoutAuthB'/)
   assert.match(bridge, /brokerPairReady = true/)
-  assert.match(main, /type: 'fanoutCandidate'/)
+  assert.doesNotMatch(main, /fanoutDeliver/)
+})
+test('hostile setter values yield to ordinary page semantics', () => {
+  assert.match(main, /yieldNavigatorHid\(value\)/)
+  assert.match(main, /reflect\.deleteProperty\(Navigator\.prototype, 'hid'\)/)
+  assert.match(main, /object\.defineProperty\(host\.navigator, 'hid'/)
+})
+
+test('allowed device IDs normalize daemon values before authorization', () => {
+  assert.match(bridge, /new Set\(resp\.deviceIds\.map\(\(deviceId\) => String\(deviceId\)\)\)/)
+  assert.match(bridge, /allowed\.has\(String\(deviceId\)\)/)
+  assert.match(bridge, /new Set\(message\.deviceIds\.map\(\(deviceId\) => String\(deviceId\)\)\)/)
+})
+
+test('loaded authorization misses refresh once before denying', () => {
+  assert.match(bridge, /loadedOrigins\.delete\(origin\)/)
+  assert.match(bridge, /allowedByOrigin\.delete\(origin\)/)
+  assert.match(bridge, /loadAllowedDeviceIds\(origin\)/)
+})
+
+test('stack and mutual-auth OTPs invalidate across stale lifetimes', () => {
+  assert.match(bridge, /message\.frameId !== identity\.frameId/)
+  assert.match(bridge, /message\.documentId !== identity\.documentId/)
+  assert.match(bridge, /invalidateBrokerPairOffer\(\)/)
+  assert.match(bridge, /stackOtp = null/)
+  assert.match(bridge, /setTimeout\(\(\) =>/)
+  assert.match(main, /brokerStackOtp = null/)
 })

@@ -15,11 +15,27 @@
   logger.initLogger('bridge')
   const frameInstanceId = 'frame-' + crypto.randomUUID()
   const pageChannel = new MessageChannel()
-  if (isChromium) window.postMessage(null, '*', [pageChannel.port2])
-  else
-    window.wrappedJSObject.webhid = globalThis.cloneInto(pageChannel.port2, window, {
+  const fanoutCandidate = (function () {
+    if (window === window.top) return false
+    const origin = window.location.origin
+    if (!origin || origin === 'null') return false
+    try {
+      if (window.top.location.origin !== origin) return false
+    } catch {
+      return false
+    }
+    return true
+  })()
+  let stackOtp = fanoutCandidate ? crypto.randomUUID() : null
+  const bootstrapValue = fanoutCandidate
+    ? { directPort: pageChannel.port2, S: stackOtp, stackOtp }
+    : pageChannel.port2
+  if (isChromium) window.postMessage(bootstrapValue, '*', [pageChannel.port2])
+  else {
+    window.wrappedJSObject.webhid = globalThis.cloneInto(bootstrapValue, window, {
       wrapReflectors: true
     })
+  }
   const pagePort = pageChannel.port1
   const controlQueue = []
   let controlPort = null
@@ -35,29 +51,17 @@
   const authorityReady = new Promise((resolve) => {
     resolveAuthorityReady = resolve
   })
-  const FANOUT_RESERVATION_TIMEOUT_MS = 5000
-  const fanoutCandidate = (function () {
-    if (window === window.top) return false
-    const origin = window.location.origin
-    if (!origin || origin === 'null') return false
-    try {
-      if (window.top.location.origin !== origin) return false
-    } catch {
-      return false
-    }
-    return true
-  })()
-  /** @type {MessagePort|null} */
-  let brokerPort = null
-  /** @type {{channel: string, pairOtp: string, ackOtp: string}|null} */
-  let brokerPairSeed = null
-  /** @type {MessagePort|null} */
-  let pendingBrokerPort = null
   /** @type {number|null} */
   let brokerPairTimer = null
   /** @type {((event: MessageEvent) => void)|null} */
   let brokerPairHandler = null
+  /** @type {MessagePort|null} */
+  let pendingBrokerPort = null
+  /** @type {MessagePort|null} */
+  let brokerPort = null
   let brokerPairReady = false
+  /** @type {{stackOtp: string, authOtp: string, ackOtp: string, frameId: number, documentId: string, origin: string}|null} */
+  let brokerPairOffer = null
   /** @type {Map<string, {resolve: Function, reject: Function}>} */
   const brokerPending = new Map()
   /** @type {Set<string>} plane keys whose NM traffic was ever brokered */
@@ -66,8 +70,6 @@
   /** @type {Map<string, {deviceId: string, clientKey: string, generation: number}>} */
   const brokerAttachments = new Map()
   const fanoutContexts = new Map()
-  const fanoutPending = new Set()
-  const observedFrameElements = new Set()
   let nextFanoutChannel = 0
   /** @returns {void} */
   function pumpControlQueue() {
@@ -116,19 +118,12 @@
   /** @param {MessagePort} port @returns {void} */
   function wireControlPort(port) {
     port.onMessage.addListener((message) => {
-      if (message && message.action === 'fanoutPairSeed') {
-        if (
-          typeof message.channel === 'string' &&
-          typeof message.pairOtp === 'string' &&
-          typeof message.ackOtp === 'string'
-        ) {
-          brokerPairSeed = {
-            channel: message.channel,
-            pairOtp: message.pairOtp,
-            ackOtp: message.ackOtp
-          }
-          startBrokerPairing()
-        }
+      if (message && message.action === 'fanoutPairOffer') {
+        handleFanoutPairOffer(message)
+        return
+      }
+      if (message && message.action === 'fanoutBrokerOffer') {
+        handleFanoutBrokerOffer(message)
         return
       }
       if (message && message.action === 'endpointMetadata') {
@@ -174,7 +169,10 @@
         message.persistentOrigin === persistentOrigin
       ) {
         const origin = message.persistentOrigin
-        allowedByOrigin.set(origin, new Set(message.deviceIds))
+        allowedByOrigin.set(
+          origin,
+          new Set(message.deviceIds.map((deviceId) => String(deviceId)))
+        )
         loadedOrigins.add(origin)
         flushAllowedDeviceIdsQueue(origin)
         return
@@ -218,8 +216,7 @@
   let localStarted = false
   /**
    * Runs the full local bridge path: owns its endpoint, serves its own frame,
-   * and connects the control port. Same-origin non-top frames boot this way
-   * and later hand off to the top multiplexer once its pairing completes.
+   * and connects the control port.
    * @returns {void}
    */
   function startLocal() {
@@ -227,6 +224,9 @@
     localStarted = true
     controlPort = browser.runtime.connect({ name: 'webhid-control' })
     wireControlPort(controlPort)
+    if (fanoutCandidate && stackOtp) {
+      controlPort.postMessage({ action: 'fanoutChildOffer', stackOtp })
+    }
     wireStatusListener()
     wireBackgroundEventListener()
     wireStorageListener()
@@ -235,8 +235,11 @@
       devicePicker = new WebHidDevicePicker()
       document.documentElement.appendChild(devicePicker.host)
     }
+    if (fanoutCandidate) {
+      window.addEventListener('pagehide', invalidateBrokerPairOffer)
+      window.addEventListener('unload', invalidateBrokerPairOffer)
+    }
     acceptBootstrapPort(pagePort, window, authorityOrigin || '', browserFrameIdentity(window))
-    if (window === window.top) installTopFanoutObserver()
     ;(async () => {
       let resp = null
       try {
@@ -1055,7 +1058,7 @@
       if (allowedDeviceIdsQueue[i].origin === origin) {
         const { deviceId, resolve } = allowedDeviceIdsQueue[i]
         allowedDeviceIdsQueue.splice(i, 1)
-        resolve(allowed.has(deviceId))
+        resolve(allowed.has(String(deviceId)))
       }
     }
   }
@@ -1070,7 +1073,10 @@
     if (!origin) return Promise.resolve(false)
     if (!isPersistentGrantOrigin(origin)) return Promise.resolve(false)
     if (loadedOrigins.has(origin)) {
-      return Promise.resolve((allowedByOrigin.get(origin) || new Set()).has(deviceId))
+      const allowed = allowedByOrigin.get(origin) || new Set()
+      if (allowed.has(String(deviceId))) return Promise.resolve(true)
+      loadedOrigins.delete(origin)
+      allowedByOrigin.delete(origin)
     }
     const pending = new Promise((resolve) => {
       allowedDeviceIdsQueue.push({ origin, deviceId, resolve })
@@ -1100,7 +1106,10 @@
         origin
       })
       if (resp && Array.isArray(resp.deviceIds)) {
-        allowedByOrigin.set(origin, new Set(resp.deviceIds))
+        allowedByOrigin.set(
+          origin,
+          new Set(resp.deviceIds.map((deviceId) => String(deviceId)))
+        )
       } else {
         allowedByOrigin.set(origin, new Set())
       }
@@ -1892,16 +1901,69 @@
     }
   }
 
+  function invalidateBrokerPairOffer() {
+    brokerPairOffer = null
+    stackOtp = null
+    if (brokerPairTimer) {
+      clearTimeout(brokerPairTimer)
+      brokerPairTimer = null
+    }
+    if (brokerPairHandler && pendingBrokerPort) {
+      pendingBrokerPort.removeEventListener('message', brokerPairHandler)
+    }
+    brokerPairHandler = null
+    if (pendingBrokerPort) closeBrokerCandidate(pendingBrokerPort)
+    pendingBrokerPort = null
+  }
+
   /**
+   * @param {object} message
    * @returns {void}
    */
-  function startBrokerPairing() {
-    const port = pendingBrokerPort
-    const seed = brokerPairSeed
-    if (!fanoutCandidate || brokerPort || !port || !seed || brokerPairHandler) return
+  function handleFanoutPairOffer(message) {
+    if (!fanoutCandidate || brokerPairReady) return
+    const identity = browserFrameIdentity(window)
+    if (
+      !identity ||
+      !Number.isInteger(identity.frameId) ||
+      identity.frameId <= 0 ||
+      typeof identity.documentId !== 'string' ||
+      !identity.documentId ||
+      message.frameId !== identity.frameId ||
+      message.documentId !== identity.documentId ||
+      message.origin !== window.location.origin ||
+      typeof message.authOtp !== 'string' ||
+      typeof message.ackOtp !== 'string'
+    )
+      return
+    if (brokerPairOffer || brokerPairTimer || pendingBrokerPort) {
+      invalidateBrokerPairOffer()
+      return
+    }
+    if (!stackOtp) return
+    brokerPairOffer = {
+      stackOtp,
+      authOtp: message.authOtp,
+      ackOtp: message.ackOtp,
+      frameId: identity.frameId,
+      documentId: identity.documentId,
+      origin: message.origin
+    }
+  }
+
+  /**
+   * @param {MessagePort} port
+   * @param {{stackOtp: string, authOtp: string, ackOtp: string}} offer
+   * @returns {void}
+   */
+  function startBrokerPairing(port, offer) {
+    if (!fanoutCandidate || brokerPort || !port || !offer || brokerPairHandler) {
+      closeBrokerCandidate(port)
+      return
+    }
     const handler = (event) => {
       const data = event.data
-      if (!data || data.type !== 'fanoutPairAck' || data.otp !== seed.ackOtp) return
+      if (!data || data.type !== 'fanoutAuthB' || data.otp !== offer.ackOtp) return
       if (brokerPairTimer) {
         clearTimeout(brokerPairTimer)
         brokerPairTimer = null
@@ -1909,32 +1971,29 @@
       port.removeEventListener('message', handler)
       brokerPairHandler = null
       pendingBrokerPort = null
-      brokerPairSeed = null
+      brokerPairOffer = null
+      stackOtp = null
       brokerPort = port
       brokerPairReady = true
-      port.onmessage = (brokerEvent) => handleChildBrokerMessage(brokerEvent.data, brokerEvent)
+      port.addEventListener('message', (brokerEvent) =>
+        handleChildBrokerMessage(brokerEvent.data, brokerEvent)
+      )
       logger.debug('[bridge] private NM broker paired')
     }
     brokerPairHandler = handler
+    pendingBrokerPort = port
     try {
       port.addEventListener('message', handler)
       port.start()
-      port.postMessage({ type: 'fanoutPair', channel: seed.channel, otp: seed.pairOtp })
-    } catch (e) {
-      brokerPairHandler = null
-      pendingBrokerPort = null
-      closeBrokerCandidate(port)
-      logger.debug('private broker pairing failed', e)
+      port.postMessage({ type: 'fanoutAuthA', otp: offer.authOtp })
+    } catch {
+      invalidateBrokerPairOffer()
       return
     }
     brokerPairTimer = setTimeout(() => {
       if (pendingBrokerPort !== port || brokerPairHandler !== handler) return
-      brokerPairHandler = null
-      pendingBrokerPort = null
-      brokerPairSeed = null
-      closeBrokerCandidate(port)
-      logger.debug('private broker pairing timed out')
-    }, 2000)
+      invalidateBrokerPairOffer()
+    }, 5000)
   }
 
   /**
@@ -1944,16 +2003,14 @@
    * @returns {void}
    */
   function handleBrokerCandidate(_data, requestPort, ports) {
+    logger.debug('pair candidate received')
     const candidate = ports && ports[0]
-    if (!fanoutCandidate || requestPort !== pagePort || !candidate) {
+    const offer = brokerPairOffer
+    if (!fanoutCandidate || requestPort !== pagePort || !candidate || !offer) {
       closeBrokerCandidate(candidate)
       return
     }
-    if (pendingBrokerPort && pendingBrokerPort !== candidate) {
-      closeBrokerCandidate(pendingBrokerPort)
-    }
-    pendingBrokerPort = candidate
-    startBrokerPairing()
+    startBrokerPairing(candidate, offer)
   }
 
   /**
@@ -1996,8 +2053,8 @@
         brokerPending.delete(requestId)
         pending.resolve({ s: 503 })
       }
-      return
     }
+    return
   }
   /**
    * @param {FrameContext} context
@@ -2284,14 +2341,6 @@
     }
   }
   /**
-   * @param {{frameId: number|null, documentId: string|null}} identity
-   * @returns {string}
-   */
-  function fanoutDocumentKey(identity) {
-    return String(identity.frameId) + ':' + identity.documentId
-  }
-
-  /**
    * @param {Window} childWindow
    * @returns {number}
    */
@@ -2303,146 +2352,109 @@
   }
 
   /**
-   * Creates and delivers one authenticated mux channel for an observed child
-   * document. The child MAIN world is already armed by its document_start
-   * setter when the frame load event reaches this bridge.
-   * @param {HTMLIFrameElement|HTMLFrameElement} frameElement
+   * @param {Window} root
+   * @param {{frameId: number, documentId: string}} identity
+   * @returns {Window|null}
+   */
+  function findChildWindow(root, identity) {
+    for (let index = 0; index < root.frames.length; index++) {
+      try {
+        const child = root.frames[index]
+        const current = browserFrameIdentity(child)
+        if (current.frameId === identity.frameId && current.documentId === identity.documentId)
+          return child
+        const nested = findChildWindow(child, identity)
+        if (nested) return nested
+      } catch {
+        void 0
+      }
+    }
+    return null
+  }
+
+  /**
+   * @param {object} data
    * @returns {void}
    */
-  function observeChildFrame(frameElement) {
-    let childWindow = null
-    let origin = null
-    let url
-    let readyState
-    try {
-      childWindow = frameElement.contentWindow
-      origin = childWindow.location.origin
-      url = childWindow.location.href
-      readyState = childWindow.document.readyState
-    } catch {
-      return
-    }
+  function handleFanoutBrokerOffer(data) {
+    const child = data.child
     if (
-      !childWindow ||
-      !origin ||
-      origin === 'null' ||
-      origin !== window.location.origin ||
-      readyState === 'loading' ||
-      url === 'about:blank'
+      !child ||
+      child.origin !== window.location.origin ||
+      typeof child.stackOtp !== 'string' ||
+      !child.stackOtp ||
+      typeof data.authOtp !== 'string' ||
+      !data.authOtp ||
+      typeof data.ackOtp !== 'string' ||
+      !data.ackOtp ||
+      !Number.isInteger(child.frameId) ||
+      child.frameId <= 0 ||
+      typeof child.documentId !== 'string' ||
+      !child.documentId
     )
       return
-    const frameIndex = frameIndexForWindow(childWindow)
-    if (frameIndex < 0) return
-    const identity = browserFrameIdentity(childWindow)
-    if (identity.frameId == null || identity.documentId == null) return
-    const documentKey = fanoutDocumentKey(identity)
-    for (const existing of fanoutContexts.values()) {
-      if (existing.frameId !== identity.frameId) continue
-      if (existing.documentId === identity.documentId) return
-      destroyFrameContext(existing).catch((e) => logger.debug('stale fanout cleanup failed', e))
+    const childWindow = findChildWindow(window, child)
+    const frameIndex = childWindow && frameIndexForWindow(childWindow)
+    if (!childWindow || frameIndex < 0) return
+    const current = browserFrameIdentity(childWindow)
+    if (current.frameId !== child.frameId || current.documentId !== child.documentId) return
+    for (const context of fanoutContexts.values()) {
+      if (context.frameId !== child.frameId) continue
+      if (context.documentId === child.documentId) return
+      destroyFrameContext(context).catch(() => {})
     }
-    if (fanoutPending.has(documentKey) || fanoutContexts.size >= 32) return
-    fanoutPending.add(documentKey)
+    if (fanoutContexts.size >= 32) return
     const channel = 'fanout:' + frameInstanceId + ':' + ++nextFanoutChannel
-    sendBackgroundRequest({
-      action: 'fanoutOpen',
-      channel,
-      frameId: identity.frameId,
-      documentId: identity.documentId,
-      origin,
-      url
+    const childPort = new MessageChannel()
+    const context = createFrameContext(childPort.port1, childWindow, child.origin, {
+      frameId: child.frameId,
+      documentId: child.documentId
     })
-      .then((response) => {
-        if (!response || !response.ok) return
-        const current = browserFrameIdentity(childWindow)
-        if (current.frameId !== identity.frameId || current.documentId !== identity.documentId)
-          return
-        const childPort = new MessageChannel()
-        const context = createFrameContext(childPort.port1, childWindow, origin, identity)
-        context.persistentOrigin = persistentOrigin
-        context.brokerPort = childPort.port1
-        context.channel = response.channel
-        context.isFanout = true
-        context.pairOtp = response.pairOtp
-        fanoutContexts.set(context.channel, context)
-        childPort.port1.onmessage = (event) => {
-          const pairData = event.data
-          if (
-            pairData &&
-            pairData.type === 'fanoutPair' &&
-            pairData.otp === context.pairOtp &&
-            !context.destroyed
-          ) {
-            context.paired = true
-            try {
-              childPort.port1.postMessage({ type: 'fanoutPairAck', otp: response.ackOtp })
-            } catch (e) {
-              logger.debug('fanout pair ack failed', e)
-            }
-            logger.debug('[bridge] fanout broker paired', context.channel)
-            return
-          }
-          if (context.paired) {
-            handleTopBrokerMessage(context, event)
-            return
-          }
-          logger.debug('dropping pre-pair broker traffic', pairData && pairData.type)
-        }
-        setTimeout(() => {
-          if (!context.paired) destroyFrameContext(context).catch(() => {})
-        }, FANOUT_RESERVATION_TIMEOUT_MS)
+    context.persistentOrigin = persistentOrigin
+    context.brokerPort = childPort.port1
+    context.channel = channel
+    context.isFanout = true
+    context.pairAuthOtp = data.authOtp
+    context.pairAckOtp = data.ackOtp
+    context.pairStackOtp = child.stackOtp
+    fanoutContexts.set(channel, context)
+    childPort.port1.addEventListener('message', (event) => {
+      const pairData = event.data
+      if (
+        !context.paired &&
+        pairData &&
+        pairData.type === 'fanoutAuthA' &&
+        pairData.otp === context.pairAuthOtp &&
+        !context.destroyed
+      ) {
+        context.paired = true
         try {
-          pagePort.postMessage(
-            {
-              type: 'fanoutDeliver',
-              channel: response.channel,
-              frameIndex
-            },
-            [childPort.port2]
-          )
-        } catch (e) {
-          logger.debug('fanout delivery failed', e)
+          childPort.port1.postMessage({ type: 'fanoutAuthB', otp: context.pairAckOtp })
+        } catch {
           destroyFrameContext(context).catch(() => {})
+          return
         }
-        logger.debug('[bridge] fanout context adopted', context.channel)
-      })
-      .catch((e) => logger.debug('fanout open failed', e))
-      .finally(() => fanoutPending.delete(documentKey))
-  }
-
-  /**
-   * @param {HTMLIFrameElement|HTMLFrameElement} frame
-   * @returns {void}
-   */
-  function observeFrameElement(frame) {
-    if (observedFrameElements.has(frame)) return
-    observedFrameElements.add(frame)
-    frame.addEventListener('load', () => observeChildFrame(frame))
-    observeChildFrame(frame)
-  }
-
-  /**
-   * @param {Element|Document} root
-   * @returns {void}
-   */
-  function observeChildFrames(root) {
-    if (root.localName === 'iframe' || root.localName === 'frame') observeFrameElement(root)
-    const frames = root.querySelectorAll('iframe,frame')
-    for (const frame of frames) observeFrameElement(frame)
-  }
-
-  /** @returns {void} */
-  function installTopFanoutObserver() {
-    if (window !== window.top) return
-    observeChildFrames(document)
-    const observer = new MutationObserver((records) => {
-      for (const record of records) {
-        for (const node of record.addedNodes) {
-          if (node.nodeType === 1) observeChildFrames(node)
-        }
+        logger.debug('[bridge] fanout broker paired', context.channel)
+        return
       }
+      if (context.paired) handleTopBrokerMessage(context, event)
     })
-    observer.observe(document.documentElement, { childList: true, subtree: true })
+    childPort.port1.start()
+    setTimeout(() => {
+      if (!context.paired) destroyFrameContext(context).catch(() => {})
+    }, 5000)
+    try {
+      pagePort.postMessage(
+        {
+          type: 'fanoutBrokerCandidate',
+          frameIndex,
+          stackOtp: child.stackOtp
+        },
+        [childPort.port2]
+      )
+    } catch {
+      destroyFrameContext(context).catch(() => {})
+    }
   }
 
   /** @type {object} */
@@ -3000,6 +3012,7 @@
    */
   async function handleGenericRequest(data, requestPort) {
     const { id, action, payload } = data
+    await authorityReady
     const context = frameContextForPort(requestPort)
     const client = context && clientForPort(context, requestPort)
     const sessions = client && client.sessions
@@ -3266,6 +3279,7 @@
     }
 
     context.destroyed = true
+    if (context.port === pagePort) invalidateBrokerPairOffer()
     if (context.port === pagePort && brokerPort) {
       try {
         brokerPort.postMessage({ type: 'brokerClosing' })
@@ -3279,7 +3293,6 @@
       }
       brokerPort = null
       brokerPairReady = false
-      brokerPairSeed = null
       if (brokerPairTimer) {
         clearTimeout(brokerPairTimer)
         brokerPairTimer = null
@@ -3857,7 +3870,10 @@
         message.persistentOrigin === persistentOrigin
       ) {
         const origin = message.persistentOrigin
-        allowedByOrigin.set(origin, new Set(message.deviceIds))
+        allowedByOrigin.set(
+          origin,
+          new Set(message.deviceIds.map((deviceId) => String(deviceId)))
+        )
         loadedOrigins.add(origin)
         flushAllowedDeviceIdsQueue(origin)
       }

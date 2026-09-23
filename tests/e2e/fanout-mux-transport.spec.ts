@@ -1,7 +1,7 @@
 import { test, expect } from '../helpers/e2e.js'
 
 test.describe.serial('Same-origin iframe mux transport', () => {
-  test('child frame adopts the mux port and its HID calls complete', async ({
+  test('child offers the broker and its HID calls complete', async ({
     sharedPage,
     backgroundPage,
     httpPort
@@ -44,10 +44,7 @@ test.describe.serial('Same-origin iframe mux transport', () => {
       expect(result.getDevicesResolved, `child getDevices must resolve through the mux: ${result.error}`).toBe(true)
       expect(result.error).toBe(null)
       await expect
-        .poll(
-          () => consoleLines.some((line) => line.includes('fanout context adopted')),
-          { timeout: 10000 }
-        )
+        .poll(() => consoleLines.some((line) => line.includes('fanout broker paired')))
         .toBe(true)
     } finally {
       sharedPage.removeListener('console', onConsole)

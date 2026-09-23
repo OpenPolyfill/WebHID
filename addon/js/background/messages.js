@@ -54,6 +54,19 @@
 
   /** @type {number} */
   let lastHidPermission = 2
+  /**
+   * Compares device IDs across the daemon numeric representation and the
+   * string representation used by page bridge state.
+   * @param {Array<*>} deviceIds
+   * @param {*} deviceId
+   * @returns {boolean}
+   */
+  function deviceIdInList(deviceIds, deviceId) {
+    return (
+      Array.isArray(deviceIds) &&
+      deviceIds.some((candidate) => String(candidate) === String(deviceId))
+    )
+  }
 
   /** @type {object|null} */
   let actionApi = null
@@ -671,6 +684,11 @@
     const authority = scopeAuthorityForRequest(request, sender, port)
     const endpoint = authority?.endpoint
     const persistentOrigin = authority?.persistentOrigin
+    const deviceId = Number(request.deviceId)
+    if (!Number.isSafeInteger(deviceId) || deviceId < 0) {
+      sendResponse({ s: 403 })
+      return true
+    }
     if (!authority || !endpoint || !persistentOrigin) {
       sendResponse({ s: 403 })
       return true
@@ -683,17 +701,15 @@
           sendResponse({ s: 503 })
           return
         }
-        if (!deviceIds.includes(request.deviceId)) {
+        if (!deviceIdInList(deviceIds, deviceId)) {
           sendResponse({ s: 403 })
           return
         }
-        NativeMessaging.openDevice(request.deviceId)
+        NativeMessaging.openDevice(deviceId)
           .then(async (response) => {
             if (typeof response.P === 'number') lastHidPermission = response.P
             if (http.isOk(response.s) && response.i) {
-              const stillAllowed = (await getAllowedDevices(persistentOrigin)).includes(
-                request.deviceId
-              )
+              const stillAllowed = deviceIdInList(await getAllowedDevices(persistentOrigin), deviceId)
               const ownerStillCurrent = scopeAuthorityIsCurrent(authority)
               if (!stillAllowed || !ownerStillCurrent) {
                 if (response.t)
@@ -805,61 +821,53 @@
   }
 
   /**
-   * Delivers one fresh pairing seed over the exact child's real control port.
-   * Background does not retain fanout state or route any later request.
+   * Authenticates a child offer through its exact control endpoint and
+   * forwards fresh one-shot OTPs to the top endpoint.
    * @param {object} request
    * @param {object} _sender
    * @param {function(*): void} sendResponse
    * @param {object} port
    * @returns {boolean}
    */
-  function handleFanoutOpen(request, _sender, sendResponse, port) {
-    const top = endpointForPort(port)
-    let child = null
-    if (top && top.frameId === 0 && endpointDocumentIsLive(top)) {
-      for (const candidate of frameEndpoints.values()) {
-        if (
-          candidate.tabId === top.tabId &&
-          candidate.frameId === request.frameId &&
-          candidate.documentId === request.documentId &&
-          candidate.origin === request.origin &&
-          endpointDocumentIsLive(candidate)
-        ) {
-          child = candidate
-          break
-        }
-      }
-    }
+  function handleFanoutChildOffer(request, _sender, sendResponse, port) {
+    const child = endpointForPort(port)
+    const top = child && topEndpointForTab(child.tabId)
     if (
       !child ||
-      typeof request.channel !== 'string' ||
-      !request.channel ||
-      !Number.isInteger(request.frameId) ||
-      request.frameId <= 0 ||
-      typeof request.documentId !== 'string' ||
-      !request.documentId ||
-      request.origin !== top.origin
+      !top ||
+      child.frameId <= 0 ||
+      !endpointDocumentIsLive(child) ||
+      !endpointDocumentIsLive(top) ||
+      child.origin !== top.origin ||
+      typeof request.stackOtp !== 'string' ||
+      !request.stackOtp
     ) {
       sendResponse({ ok: false })
       return false
     }
-    const pairOtp = pristine.host.cryptoRandomUUID()
+    const authOtp = pristine.host.cryptoRandomUUID()
     const ackOtp = pristine.host.cryptoRandomUUID()
-    postToContentPort(child.port, {
-      action: 'fanoutPairSeed',
-      channel: request.channel,
-      pairOtp,
-      ackOtp,
+    const identity = {
       frameId: child.frameId,
-      documentId: child.documentId
+      documentId: child.documentId,
+      origin: child.origin
+    }
+    postToContentPort(child.port, {
+      action: 'fanoutPairOffer',
+      authOtp,
+      ackOtp,
+      ...identity
     })
-    sendResponse({
-      ok: true,
-      channel: request.channel,
-      persistentOrigin: child.persistentOrigin,
-      pairOtp,
-      ackOtp
+    postToContentPort(top.port, {
+      action: 'fanoutBrokerOffer',
+      authOtp,
+      ackOtp,
+      child: {
+        ...identity,
+        stackOtp: request.stackOtp
+      }
     })
+    sendResponse({ ok: true })
     return false
   }
 
@@ -1312,7 +1320,7 @@
     if (fromPage) {
       getAllowedDevices(request.origin || '').then((ids) => {
         const tabId = sender.tab != null ? sender.tab.id : undefined
-        if (ids.includes(request.deviceId) || isTabAuthorizedForDevice(tabId, request.deviceId)) {
+        if (deviceIdInList(ids, request.deviceId) || isTabAuthorizedForDevice(tabId, request.deviceId)) {
           getDeviceInfo(request.deviceId).then((device) => sendResponse({ device }))
         } else {
           sendResponse({ device: null })
@@ -1836,7 +1844,7 @@
     open: handleOpen,
     close: handleClose,
     frameDestroyed: handleFrameDestroyed,
-    fanoutOpen: handleFanoutOpen,
+    fanoutChildOffer: handleFanoutChildOffer,
     revokeDevice: handleRevokeDevice,
     cleanupSession: handleCleanupSession,
     setDataPlane: handleSetDataPlane,

@@ -28,6 +28,7 @@
   const NativeUint8Array = types.Uint8Array.constructor
   const NativeEventTarget = types.EventTarget.constructor
   const NativeMessageChannel = types.MessageChannel.constructor
+  const NativeFunction = types.Function.constructor
   const NativeWorker = types.Worker ? types.Worker.constructor : null
   const NativeBlob = types.Blob ? types.Blob.constructor : null
   const NativeEvent = types.Event ? types.Event.constructor : null
@@ -123,6 +124,8 @@
   const trustedTypes = host.trustedTypes
   const Navigator = types.Navigator ? types.Navigator.constructor : null
   const TrustedTypePolicy = types.TrustedTypePolicy ? types.TrustedTypePolicy.constructor : null
+  const nativeNavigatorHidDescriptor =
+    !isWorker && Navigator ? object.getOwnPropertyDescriptor(Navigator.prototype, 'hid') : null
   const nativePermissionsQuery =
     host.permissionsQuery ||
     (permissionsObject && typeof permissionsObject.query === 'function'
@@ -205,10 +208,10 @@
 
   /** @type {Function|null} */
   let ttFactory = null
-  /** @type {Promise<boolean>} */
-  let ttReady = Promise.resolve(true)
-  /** @type {object|null} */
   let hidInstance = null
+  let brokerStackOtp = null
+  let brokerSetterArmed = false
+  let ttReady = Promise.resolve(true)
 
   /** @type {Map<string, object>} */
   const inPagePlanes = hardenMap(new NativeMap())
@@ -865,21 +868,32 @@
             const source = readMessageEventSource(event)
             const data = readMessageEventData(event)
             const ports = readMessageEventPorts(event)
-            if (source !== windowObject || data !== null || !ports || ports.length !== 1) return
+            const directPort = data && data.directPort ? data.directPort : ports && ports[0]
+            if (source !== windowObject || !directPort) return
             nativeWindowRemoveEventListener(windowObject, 'message', onBridgeMessage)
-            bridgePort = ports[0]
+            brokerStackOtp = data && typeof data.S === 'string' ? data.S : null
+            bridgePort = directPort
             setupBridgePort()
+            if (fanoutCandidate || brokerStackOtp) armBrokerCandidateSetter()
             resolve()
           }
           nativeWindowAddEventListener(windowObject, 'message', onBridgeMessage)
         })
       : new Promise((resolve) => {
           const capturePageBridge = (candidate) => {
-            if (!candidate) return
+            const directPort = candidate && candidate.directPort ? candidate.directPort : candidate
+            if (!directPort) return
             try {
               reflect.deleteProperty(globalThis, 'webhid')
-              bridgePort = candidate
+              brokerStackOtp =
+                candidate && typeof candidate.S === 'string'
+                  ? candidate.S
+                  : candidate && typeof candidate.stackOtp === 'string'
+                    ? candidate.stackOtp
+                    : null
+              bridgePort = directPort
               setupBridgePort()
+              if (fanoutCandidate || brokerStackOtp) armBrokerCandidateSetter()
               resolve()
             } catch {
               bridgePort = null
@@ -913,6 +927,9 @@
   if (!isWorker) {
     let lifecycleNotified = false
     const notifyFrameDestroyed = () => {
+      brokerStackOtp = null
+      brokerSetterArmed = false
+      if (Navigator && fanoutCandidate) installNavigatorHid()
       if (lifecycleNotified || !bridgePort) return
       lifecycleNotified = true
       callNative(nativeMessagePortPostMessage, bridgePort, { type: 'frameDestroyed' })
@@ -954,43 +971,44 @@
   }
 
   /**
-   * Relays a top-frame broker candidate into this frame's existing direct
-   * isolated-world bridge. The candidate never becomes the page control port.
+   * @param {string} value
+   * @returns {string}
+   */
+  function stackToken(value) {
+    return stringOps.replace(value, /[^A-Za-z0-9]/g, '_')
+  }
+
+  /**
    * @param {object} data
    * @param {MessagePort[]} [ports]
    * @returns {void}
    */
-  function handleFanoutDeliverMessage(data, ports) {
+  function handleFanoutBrokerCandidate(data, ports) {
     const port = ports && ports[0]
-    if (!port || !nativeNumberIsInteger(data.frameIndex) || !bridgePort) {
-      try {
-        if (port) callNative(nativeMessagePortClose, port)
-      } catch {
-        void 0
-      }
+    if (!port || !nativeNumberIsInteger(data.frameIndex) || typeof data.stackOtp !== 'string') {
+      if (port) callNative(nativeMessagePortClose, port)
       return
     }
     const nav = host.windowFrameNavigator(data.frameIndex)
-    const hid = nav && nav.hid ? nav.hid : null
-    if (!hid) {
-      try {
-        callNative(nativeMessagePortClose, port)
-      } catch {
-        void 0
-      }
+    if (!nav) {
+      callNative(nativeMessagePortClose, port)
       return
     }
     try {
-      nav.hid = port
+      const invoke = new NativeFunction(
+        'nav',
+        'value',
+        'nav.hid = value\n//# sourceURL=webhidBroker_' + stackToken(data.stackOtp)
+      )
+      object.defineProperty(invoke, 'name', {
+        value: 'webhidBroker_' + stackToken(data.stackOtp),
+        configurable: false
+      })
+      callNative(invoke, null, nav, port)
     } catch {
-      try {
-        callNative(nativeMessagePortClose, port)
-      } catch {
-        void 0
-      }
+      callNative(nativeMessagePortClose, port)
     }
   }
-
   /** @type {object} */
   const BRIDGE_MESSAGE_HANDLERS = {
     dataPlaneConnect: handleDataPlaneConnect,
@@ -1001,7 +1019,7 @@
     wireWorkerPort: handleWireWorkerPort,
     brokerDataPort: handleBrokerDataPort,
     brokerDataPortUnavailable: handleBrokerDataPortUnavailable,
-    fanoutDeliver: handleFanoutDeliverMessage,
+    fanoutBrokerCandidate: handleFanoutBrokerCandidate,
     response: handleResponseMessage,
     settings: (data) => {
       settings.set(data.settings || {})
@@ -2367,46 +2385,74 @@
       get() {
         return hidInstance
       },
+      ...(brokerSetterArmed
+        ? {
+            set(value) {
+              const stack = getOriginalStack
+                ? callNative(getOriginalStack, new NativeError())
+                : ''
+              const expected = 'webhidBroker_' + stackToken(brokerStackOtp || '')
+              if (!brokerStackOtp || typeof stack !== 'string' || !stringOps.includes(stack, expected)) {
+                yieldNavigatorHid(value)
+                return
+              }
+              brokerStackOtp = null
+              brokerSetterArmed = false
+              installNavigatorHid()
+              try {
+                callNative(
+                  nativeMessagePortPostMessage,
+                  bridgePort,
+                  { type: 'fanoutCandidate' },
+                  makePristineIterable([value])
+                )
+              } catch {
+                try {
+                  callNative(nativeMessagePortClose, value)
+                } catch {
+                  void 0
+                }
+              }
+            }
+          }
+        : {}),
       configurable: true,
       enumerable: true
     })
   }
   installNavigatorHid()
 
-  /**
-   * Relays a broker candidate to the isolated bridge without changing the
-   * direct MAIN control endpoint.
-   * @returns {void}
-   */
-  function installBrokerCandidateRelay() {
-    if (isWorker || !fanoutCandidate || !hidInstance) return
-    const relayCandidate = (candidate) => {
-      if (!candidate || !bridgePort) return
+  /** @param {*} value @returns {void} */
+  function yieldNavigatorHid(value) {
+    reflect.deleteProperty(host.navigator, 'hid')
+    brokerStackOtp = null
+    brokerSetterArmed = false
+    if (nativeNavigatorHidDescriptor) {
+      object.defineProperty(Navigator.prototype, 'hid', nativeNavigatorHidDescriptor)
       try {
-        callNative(
-          nativeMessagePortPostMessage,
-          bridgePort,
-          { type: 'fanoutCandidate' },
-          makePristineIterable([candidate])
-        )
+        reflect.set(host.navigator, 'hid', value, host.navigator)
       } catch {
-        try {
-          callNative(nativeMessagePortClose, candidate)
-        } catch {
-          void 0
-        }
+        void 0
+      }
+    } else {
+      reflect.deleteProperty(Navigator.prototype, 'hid')
+      try {
+        object.defineProperty(host.navigator, 'hid', {
+          value,
+          writable: true,
+          configurable: true,
+          enumerable: true
+        })
+      } catch {
+        void 0
       }
     }
-    object.defineProperty(Navigator.prototype, 'hid', {
-      get() {
-        return hidInstance
-      },
-      set: relayCandidate,
-      configurable: true,
-      enumerable: true
-    })
   }
-  installBrokerCandidateRelay()
+  function armBrokerCandidateSetter() {
+    if (isWorker || (!fanoutCandidate && !brokerStackOtp) || brokerSetterArmed) return
+    brokerSetterArmed = true
+    installNavigatorHid()
+  }
 
   /**
    * @param {{clientKey: string|null, terminated: boolean, sent: boolean}} state

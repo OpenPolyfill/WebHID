@@ -86,6 +86,7 @@
             const id = 'iframe-' + i
             const consumer = createRemoteConsumer(id)
             const frame = document.createElement('iframe')
+            frame.setAttribute('allow', 'hid')
             frame.src = '/tests/pages/input-report-fanout-frame.html'
             frame.onload = () => {
               frame.contentWindow.postMessage({ type: 'start', id }, origin)

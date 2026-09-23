@@ -285,39 +285,43 @@ test('disconnect after proactive retirement is idempotent', () => {
   assert.equal(state.getPurgeCalls(), purgeCalls)
 })
 
-test('fanoutOpen delivers one fresh seed without background state', () => {
+test('child offer replies to the exact child and forwards fresh A/B to top', () => {
   const state = loadMessages()
   const topPort = state.connect(sameOriginSender(0, 'top'))
   const childPort = state.connect(sameOriginSender(1, 'child'))
-  topPort.receive({
-    action: 'fanoutOpen',
-    channel: 'child-channel',
+  childPort.receive({ action: 'fanoutChildOffer', stackOtp: 'stack-otp' })
+  const childOffer = childPort.postedMessages.find(
+    (message) => message.action === 'fanoutPairOffer'
+  )
+  const topOffer = topPort.postedMessages.find(
+    (message) => message.action === 'fanoutBrokerOffer'
+  )
+  assert.deepEqual({ ...childOffer }, {
+    action: 'fanoutPairOffer',
+    authOtp: 'test-otp',
+    ackOtp: 'test-otp',
     frameId: 1,
     documentId: 'child',
-    origin: 'https://same.test',
-    url: 'https://same.test/frame-1'
+    origin: 'https://same.test'
   })
-  const seedMessages = childPort.postedMessages.filter(
-    (message) => message.action === 'fanoutPairSeed'
-  )
-  assert.equal(seedMessages.length, 1)
-  assert.equal(seedMessages[0].channel, 'child-channel')
-  assert.equal(seedMessages[0].pairOtp, 'test-otp')
-  assert.equal(seedMessages[0].ackOtp, 'test-otp')
+  assert.deepEqual({ ...topOffer, child: { ...topOffer.child } }, {
+    action: 'fanoutBrokerOffer',
+    authOtp: 'test-otp',
+    ackOtp: 'test-otp',
+    child: {
+      frameId: 1,
+      documentId: 'child',
+      origin: 'https://same.test',
+      stackOtp: 'stack-otp'
+    }
+  })
   assert.equal(state.frameEndpoints.size, 2)
 })
 
-test('fanoutOpen fails closed when exact child control endpoint is absent', () => {
+test('child offer fails closed without a live top endpoint', () => {
   const state = loadMessages()
-  const topPort = state.connect(sameOriginSender(0, 'top'))
-  topPort.receive({
-    action: 'fanoutOpen',
-    channel: 'child-channel',
-    frameId: 1,
-    documentId: 'child',
-    origin: 'https://same.test',
-    url: 'https://same.test/frame-1'
-  })
-  assert.equal(topPort.postedMessages.at(-1).ok, false)
+  const childPort = state.connect(sameOriginSender(1, 'child'))
+  childPort.receive({ action: 'fanoutChildOffer', stackOtp: 'stack-otp' })
+  assert.equal(childPort.postedMessages.at(-1).ok, false)
   assert.equal(state.frameEndpoints.size, 1)
 })
