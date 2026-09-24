@@ -590,37 +590,38 @@
    * @returns {object}
    */
   function ensureRuntimeDataPort(deviceId) {
-    const existing = runtimeDataPorts.get(deviceId)
+    const key = String(deviceId)
+    const existing = runtimeDataPorts.get(key)
     if (existing) return existing
-    const port = browser.runtime.connect({ name: `webhid-data:${deviceId}` })
-    runtimeDataPorts.set(deviceId, port)
+    const port = browser.runtime.connect({ name: `webhid-data:${key}` })
+    runtimeDataPorts.set(key, port)
     port.onMessage.addListener((message) => {
       if (message && message.reqId != null) {
         const pending = dataPending.get(message.reqId)
-        if (!pending || pending.deviceId !== deviceId) return
+        if (!pending || String(pending.deviceId) !== key) return
         dataPending.delete(message.reqId)
         if (pending.kind === 'broker-page') {
-          try {
-            pending.replyPort.postMessage({ ...message, reqId: pending.pageRequestId })
-          } catch {
-            void 0
-          }
+          handleWorkerReportResponse(
+            { ...pending.msg, reqId: pending.pageRequestId },
+            pending.replyPort,
+            message
+          )
         } else {
           handleWorkerReportResponse(pending.msg, pending.port, message)
         }
-        maybeDisconnectRuntimeDataPort(deviceId)
+        maybeDisconnectRuntimeDataPort(key)
         return
       }
       if (message && message.event) {
-        forwardInputReportToAttachments(deviceId, message.event)
+        forwardInputReportToAttachments(key, message.event)
         handleBackgroundEvent(message)
       }
     })
     port.onDisconnect.addListener(() => {
-      if (runtimeDataPorts.get(deviceId) !== port) return
-      runtimeDataPorts.delete(deviceId)
+      if (runtimeDataPorts.get(key) !== port) return
+      runtimeDataPorts.delete(key)
       for (const attachment of brokerAttachments.values()) {
-        if (attachment.deviceId !== String(deviceId) || !attachment.dataPort) continue
+        if (attachment.deviceId !== key || !attachment.dataPort) continue
         try {
           attachment.dataPort.postMessage({ type: 'disconnect' })
         } catch {
@@ -628,11 +629,15 @@
         }
       }
       for (const [reqId, pending] of dataPending) {
-        if (pending.deviceId !== deviceId) continue
+        if (String(pending.deviceId) !== key) continue
         dataPending.delete(reqId)
         if (pending.kind === 'broker-page') {
           try {
-            pending.replyPort.postMessage({ reqId: pending.pageRequestId, s: 503 })
+            handleWorkerReportResponse(
+              { ...pending.msg, reqId: pending.pageRequestId },
+              pending.replyPort,
+              { s: 503 }
+            )
           } catch {
             void 0
           }
@@ -728,16 +733,17 @@
    * @returns {void}
    */
   function maybeDisconnectRuntimeDataPort(deviceId) {
-    if (hasDeviceKey(nmPlanes, deviceId) || hasDeviceKey(nmOpenAttempts.keys(), deviceId)) return
+    const key = String(deviceId)
+    if (hasDeviceKey(nmPlanes, key) || hasDeviceKey(nmOpenAttempts.keys(), key)) return
     for (const attachment of brokerAttachments.values()) {
-      if (attachment.deviceId === String(deviceId)) return
+      if (attachment.deviceId === key) return
     }
     for (const pending of dataPending.values()) {
-      if (pending.deviceId === deviceId) return
+      if (String(pending.deviceId) === key) return
     }
-    const port = runtimeDataPorts.get(deviceId)
+    const port = runtimeDataPorts.get(key)
     if (!port) return
-    runtimeDataPorts.delete(deviceId)
+    runtimeDataPorts.delete(key)
     try {
       port.disconnect()
     } catch (e) {
@@ -2194,7 +2200,7 @@
       return
     const key = brokerAttachmentKey(context, deviceId, clientKey)
     if (!brokerAttachments.has(key)) {
-      replyPort.postMessage({ reqId: message.reqId, s: 503 })
+      handleWorkerReportResponse(message, replyPort, { s: 503 })
       return
     }
     const action =
@@ -2212,6 +2218,7 @@
     }
     if (message.type !== 'receiveFeature') request.data = message.data
     dataPending.set(reqId, {
+      msg: message,
       kind: 'broker-page',
       deviceId,
       key,
@@ -2222,7 +2229,11 @@
       ensureRuntimeDataPort(deviceId).postMessage(request)
     } catch {
       dataPending.delete(reqId)
-      replyPort.postMessage({ reqId: message.reqId, s: 503 })
+      handleWorkerReportResponse(
+        { ...message, reqId: message.reqId },
+        replyPort,
+        { s: 503 }
+      )
     }
   }
 
@@ -3012,7 +3023,6 @@
    */
   async function handleGenericRequest(data, requestPort) {
     const { id, action, payload } = data
-    await authorityReady
     const context = frameContextForPort(requestPort)
     const client = context && clientForPort(context, requestPort)
     const sessions = client && client.sessions
@@ -3213,13 +3223,13 @@
    */
   async function handleRequest(data, ports, _source, requestPort) {
     if (!data || data.id === undefined) return
-    await authorityReady
+    if (data.action === 'getPolicy') await authorityReady
     if (authorityFailed || !authorityOrigin) {
       replyToPage({ type: 'response', id: data.id, result: { s: 503 } })
       return
     }
-
     logger.debug('req action=' + data.action + ' id=' + data.id)
+
     const requestContext = frameContextForPort(requestPort)
     if (PAGE_ACTION_API_ACTIONS.has(data.action)) {
       markPageActionUsed(requestContext ? requestContext.origin : authorityOrigin)

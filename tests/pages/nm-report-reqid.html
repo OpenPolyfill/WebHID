@@ -21,7 +21,7 @@
           if (!event.data || event.origin !== location.origin) return
           const index = event.data.index
           if (index !== 0 && index !== 1) return
-          if (event.source !== frames[index].contentWindow) return
+          if (!frames[index] || event.source !== frames[index].contentWindow) return
           if (event.data.type === 'frameReady') {
             frames[index].ready = true
             if (!frames.every((item) => item.ready)) return
@@ -40,12 +40,14 @@
           for (let index = 0; index < 2; index++) {
             const frame = document.createElement('iframe')
             const item = { contentWindow: null, ready: false }
-            frame.src = '/tests/pages/nm-report-reqid-frame.html'
-            frame.onload = () =>
+            frame.setAttribute('allow', 'hid')
+            frame.onload = () => {
+              item.contentWindow = frame.contentWindow
               frame.contentWindow.postMessage({ type: 'open', index }, location.origin)
+            }
             frames.push(item)
+            frame.src = '/tests/pages/nm-report-reqid-frame.html'
             document.body.appendChild(frame)
-            item.contentWindow = frame.contentWindow
           }
         }
 

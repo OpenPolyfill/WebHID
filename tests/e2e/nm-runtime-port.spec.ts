@@ -12,14 +12,19 @@ test.describe.serial('Exact frame endpoint fanout', () => {
     vendorDevice
   }) => {
     const origin = new URL(sharedPage.url()).origin
-    const settingKey = `settings :: ${origin} :: dataPlane`
+    const settingKeys = [
+      `settings :: ${origin} :: dataPlane`,
+      `settings :: ${origin} :: workerPolyfillEnabled`
+    ]
     const previous = await backgroundPage.evaluate(
-      (key: string) => browser.storage.local.get(key),
-      settingKey
+      (keys: string[]) => browser.storage.local.get(keys),
+      settingKeys
     )
-    await backgroundPage.evaluate((key: string) => {
-      return browser.storage.local.set({ [key]: 'nm' })
-    }, settingKey)
+    await backgroundPage.evaluate(
+      ([dataPlaneKey, workerKey]) =>
+        browser.storage.local.set({ [dataPlaneKey]: 'nm', [workerKey]: false }),
+      settingKeys
+    )
     try {
       await sharedPage.goto(`${origin}/tests/test-page.html`, { waitUntil: 'domcontentloaded' })
       await sharedPage.waitForFunction(() => typeof navigator.hid !== 'undefined', {
@@ -99,13 +104,13 @@ test.describe.serial('Exact frame endpoint fanout', () => {
         { timeout: 15000 }
       )
       await backgroundPage.evaluate(
-        ({ key, values }) => {
-          const missing = !(key in values)
+        ({ keys, values }) => {
+          const missing = keys.filter((key) => !(key in values))
           return browser.storage.local
-            .remove(missing ? [key] : [])
-            .then(() => (missing ? undefined : browser.storage.local.set(values)))
+            .remove(missing)
+            .then(() => browser.storage.local.set(values))
         },
-        { key: settingKey, values: previous }
+        { keys: settingKeys, values: previous }
       )
       await sharedPage.goto(`${origin}/tests/test-page.html`, { waitUntil: 'domcontentloaded' })
     }

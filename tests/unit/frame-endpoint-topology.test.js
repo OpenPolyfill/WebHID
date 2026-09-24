@@ -160,10 +160,17 @@ test('allowed device IDs normalize daemon values before authorization', () => {
   assert.match(bridge, /new Set\(message\.deviceIds\.map\(\(deviceId\) => String\(deviceId\)\)\)/)
 })
 
-test('loaded authorization misses refresh once before denying', () => {
+test('loaded authorization misses refresh before denying', () => {
   assert.match(bridge, /loadedOrigins\.delete\(origin\)/)
   assert.match(bridge, /allowedByOrigin\.delete\(origin\)/)
   assert.match(bridge, /loadAllowedDeviceIds\(origin\)/)
+})
+
+test('broker runtime requests normalize IDs and preserve response dispatch', () => {
+  assert.match(bridge, /const key = String\(deviceId\)[\s\S]*runtimeDataPorts\.get\(key\)/)
+  assert.match(bridge, /msg: message,[\s\S]*kind: 'broker-page'/)
+  assert.match(bridge, /handleWorkerReportResponse\(\s*\{\s*\.\.\.pending\.msg/)
+  assert.match(bridge, /dataPending\.delete\(reqId\)[\s\S]*handleWorkerReportResponse\(/)
 })
 
 test('stack and mutual-auth OTPs invalidate across stale lifetimes', () => {
