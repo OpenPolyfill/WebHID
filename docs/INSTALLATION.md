@@ -104,7 +104,7 @@ systemctl --user enable --now webhid-daemon
 
 ### Debian/Ubuntu (.deb)
 
-Download the `.deb` from [GitHub Releases](https://github.com/K4zoku/FF-WebHID/releases), then:
+Download the `.deb` from [GitHub Releases](https://github.com/OpenPolyfill/WebHID/releases), then:
 
 ```sh
 sudo dpkg -i webhid-<version>-<arch>.deb
@@ -137,7 +137,7 @@ systemctl --user enable --now webhid-daemon
 
 ### Fedora/RHEL (.rpm)
 
-Download the `.rpm` from [GitHub Releases](https://github.com/K4zoku/FF-WebHID/releases), then:
+Download the `.rpm` from [GitHub Releases](https://github.com/OpenPolyfill/WebHID/releases), then:
 
 ```sh
 sudo dnf install webhid-<version>.<arch>.rpm
@@ -172,7 +172,7 @@ systemctl --user enable --now webhid-daemon
 Build from source:
 
 ```sh
-git clone https://github.com/K4zoku/FF-WebHID.git
+git clone https://github.com/OpenPolyfill/WebHID.git
 cd FF-WebHID
 make build
 ```
@@ -266,7 +266,7 @@ The installed NM manifest (`webhid.daemon_nm_host.json`) uses the `"name": "webh
 
 ### MSI Installer
 
-Download the `.msi` from [GitHub Releases](https://github.com/K4zoku/FF-WebHID/releases) and double-click to install.
+Download the `.msi` from [GitHub Releases](https://github.com/OpenPolyfill/WebHID/releases) and double-click to install.
 
 The installer:
 
@@ -278,7 +278,7 @@ Install and restart Firefox. On Windows, `daemonAsNmHost` defaults to `true` (th
 
 ### Portable/Manual
 
-Download the Windows zip from [GitHub Releases](https://github.com/K4zoku/FF-WebHID/releases), extract, then run:
+Download the Windows zip from [GitHub Releases](https://github.com/OpenPolyfill/WebHID/releases), extract, then run:
 
 ```powershell
 .\install.ps1
@@ -295,7 +295,7 @@ For a system-wide install (all users) or auto-start of the persistent daemon, us
 ### Homebrew
 
 ```sh
-brew tap K4zoku/FF-WebHID https://github.com/K4zoku/FF-WebHID
+brew tap OpenPolyfill/WebHID https://github.com/OpenPolyfill/WebHID
 brew install webhid
 brew services start webhid
 ```
@@ -311,7 +311,7 @@ brew services stop webhid
 
 ### Manual
 
-Download the macOS zip from [GitHub Releases](https://github.com/K4zoku/FF-WebHID/releases), extract, then register the native-messaging hosts for Firefox (per-user, no root):
+Download the macOS zip from [GitHub Releases](https://github.com/OpenPolyfill/WebHID/releases), extract, then register the native-messaging hosts for Firefox (per-user, no root):
 
 ```sh
 ./install.sh
@@ -328,7 +328,7 @@ install.sh
 uninstall.sh
 ```
 
-`install.sh` writes both manifests into `~/Library/Application Support/Mozilla/NativeMessagingHosts` with absolute paths pointing at the extracted `bin/`, so the bundle can live anywhere; re-run it after moving the folder. `uninstall.sh` removes the registration. For the persistent forwarder mode, use Homebrew instead (`brew install K4zoku/FF-WebHID/webhid && brew services start webhid`); the zip targets daemon-as-NM-host mode.
+`install.sh` writes both manifests into `~/Library/Application Support/Mozilla/NativeMessagingHosts` with absolute paths pointing at the extracted `bin/`, so the bundle can live anywhere; re-run it after moving the folder. `uninstall.sh` removes the registration. For the persistent forwarder mode, use Homebrew instead (`brew install OpenPolyfill/WebHID/webhid && brew services start webhid`); the zip targets daemon-as-NM-host mode.
 
 > **Note**: On Apple Silicon Macs, the universal binary runs natively. No Rosetta needed.
 

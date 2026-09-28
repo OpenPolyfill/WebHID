@@ -158,7 +158,7 @@ Note: the user systemd unit (`manifests/webhid-daemon.user.service`) hardcodes `
 | `workerPolyfillEnabled`            | bool                              | `false`                                          | Inject the WebHID polyfill into page-created Web Workers.                                                                                                                                                                                                                                                |
 | `allowActivationlessRequestDevice` | bool                              | `false`                                          | Skip the user-activation check in `requestDevice()` for sites that request devices after asynchronous work. This is a spec deviation; explicit chooser selection and Permissions Policy still apply.                                                                                                     |
 
-`daemonAsNmHost` and `hidePageAction` are global-only. Every other user-facing setting can be overridden per-site via the popup. `useWorker` is an internal benchmark setting, not a user-facing settings option. Settings use per-key format in `browser.storage.local`: global keys are `settings :: <name>`, site overrides are `settings :: <origin> :: <name>`. Device info, origin allowlists, and grant groups are stored in IndexedDB (`webhid-store`).
+`daemonAsNmHost` and `hidePageAction` are global-only. Every other user-facing setting can be overridden per persistent site scope via the popup. `useWorker` is an internal benchmark setting, not a user-facing settings option. Settings use per-key format in `browser.storage.local`: global keys are `settings :: <name>`, site overrides are `settings :: <persistentOrigin> :: <name>`. Normal documents use their origin as `persistentOrigin`; safely derivable opaque documents use `opaque|<top-origin>|<source-origin>`. Device info, persistence-scope allowlists, and grant groups are stored in IndexedDB (`webhid-store`).
 
 The bridge uses a `SettingsStore` Proxy-based observer. `storage.onChanged` extracts `changes[k].newValue` and calls `settings.set(patch)`. The store handles diffing internally and fires listeners only when a value actually changes.
 
@@ -191,8 +191,10 @@ End-to-end tests spawn the debug daemon + `webhid-mock` (a virtual HID device cr
 The serial E2E chains currently cover:
 
 - `e2e.spec.ts`: core polyfill, grant, open/close, input, output, feature, disconnect, and forget behavior.
-- `input-report-fanout.spec.ts`: input delivery to authorized consumers.
+- `fanout-mux-transport.spec.ts`: optional same-origin top-broker pairing/upgrade while the child keeps its direct bridge, plus child HID control continuity.
+- `input-report-fanout.spec.ts`: input delivery to authorized consumers across direct and fanout paths.
 - `nm-report-reqid.spec.ts`: NM report request-id correlation.
+- `nm-runtime-port.spec.ts`: exact-frame NM endpoint teardown, fanout lifetime, and stale-open/document-replacement regressions.
 - `picker-bypass.spec.ts`: consent and bridge-channel bypass regression coverage.
 - `transport-revoke.spec.ts`: session and transport authority revocation.
 - `wt.spec.ts`: worker WebTransport setup, reports, mode switching, and certificate-generation lifecycle.
@@ -212,7 +214,18 @@ npm run test:e2e:forwarder  # forwarder project only
 
 The harness (`tests/helpers/e2e.ts`) builds worker-scoped fixtures (`daemon`, `nmManifest`, `harnessCtx`, `sharedPage`) so all tests in a chain share one Firefox profile, one page, and one paired+opened device. Each generated descriptor is its own mock device (all at VID 0x16C0, unique PIDs from `DEVICES` in `tests/helpers/e2e-devices.ts`): `vendor` (0x0001, report ID 1, 64-byte input/output) drives the primary chain and the feature-report path, `gamepad` (0x0002, no report ID, 5-byte input) drives the WS-data-plane-with-URL-fragment and fresh-pairing gates, `mouse` (0x0003) and `keyboard` (0x0004) are available for multi-device scenarios. Devices spawn lazily on first use and are torn down when the worker ends.
 
-> E2E tests require the debug binaries (`cargo build --manifest-path crates/Cargo.toml`, produces `webhid-daemon` and `webhid-mock`). One-time Linux setup (root): `sudo make install-e2e-udev-rule` installs `manifests/99-webhid-e2e.rules` (group `webhid` gets `/dev/uhid` write access plus read/write on hidraw nodes with VID 0x16C0, matched via the kernel name `<bus>:<VID>:<PID>.<n>` since uhid devices have no USB parent), creates the `webhid` group, and adds `$SUDO_USER` to it. Log out/in (or `newgrp webhid`) once, then the E2E suite runs as a normal user, no root needed. macOS needs no setup (`IOHIDUserDevice` works from a regular user session).
+> E2E tests require the debug binaries (`cargo build --manifest-path crates/Cargo.toml`, produces `webhid-daemon` and `webhid-mock`). On Linux, the current rule file is `manifests/72-webhid-e2e.rules`. Install it and grant the test user access once:
+>
+> ```sh
+> sudo groupadd --system webhid 2>/dev/null || true
+> sudo usermod -aG webhid "$USER"
+> sudo install -Dm644 manifests/72-webhid-e2e.rules /etc/udev/rules.d/72-webhid-e2e.rules
+> sudo modprobe uhid
+> sudo udevadm control --reload-rules
+> sudo udevadm trigger
+> ```
+>
+> Log out/in (or `newgrp webhid`) once, then the E2E suite runs as a normal user. macOS needs no setup (`IOHIDUserDevice` works from a regular user session). **Source-tree note:** current HEAD's `make install-e2e-udev-rule` still references the removed `99-webhid-e2e.rules`; use the explicit command above until that Makefile target is synced to `72-webhid-e2e.rules`.
 
 **Two gotchas baked into the fixtures** (see `AGENTS.md` for the full story):
 
@@ -285,7 +298,7 @@ npm run release:minor
 npm run release:patch
 ```
 
-Bumps `.version.json`, `package.json`, `addon/manifest.json`, the three `Cargo.toml` files, and `Cargo.lock` (via `.versionrc.cargo-updater.cjs`).
+Bumps the release-owned version surfaces declared in `.versionrc.json`: `.version.json`, `package.json`, Firefox `addon/manifest.json` and `addon/manifest.v2.json`, the three release `Cargo.toml` files plus `crates/Cargo.lock`, Homebrew/Nix metadata, and the Void/Alpine/Arch addon packaging files. The Chromium manifest is a test-bed manifest and is not part of the release bump set.
 
 ## Cross-platform
 
@@ -311,7 +324,7 @@ Most build/package/bump workflows live in `package.json` (they were pure npm/nod
 | `make install-system`                                    | System-wide install: binaries + NM manifest + systemd unit, `/usr/local` |
 | `make install-user`                                      | User-local install into `~/.local` (no root)                             |
 | `make install-udev-rule`                                 | Install `72-webhid.rules` (uaccess + FIDO exclusions)                    |
-| `make install-e2e-udev-rule`                             | Install `99-webhid-e2e.rules` + create `webhid` group + add `$SUDO_USER` |
+| `make install-e2e-udev-rule`                             | Intended E2E rule/group helper; current HEAD still references removed `99-webhid-e2e.rules`, while the repository rule is `72-webhid-e2e.rules` |
 | `make install-webhid-group`                              | Create the `webhid` group and add `$SUDO_USER`                           |
 | `make install-daemon-nm-host-system` / `-user`           | Install daemon binary + `webhid.daemon_nm_host` manifest                 |
 | `make uninstall` / `uninstall-system` / `uninstall-user` | Remove the above                                                         |

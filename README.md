@@ -2,7 +2,7 @@
 
 # Firefox WebHID
 
-[![Mozilla Add-on](https://img.shields.io/amo/v/webhid?style=flat)](https://addons.mozilla.org/en-US/firefox/addon/webhid/) [![Users](https://img.shields.io/amo/users/webhid?style=flat)](https://addons.mozilla.org/en-US/firefox/addon/webhid/) [![Codacy grade](https://img.shields.io/codacy/grade/ee1ff63757e3419493edcb002adb6d6e?style=flat)](https://app.codacy.com/gh/K4zoku/FF-WebHID/dashboard) [![License](https://img.shields.io/github/license/K4zoku/FF-WebHID?style=flat)](LICENSE)
+[![Mozilla Add-on](https://img.shields.io/amo/v/webhid?style=flat)](https://addons.mozilla.org/en-US/firefox/addon/webhid/) [![Users](https://img.shields.io/amo/users/webhid?style=flat)](https://addons.mozilla.org/en-US/firefox/addon/webhid/) [![Codacy grade](https://img.shields.io/codacy/grade/ee1ff63757e3419493edcb002adb6d6e?style=flat)](https://app.codacy.com/gh/OpenPolyfill/WebHID/dashboard) [![License](https://img.shields.io/github/license/OpenPolyfill/WebHID?style=flat)](LICENSE)
 
 </div>
 
@@ -30,7 +30,7 @@ WebHID is a web standard that lets websites communicate directly with supported 
 The addon needs two parts:
 
 1. The Firefox addon: [![Firefox](https://img.shields.io/badge/Firefox-Get%20the%20Addon-0060E0?style=flat&logo=firefox&logoColor=FFBD4F)](https://addons.mozilla.org/en-US/firefox/addon/webhid/)
-2. A small background daemon for your operating system, from [GitHub Releases](https://github.com/K4zoku/FF-WebHID/releases).
+2. A small background daemon for your operating system, from [GitHub Releases](https://github.com/OpenPolyfill/WebHID/releases).
 
 Step-by-step instructions for Linux, macOS, and Windows: [docs/INSTALLATION.md](docs/INSTALLATION.md).
 
@@ -57,7 +57,9 @@ Everything works out of the box. Most settings exist for edge cases, so change t
 
 ### Per-site settings
 
-Click the gamepad icon in the address bar, then the gear icon. Changes here apply to the current site only and override the global defaults:
+Click the gamepad icon in the address bar, then the gear icon. Changes here apply to the selected persistent site/frame scope and override the global defaults:
+
+If the active tab contains multiple persistent WebHID frame scopes, the site-name control lets you choose which scope you are editing. Normal documents use their origin directly; opaque iframe documents that can be partitioned safely are shown as a separate target derived from the top-site origin plus the iframe source origin.
 
 - **Data Plane**: how the addon moves data between the site and the daemon.
   - **WebTransport** (default where available): the preferred worker network path when the daemon handshake offers WT.

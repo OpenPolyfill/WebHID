@@ -63,7 +63,7 @@ Know the difference before reaching for zero-copy tricks. Measure or reason abou
 
 Some limits are real and not worth fighting:
 
-- Native Messaging must go through `background.js` (MAIN world to isolated world bridge to background), a fixed 3-hop JS context chain enforced by the WebExtension model. No amount of serialization optimization removes this; it's an architectural ceiling.
+- Native Messaging must enter the extension background before Firefox can reach a Native Messaging host. The ordinary direct page path is MAIN world -> the same document's isolated bridge -> background. An eligible same-origin child can optionally upgrade only its NM data routing through the top isolated broker, but that optimization still terminates at background and never replaces the child's direct control bridge.
 - `MessagePort` cannot be transferred across background to content script boundary in Firefox (tested, does not work).
 - Codepage 1252 issues in WiX/dotnet, Apple notarization requiring a paid developer account, etc. are real, external constraints.
 

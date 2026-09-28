@@ -39,19 +39,34 @@ The Native Messaging routes are deployment alternatives to the same daemon imple
 
 Worker WS and WT connections reach that same daemon in either profile, as does HID access. `browser.runtime.connectNative()` establishes a persistent Native Messaging Port. Subsequent `postMessage()` calls reuse that Port and do not start another host process.
 
+Every browser document always owns its own direct page control MessagePort and exact `webhid-control` runtime Port. Same-origin top-broker fanout, described below, is an optional NM data-plane upgrade only; it never replaces that direct control bridge.
+
 The `dataPlane` setting selects report transport: `wt` is preferred when the handshake offers a WT endpoint, `ws` is the alternate worker network path, and `nm` is the compatibility path. A selected `wt` mode uses worker WT when available and uses worker WS when the handshake has no WT endpoint. Worker setup or transport failure can move the open session to NM. Normal page control requests use the persistent bridge control Port and then either terminate in addon state or continue over the persistent Native Messaging Port when the handler is daemon-backed. Extension-page control uses the one-shot internal paths described below.
 
 ## Browser communication surfaces
 
 ### Persistent bridge Ports
 
-The normal bridge to background path is Port-based:
+The normal direct bridge-to-background path is Port-based and exists for every document:
 
-- On load, `bridge.js` creates `browser.runtime.connect({name: 'webhid-control'})`. It queues ordinary bridge control requests and completes one pending request from each Port response.
-- When an open device uses NM, the bridge creates or reuses `browser.runtime.connect({name: 'webhid-data:<deviceId>'})`. `sendReport`, `sendFeatureReport`, and `receiveFeatureReport` go through that per-device Port.
-- Background receives both through `runtime.onConnect`, registers them with `registerContentPort`, and dispatches their requests through the same handlers as other callers. A response carries the request id back on the originating Port.
+- On load, `bridge.js` creates `browser.runtime.connect({name: 'webhid-control'})`. It queues ordinary bridge control requests and completes one pending request from each Port response. Background registers the Port as the exact browser document endpoint using browser-provided tab/frame/document/origin metadata.
+- When an unbrokered open device uses NM, that same bridge creates or reuses `browser.runtime.connect({name: 'webhid-data:<deviceId>'})`. `sendReport`, `sendFeatureReport`, and `receiveFeatureReport` use that per-device data Port.
+- An eligible same-origin child may later upgrade only its NM data routing to a private top broker. Its direct page bridge and `webhid-control` Port remain alive and continue to own control requests, origin/permission authority and Session lifetime.
+- Background receives control and data runtime Ports through `runtime.onConnect`, registers them with `registerContentPort`, and dispatches their requests through the same handler set. Responses return on the originating Port.
 
-This replaces the old normal `bridge → runtime.sendMessage → background → sendResponse → bridge` model. `runtime.sendMessage` remains valid for one-shot cold or internal traffic, including the isolated and extension picker flows, the devices and popup pages, the background's internal event notification, and extension resource fetching. It is not the normal bridge control or NM report path.
+This replaces the old normal `bridge -> runtime.sendMessage -> background -> sendResponse -> bridge` model. `runtime.sendMessage` remains valid for one-shot cold or internal traffic, including picker flows, extension pages, internal device-event notification and extension resource fetching. It is not the normal direct bridge control or NM report path.
+
+### Optional same-origin NM broker upgrade
+
+The fanout path is an optimization layered on top of the direct bridge, not an alternate control architecture.
+
+1. A same-origin non-top child first establishes its ordinary direct `webhid-control` endpoint. The child bridge generates a per-document stack OTP and sends `fanoutChildOffer` through that exact control Port.
+2. Background resolves the offer from the real child endpoint, verifies the live top endpoint and same origin, generates fresh `authOtp`/`ackOtp`, then sends `fanoutPairOffer` to the child and `fanoutBrokerOffer` to the top. Background retains no fanout context.
+3. Top isolated creates a private broker MessageChannel. Its candidate is relayed top MAIN -> child MAIN -> child isolated. The child MAIN `navigator.hid` setter accepts that one-shot assignment only when the exact generated `webhidBroker_<token>` caller frame matches the child's stack OTP; unrelated page assignments are yielded back to normal page semantics.
+4. The isolated endpoints mutually authenticate the candidate with `fanoutAuthA(authOtp)` and `fanoutAuthB(ackOtp)`. Stale or timed-out candidates are closed.
+5. On a brokered NM attach, the child bridge creates an attachment MessageChannel, transfers one endpoint to top over the private broker and the other endpoint to child MAIN. Steady-state child report traffic then flows directly between child MAIN and the top bridge over that attachment. Top owns/reuses the shared `webhid-data:<deviceId>` runtime Port.
+
+If pairing is not ready before an NM open, the child can still use its ordinary local NM data Port. Once a plane has actually been broker-attached, losing that broker/attachment marks that plane unavailable rather than silently opening a replacement child-local Port. Fanout contexts remain top-bridge-local; the real direct child endpoint continues to own browser/daemon authority and cleanup.
 
 ### Direct page to worker data path
 
@@ -68,10 +83,10 @@ The bridge participates in worker spawn, port setup, lifecycle, fallback, and da
 | Component                                                  | Responsibility                                                                                                                                                                                                                                             |
 | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `content/main/index.js`                                    | MAIN-world WebHID polyfill. Uses the control MessagePort for general requests and a per-device data MessagePort for reports. Transfers report payload buffers where possible. Receives worker input batches directly and dispatches `HIDInputReportEvent`. |
-| `content/isolated/bridge.js`                               | Owns persistent `webhid-control` and per-device `webhid-data:<deviceId>` runtime Ports, data-plane setup, worker lifecycle, settings propagation, consent enforcement, and NM fallback.                                                                    |
+| `content/isolated/bridge.js`                               | Owns the always-direct `webhid-control` endpoint, data-plane setup, worker lifecycle, settings/consent state and local NM fallback. A top bridge may additionally own private fanout contexts, child attachments and shared NM runtime data Ports. |
 | `content/isolated/worker/index.js`                         | Per-device production WS or WT worker. Owns the persistent network transport and communicates directly with the page through the transferred data MessagePort.                                                                                             |
 | `background/messages.js` and `background/content-ports.js` | Registers `runtime.onConnect` Ports with `registerContentPort`, routes their requests through the handler set, and replies on the same Port. It also retains the one-shot `runtime.onMessage` handler for legitimate extension and internal callers.       |
-| `background/nm.js`                                         | Maintains one reconnecting `connectNative` Port, routes daemon-backed requests, decodes packed NM input, delivers first through matching `webhid-data:<deviceId>` Ports, then uses `tabs.sendMessage` for targets not reached through those Ports.         |
+| `background/nm.js`                                         | Maintains one reconnecting `connectNative` Port, routes daemon-backed requests, decodes packed NM input, delivers first through matching `webhid-data:<deviceId>` Ports, then falls back only to exact Session-owner `webhid-control` Ports when no matching data Port exists. |
 | `webhid-native-messaging`                                  | Thin stdio to daemon socket or pipe forwarder. Used only in the persistent-daemon deployment.                                                                                                                                                              |
 | `webhid-daemon`                                            | Single daemon implementation. Owns logical sessions and physical HID entries, Native Messaging client connections, WS/WT servers, reader, persistent per-device I/O worker, report blocking, and transport authority.                                      |
 
@@ -125,20 +140,33 @@ Input reports are rate-gated into batches. A sparse report flushes immediately, 
 
 ### Native Messaging
 
-NM report operations use persistent interaction surfaces:
+The baseline direct NM report path is:
 
 ```text
 Page data MessagePort
-→ Bridge
-→ persistent webhid-data:<deviceId> runtime Port
-→ Background
-→ persistent Native Messaging Port
-→ daemon
-→ persistent per-device IoCommand queue
-→ persistent HID handle
+-> direct Bridge
+-> local webhid-data:<deviceId> runtime Port
+-> Background
+-> persistent Native Messaging Port
+-> daemon
+-> persistent per-device IoCommand queue
+-> persistent HID handle
 ```
 
-`sendReport` and `sendFeatureReport` use packed binary TLVs encoded in the single JSON field `{"d":"<base64>"}`. `receiveFeatureReport` uses the NM JSON action. All three receive their acknowledgement or feature data on the same per-device runtime Port and then the bridge replies to the page data MessagePort.
+`sendReport` and `sendFeatureReport` use packed binary TLVs encoded in the single JSON field `{"d":"<base64>"}`. `receiveFeatureReport` uses the NM JSON action. All three receive acknowledgement or feature data on the same per-device runtime Port and then the direct bridge replies to the page data MessagePort.
+
+For an optionally broker-attached same-origin child, control still goes through its direct bridge, but steady-state NM report data instead uses:
+
+```text
+Child page attachment MessagePort
+-> top Bridge
+-> shared webhid-data:<deviceId> runtime Port
+-> Background
+-> persistent Native Messaging Port
+-> daemon
+```
+
+The private child<->top broker Port carries only pairing, `nmAttach`, `nmDetach` and teardown. It is not the per-report hot path.
 
 The packed formats use little-endian integers:
 
@@ -154,15 +182,17 @@ The primary NM input path is client-bound and Port-first:
 
 ```text
 HID reader
-→ active client-bound nm_hot sink
-→ Native Messaging
-→ Background
-→ matching webhid-data:<deviceId> runtime Port
-→ Bridge
-→ Page data MessagePort
+-> active client-bound nm_hot sink
+-> Native Messaging
+-> Background
+-> matching webhid-data:<deviceId> runtime Port
+-> owning direct bridge or top broker
+-> page data/attachment MessagePort
 ```
 
-The reader sends a packed input report to each active, valid NM hot binding. The generic broadcast channel is used for non-NM sessions and lifecycle events, not as the primary NM report path. Background first calls `postToContentPorts` for authorized target tabs and the matching data-Port name. It calls `tabs.sendMessage` only for target tabs not reached through a persistent data Port. After that one-shot delivery, bridge uses the page data port when present, otherwise its normal page event dispatch.
+The reader sends a packed input report to each active, valid NM hot binding. Background decodes it and first posts to the matching `webhid-data:<deviceId>` runtime Port. If such a data Port exists, that delivery is authoritative and background does not send a second copy. A top-owned shared Port can then fan the report locally to matching same-origin child attachments.
+
+Only when **no matching data runtime Port exists** does background fall back to the exact `webhid-control` Ports that own live Sessions for that device. NM input reports do not use a tab-wide `tabs.sendMessage` fallback. The generic broadcast channel and tab messaging remain for appropriate lifecycle/device/global events, not the primary NM report path.
 
 ## Daemon sessions and physical entries
 
@@ -176,12 +206,14 @@ OpenReservation → physical HID open → publish Entry → register Session →
 
 Concurrent or later opens find the published Entry and only register another logical Session. They do not necessarily call hidapi open again or create another reader or I/O worker.
 
-Closing one Session invalidates that session's NM or transport authority and removes its auth mapping. The Entry is removed and its reader, I/O worker, and HID handle are stopped only when its last active Session ends, a device failure force-closes the lifetime, or equivalent lifetime teardown occurs. The background's ownership cleanup is tab-scoped: tab removal purges sessions, but the current implementation has no frame navigation hook, so navigating an open frame does not itself close the daemon Session.
+Closing one Session invalidates that session's NM or transport authority and removes its auth mapping. The Entry is removed and its reader, I/O worker, and HID handle are stopped only when its last active Session ends, a device failure force-closes the lifetime, or equivalent lifetime teardown occurs. Browser ownership is exact-document scoped: each direct `webhid-control` Port is registered as the real frame/document endpoint, and Port disconnect or replacement retires that endpoint and purges its frame generation's Sessions. Tab removal is the broader cleanup path. Optional fanout contexts are top-bridge-local and do not replace the direct endpoint lifetime.
 
 ### Authority model
 
 Documentation intentionally describes the model rather than mirroring a Rust struct layout:
 
+- The real direct `webhid-control` endpoint is the browser-authenticated document owner. Requests are attributed to that Port, not to page-provided frame/channel identity.
+- Persistent grants and per-site settings use a browser-derived `persistentOrigin`: normal documents use their origin; safely derivable opaque documents are partitioned as `opaque|<top-origin>|<source-origin>`. Missing persistence authority fails closed.
 - A Session owns a device id, IPC client ownership, current mode, cancellation authority, and separate WS and WT generations.
 - `ws_auth_hashes` maps **`ws_auth_hash → session_token`**. An auth hash dies with its logical Session.
 - A WS or WT connection receives a generation-scoped `TransportGrant` containing a revocable `TransportCapability` and cancellation receiver.
@@ -217,7 +249,7 @@ Native Messaging host authorization and the OS process boundary protect the dire
 
 ### Device identity and reconnect
 
-Device ids are FNV-1a 32-bit hashes of the platform device path. Linux uses the resolved sysfs path, Windows uses the device interface path, and macOS uses the IOService path. The value is carried as an unsigned JSON number and as a four-byte little-endian value in packed TLVs.
+Device ids are FNV-1a 32-bit hashes of a per-logical-interface identity string. Windows uses the device interface path and macOS uses the IOService path. Linux normally uses the canonical logical HID-interface sysfs path. UHID is special because recreated virtual devices share a parent and receive unstable instance suffixes: the Linux identity keeps the stable `bus:vid:pid` base and, when available, mixes in the raw report descriptor so sibling virtual interfaces with different descriptors remain distinct while a recreated fixture keeps a stable id. Indistinguishable siblings can still collapse to one observable identity, and genuine 32-bit hash collisions fail closed. The value is carried as an unsigned JSON number and as a four-byte little-endian value in packed TLVs.
 
 The background reconnects its Native Messaging Port with backoff. A forwarder separately retries its daemon socket or named-pipe connection. WS and WT workers reconnect their persistent transport after ready-state failures, while authentication failures ask bridge to attach a live Session token. A Native Messaging disconnect rejects pending requests, broadcasts `globalReset`, and closes the disconnected client's logical Sessions without affecting Sessions owned by another client.
 
@@ -233,11 +265,13 @@ The persistent bridge Ports do not replace every one-shot message. Current inten
 
 ### Valid one-shot tab messages
 
-Current intentional `tabs.sendMessage` uses are global reset and device/lifecycle event fanout, grant-change and revocation notifications, picker-result delivery, popup requests to a tab bridge (`getFrameOrigins`, `getDataPlaneStatus`, `getOpenDeviceIds`), and NM input delivery for authorized tabs not reached through the matching persistent data Port. The one-shot tab input fallback can reach the bridge's page event path when no page data port is available.
+Product-code `tabs.sendMessage` remains a one-shot fallback for global reset and generic device/lifecycle event fanout. Popup configuration requests such as `getFrameOrigins` now go directly to background with `runtime.sendMessage`; tests may still address a tab bridge directly for assertions. NM input reports are different from both: they use a matching `webhid-data:<deviceId>` Port first and fall back to exact Session-owner control Ports only when no matching data Port exists.
 
 ### Settings
 
 User-facing settings include `dataPlane`, `workerSpawnMode`, `daemonAsNmHost`, `hidePageAction`, `logLevel`, `devicePickerMode`, `workerPolyfillEnabled`, and `allowActivationlessRequestDevice`. `daemonAsNmHost` defaults to `true` on macOS and Windows when no stored value exists, and `false` elsewhere. `daemonAsNmHost` and `hidePageAction` are global-only; the other user-facing settings support site overrides.
+
+Per-site storage is keyed by the browser-derived persistence target rather than blindly trusting a page URL. Normal frames use their origin; opaque frames can receive a canonical `opaque|<top-origin>|<source-origin>` partition when that identity is derivable. The popup exposes distinct frame targets when an active tab contains more than one persistent scope.
 
 `allowActivationlessRequestDevice` skips the user-activation check for `requestDevice()`. It is a spec deviation, but the chooser still requires explicit user selection and Permissions Policy still applies.
 
@@ -307,7 +341,7 @@ sequenceDiagram
     W-->>P: transferred data MessagePort result
 ```
 
-### `sendReport()` through NM
+### `sendReport()` through direct/unbrokered NM
 
 ```mermaid
 sequenceDiagram
@@ -333,6 +367,34 @@ sequenceDiagram
     B-->>P: data MessagePort result
 ```
 
+### `sendReport()` through brokered same-origin child NM
+
+```mermaid
+sequenceDiagram
+    participant P as Child page
+    participant T as Top bridge broker
+    participant G as Background
+    participant N as Native Messaging Port
+    participant D as Daemon
+    participant I as Persistent I/O worker
+    participant H as HID
+
+    P->>T: attachment MessagePort request
+    T->>G: shared webhid-data:<deviceId> runtime Port
+    G->>N: persistent Native Messaging Port
+    N->>D: direct stdio, or forwarder then socket/pipe
+    D->>I: IoCommand with nm_hot authority and epoch
+    I->>H: HID operation
+    H-->>I: operation completion
+    I-->>D: oneshot completion reply
+    D-->>N: acknowledgement
+    N-->>G: acknowledgement
+    G-->>T: same shared data Port
+    T-->>P: same attachment MessagePort
+```
+
+The child's direct bridge and `webhid-control` Port still own control requests and Session lifetime; they are not inserted into this steady-state brokered report route.
+
 ### NM input report
 
 ```mermaid
@@ -340,17 +402,17 @@ sequenceDiagram
     participant R as HID reader
     participant D as Daemon
     participant G as Background
-    participant B as Bridge
+    participant X as Matching data owner
     participant P as Page
 
     R->>D: enqueue packed report to active nm_hot sink
     D->>G: client writer, persistent Native Messaging Port
-    G->>B: matching webhid-data:<deviceId> Port
-    B->>P: page data MessagePort
-    Note over G,B: tabs.sendMessage only reaches remaining target tabs without that Port
+    G->>X: matching webhid-data:<deviceId> Port
+    X->>P: direct page data Port or broker attachment
+    Note over G,X: if no matching data Port exists, use exact Session-owner webhid-control Port instead
 ```
 
-For the tab fallback, `G` sends the one-shot tab message only to authorized targets not reached through the matching runtime Port. The bridge then uses a page data port when one is present, or its ordinary page event dispatch otherwise.
+For a brokered same-origin child, `X` is the top bridge: it receives one report on its shared runtime data Port and fans the report to the matching child attachment. The exact-owner control-Port fallback is used only when no matching data runtime Port exists; NM input reports do not use a `tabs.sendMessage` fallback.
 
 ### First and additional open
 

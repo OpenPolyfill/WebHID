@@ -8,7 +8,7 @@ Only the latest released version of FF-WebHID (the Firefox WebHID addon and daem
 
 If you discover a security vulnerability in FF-WebHID (addon, daemon, or the native messaging bridge), please **do not open a public issue**. Publicly disclosing a vulnerability before a fix is available could put existing users at risk.
 
-Instead, please report it privately using [GitHub Security Advisories](https://github.com/K4zoku/FF-WebHID/security/advisories/new).
+Instead, please report it privately using [GitHub Security Advisories](https://github.com/OpenPolyfill/WebHID/security/advisories/new).
 
 When reporting, please include as much of the following as you can:
 
@@ -21,7 +21,8 @@ When reporting, please include as much of the following as you can:
 
 - The Firefox addon (background/worker/page scripts, daemon-side HID (Human Interface Device) report descriptor parser via the hidreport crate)
 - The Rust daemon and native messaging host
-- The WebSocket data plane and its authentication mechanism
+- Exact-frame permission/session isolation, Native Messaging authority routing, and the optional same-origin NM broker handoff
+- The WebSocket and WebTransport data planes and their per-session transport authentication
 - The HID device blocklist (FIDO (Fast IDentity Online)/U2F security key protections; keyboard/mouse access is gated by OS permissions)
 
 ## Response
