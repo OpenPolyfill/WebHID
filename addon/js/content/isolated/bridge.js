@@ -28,7 +28,7 @@
   })()
   let stackOtp = fanoutCandidate ? crypto.randomUUID() : null
   const bootstrapValue = fanoutCandidate
-    ? { directPort: pageChannel.port2, S: stackOtp, stackOtp }
+    ? { directPort: pageChannel.port2, S: stackOtp }
     : pageChannel.port2
   if (isChromium) window.postMessage(bootstrapValue, '*', [pageChannel.port2])
   else {

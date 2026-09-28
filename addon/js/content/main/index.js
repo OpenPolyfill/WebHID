@@ -886,11 +886,7 @@
             try {
               reflect.deleteProperty(globalThis, 'webhid')
               brokerStackOtp =
-                candidate && typeof candidate.S === 'string'
-                  ? candidate.S
-                  : candidate && typeof candidate.stackOtp === 'string'
-                    ? candidate.stackOtp
-                    : null
+                candidate && typeof candidate.S === 'string' ? candidate.S : null
               bridgePort = directPort
               setupBridgePort()
               if (fanoutCandidate || brokerStackOtp) armBrokerCandidateSetter()
@@ -2391,8 +2387,14 @@
               const stack = getOriginalStack
                 ? callNative(getOriginalStack, new NativeError())
                 : ''
-              const expected = 'webhidBroker_' + stackToken(brokerStackOtp || '')
-              if (!brokerStackOtp || typeof stack !== 'string' || !stringOps.includes(stack, expected)) {
+              if (!brokerStackOtp || typeof stack !== 'string') {
+                yieldNavigatorHid(value)
+                return
+              }
+              const expected = 'webhidBroker_' + stackToken(brokerStackOtp)
+              const frames = stringOps.split(stack, '\n')
+              const callerFrame = arrayOps.at(frames, 2) || ''
+              if (!stringOps.includes(callerFrame, expected)) {
                 yieldNavigatorHid(value)
                 return
               }
