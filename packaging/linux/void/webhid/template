@@ -11,8 +11,8 @@ depends=""
 short_desc="WebHID implementation for Firefox via native-messaging bridge and hidraw daemon"
 maintainer="K4zoku <k4zoku@pm.me>"
 license="MIT"
-homepage="https://github.com/K4zoku/FF-WebHID"
-distfiles="https://github.com/K4zoku/FF-WebHID/archive/refs/tags/v${version}.tar.gz"
+homepage="https://github.com/OpenPolyfill/WebHID"
+distfiles="https://github.com/OpenPolyfill/WebHID/archive/refs/tags/v${version}.tar.gz"
 checksum=650994b70f45295caa21e0e1ad91a9510b0d05d63844477e7300c8bbb38b8efb
 
 do_install() {

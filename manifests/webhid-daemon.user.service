@@ -1,6 +1,6 @@
 [Unit]
 Description=WebHID Daemon (User)
-Documentation=https://github.com/K4zoku/FF-WebHID
+Documentation=https://github.com/OpenPolyfill/WebHID
 
 [Service]
 Type=simple

@@ -111,7 +111,7 @@ install-udev-rule:
 
 install-e2e-udev-rule: install-webhid-group
 	@echo "==> Installing e2e udev rule to $(UDEV_DIR)/"
-	install -Dm644 "$(MANIFEST_DIR)/99-webhid-e2e.rules" "$(DESTDIR)$(UDEV_DIR)/99-webhid-e2e.rules"
+	install -Dm644 "$(MANIFEST_DIR)/72-webhid-e2e.rules" "$(DESTDIR)$(UDEV_DIR)/72-webhid-e2e.rules"
 	modprobe uhid 2>/dev/null || true
 	udevadm control --reload-rules && udevadm trigger
 	@echo "Done. Users in the '$(WEBHID_GROUP)' group can now run tests/e2e without root."

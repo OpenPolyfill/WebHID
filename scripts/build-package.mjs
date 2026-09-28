@@ -115,7 +115,7 @@ function buildDeb(ver, arch) {
       `Depends: libudev1`,
       `Section: utils`,
       `Priority: optional`,
-      `Homepage: https://github.com/K4zoku/FF-WebHID`,
+      `Homepage: https://github.com/OpenPolyfill/WebHID`,
       ''
     ].join('\n')
   )
@@ -189,7 +189,7 @@ function writeRpmSpec(rpmRoot, ver, binDir) {
       `Release:        1`,
       `Summary:        WebHID implementation for Firefox via native-messaging bridge and hidraw daemon`,
       `License:        MIT`,
-      `URL:            https://github.com/K4zoku/FF-WebHID`,
+      `URL:            https://github.com/OpenPolyfill/WebHID`,
       `Requires:       systemd-libs`,
       `Requires(pre):  shadow-utils`,
       `Requires(post): systemd`,

@@ -3,7 +3,7 @@ const { createHash } = require('node:crypto')
 const { readFileSync } = require('node:fs')
 const path = require('node:path')
 
-const REPO = 'K4zoku/FF-WebHID'
+const REPO = 'OpenPolyfill/WebHID'
 const AMO_ADDON_ID = 'webhid%40k4zoku.dev'
 
 const tarballCache = new Map()

@@ -21,7 +21,7 @@ pkgname=webhid
 pkgver=3.2.0
 pkgrel=0
 pkgdesc="WebHID implementation for Firefox via native-messaging bridge and hidraw daemon"
-url="https://github.com/K4zoku/FF-WebHID"
+url="https://github.com/OpenPolyfill/WebHID"
 arch="x86_64 aarch64"
 license="MIT"
 depends="eudev-libs"
@@ -31,7 +31,7 @@ options="!tracedeps"
 pkggroups="webhid"
 
 source="
-	https://github.com/K4zoku/FF-WebHID/archive/refs/tags/v${pkgver}.tar.gz
+	https://github.com/OpenPolyfill/WebHID/archive/refs/tags/v${pkgver}.tar.gz
 	${pkgname}.pre-install
 "
 

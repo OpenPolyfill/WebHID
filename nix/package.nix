@@ -7,7 +7,7 @@ rustPlatform.buildRustPackage (finalAttrs: {
   # Release tarball pinned by its SHA-256; refresh with
   # `npm run refresh:pins` after each release.
   src = fetchurl {
-    url = "https://github.com/K4zoku/FF-WebHID/archive/refs/tags/v${finalAttrs.version}.tar.gz";
+    url = "https://github.com/OpenPolyfill/WebHID/archive/refs/tags/v${finalAttrs.version}.tar.gz";
     hash = "sha256-ZQmUtw9FKVyqIeDhrZGpUQsNBdY4REd+cwDIu7OLjvs=";
   };
 
@@ -58,7 +58,7 @@ rustPlatform.buildRustPackage (finalAttrs: {
 
   meta = {
     description = "WebHID implementation for Firefox via native-messaging bridge and hidraw daemon";
-    homepage = "https://github.com/K4zoku/FF-WebHID";
+    homepage = "https://github.com/OpenPolyfill/WebHID";
     license = lib.licenses.mit;
     platforms = [ "x86_64-linux" "aarch64-linux" ];
   };
