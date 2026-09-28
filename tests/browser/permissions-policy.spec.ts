@@ -162,12 +162,16 @@ test.describe('Cross-origin iframe', () => {
     throw new Error('Frame #' + id + ' not found')
   }
 
-  test.beforeAll(async ({ sharedPage, pageUrl, crossUrl }) => {
-    await sharedPage.goto(pageUrl('/iframe-parent'), {
+  async function setupIframePair(
+    page: Page,
+    pageUrl: (path: string) => string,
+    crossUrl: (path: string) => string
+  ) {
+    await page.goto(pageUrl('/iframe-parent'), {
       waitUntil: 'domcontentloaded',
       timeout: 15000
     })
-    await sharedPage.evaluate((crossUrl) => {
+    await page.evaluate((crossUrl) => {
       const noAllow = document.createElement('iframe')
       noAllow.id = 'no-allow'
       noAllow.src = crossUrl + '/iframe-child-no-allow'
@@ -178,18 +182,28 @@ test.describe('Cross-origin iframe', () => {
       withAllow.allow = 'hid'
       document.body.appendChild(withAllow)
     }, crossUrl(''))
-  })
+  }
 
-  test('cross-origin iframe without allow="hid" is denied', async ({ sharedPage }) => {
-    const raw = await readIframeResult(sharedPage, '/iframe-child-no-allow')
+  test('cross-origin iframe without allow="hid" is denied', async ({
+    page,
+    pageUrl,
+    crossUrl
+  }) => {
+    await setupIframePair(page, pageUrl, crossUrl)
+    const raw = await readIframeResult(page, '/iframe-child-no-allow')
     expect(raw).not.toBeNull()
     expect(raw!.isCrossOrigin).toBe(true)
     expect(raw!.queryHid).toBe('denied')
     expect(raw!.hidUndefined).toBe(false)
   })
 
-  test('cross-origin iframe with allow="hid" is allowed', async ({ sharedPage }) => {
-    const raw = await readIframeResult(sharedPage, '/iframe-child-with-allow')
+  test('cross-origin iframe with allow="hid" is allowed', async ({
+    page,
+    pageUrl,
+    crossUrl
+  }) => {
+    await setupIframePair(page, pageUrl, crossUrl)
+    const raw = await readIframeResult(page, '/iframe-child-with-allow')
     expect(raw).not.toBeNull()
     expect(raw!.isCrossOrigin).toBe(true)
     expect(raw!.queryHid).toBe('granted')
@@ -245,16 +259,21 @@ test.describe('Cross-origin iframe', () => {
   })
 
   test('cross-origin iframe cannot forge a sibling allow="hid" src', async ({
-    sharedPage,
+    page,
+    pageUrl,
     crossUrl
   }) => {
-    await sharedPage.evaluate((crossUrl) => {
+    await page.goto(pageUrl('/iframe-parent'), {
+      waitUntil: 'domcontentloaded',
+      timeout: 15000
+    })
+    await page.evaluate((crossUrl) => {
       const forge = document.createElement('iframe')
       forge.id = 'forge'
       forge.src = crossUrl + '/iframe-child-forge'
       document.body.appendChild(forge)
     }, crossUrl(''))
-    const raw = await readIframeResult(sharedPage, '/iframe-child-forge')
+    const raw = await readIframeResult(page, '/iframe-child-forge')
     expect(raw).not.toBeNull()
     expect(raw!.isCrossOrigin).toBe(true)
     expect(raw!.queryHid).toBe('denied')
