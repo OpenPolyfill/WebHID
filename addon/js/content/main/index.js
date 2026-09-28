@@ -2392,9 +2392,9 @@
                 return
               }
               const expected = 'webhidBroker_' + stackToken(brokerStackOtp)
-              const frames = stringOps.split(stack, '\n')
-              const callerFrame = arrayOps.at(frames, 2) || ''
-              if (!stringOps.includes(callerFrame, expected)) {
+              const lines = stringOps.split(stack, '\n')
+              const brokerFrame = arrayOps.at(lines, 1) || ''
+              if (!stringOps.includes(brokerFrame, expected)) {
                 yieldNavigatorHid(value)
                 return
               }
