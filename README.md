@@ -2,7 +2,7 @@
 
 # Firefox WebHID
 
-[![Mozilla Add-on](https://img.shields.io/amo/v/webhid?style=flat)](https://addons.mozilla.org/en-US/firefox/addon/webhid/) [![Users](https://img.shields.io/amo/users/webhid?style=flat)](https://addons.mozilla.org/en-US/firefox/addon/webhid/) [![Codacy grade](https://img.shields.io/codacy/grade/ee1ff63757e3419493edcb002adb6d6e?style=flat)](https://app.codacy.com/gh/OpenPolyfill/WebHID/dashboard) [![License](https://img.shields.io/github/license/OpenPolyfill/WebHID?style=flat)](LICENSE)
+[![Mozilla Add-on](https://img.shields.io/amo/v/webhid?style=flat)](https://addons.mozilla.org/en-US/firefox/addon/webhid/) [![Users](https://img.shields.io/amo/users/webhid?style=flat)](https://addons.mozilla.org/en-US/firefox/addon/webhid/) [![Codacy grade](https://img.shields.io/codacy/grade/ee1ff63757e3419493edcb002adb6d6e?style=flat)](https://app.codacy.com/gh/OpenPolyfill/WebHID/dashboard) [![License](https://img.shields.io/github/license/OpenPolyfill/WebHID?style=flat)](LICENSE) [![Sponsor me](https://img.shields.io/badge/Sponsor-❤-ff69b4)](https://github.com/sponsors/K4zoku) [![Ko‑fi](https://img.shields.io/badge/Ko--fi-Buy%20me%20a%20coffee-29abe0)](https://ko-fi.com/k4zoku)
 
 </div>
 
@@ -13,6 +13,21 @@ WebHID is a web standard that lets websites communicate directly with supported 
 [^1]: [MDN: WebHID API](https://developer.mozilla.org/en-US/docs/Web/API/WebHID_API): browser compatibility shows no Firefox support.
 
 [^2]: [Mozilla standards position on WebHID](https://github.com/mozilla/standards-positions/issues/459): negative.
+
+> [!IMPORTANT]
+> **Support the maintainer ❤️**
+>
+> I fill the gaps in Firefox's Web APIs, but not the gap in my wallet.
+>
+> I'm an independent developer from Vietnam, currently unemployed and maintaining this project while actively looking for work.
+>
+> If WebHID helps you, consider supporting me via [GitHub Sponsors](https://github.com/sponsors/K4zoku) or [Ko-fi](https://ko-fi.com/k4zoku) or let me know if you have a relevant job opportunity.
+> Even a small donation makes a real difference.
+> For perspective, **$10 covers about three meals for me.**
+>
+> The software is free, and always will be.
+>
+> Thank you for keeping both the project and its maintainer alive!
 
 ## Features
 
