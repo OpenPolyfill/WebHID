@@ -38,8 +38,26 @@ jobs:
         with:
           packages: libudev-dev
           version: v1
-      - name: Install kernel modules
-        run: sudo apt-get update && sudo apt-get install --reinstall -y linux-modules-$(uname -r)
+      - name: Install UHID module
+        run: |
+          sudo apt-get update
+
+          kernel="$(uname -r)"
+          extra="linux-modules-extra-$kernel"
+          base="linux-modules-$kernel"
+
+          if apt-cache show "$extra" >/dev/null 2>&1; then
+            sudo apt-get install -y "$extra"
+          elif apt-cache show "$base" >/dev/null 2>&1; then
+            sudo apt-get install --reinstall -y "$base"
+          else
+            echo "::error::No matching kernel modules package for $kernel"
+            exit 1
+          fi
+
+          sudo depmod -a "$kernel"
+          sudo modprobe uhid
+          test -c /dev/uhid
       - name: Cache npm
         uses: actions/cache@v6
         with:
@@ -104,8 +122,26 @@ jobs:
             libxrandr2
             libxrender1
           version: v1
-      - name: Install kernel modules
-        run: sudo apt-get update && sudo apt-get install --reinstall -y linux-modules-$(uname -r)
+      - name: Install UHID module
+        run: |
+          sudo apt-get update
+
+          kernel="$(uname -r)"
+          extra="linux-modules-extra-$kernel"
+          base="linux-modules-$kernel"
+
+          if apt-cache show "$extra" >/dev/null 2>&1; then
+            sudo apt-get install -y "$extra"
+          elif apt-cache show "$base" >/dev/null 2>&1; then
+            sudo apt-get install --reinstall -y "$base"
+          else
+            echo "::error::No matching kernel modules package for $kernel"
+            exit 1
+          fi
+
+          sudo depmod -a "$kernel"
+          sudo modprobe uhid
+          test -c /dev/uhid
       - name: Cache npm
         uses: actions/cache@v6
         with:
@@ -184,8 +220,26 @@ jobs:
             libxrandr2
             libxrender1
           version: v1
-      - name: Install kernel modules
-        run: sudo apt-get update && sudo apt-get install --reinstall -y linux-modules-$(uname -r)
+      - name: Install UHID module
+        run: |
+          sudo apt-get update
+
+          kernel="$(uname -r)"
+          extra="linux-modules-extra-$kernel"
+          base="linux-modules-$kernel"
+
+          if apt-cache show "$extra" >/dev/null 2>&1; then
+            sudo apt-get install -y "$extra"
+          elif apt-cache show "$base" >/dev/null 2>&1; then
+            sudo apt-get install --reinstall -y "$base"
+          else
+            echo "::error::No matching kernel modules package for $kernel"
+            exit 1
+          fi
+
+          sudo depmod -a "$kernel"
+          sudo modprobe uhid
+          test -c /dev/uhid
       - name: Cache npm
         uses: actions/cache@v6
         with:
