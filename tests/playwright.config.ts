@@ -20,13 +20,13 @@ export default defineConfig({
   },
   projects: [
     {
-      name: 'firefox-browser',
-      testDir: './browser',
+      name: 'firefox-conformance-browser',
+      testDir: './conformance/browser',
       use: { browserName: 'firefox' }
     },
     {
-      name: 'firefox-e2e-daemon',
-      testDir: './e2e',
+      name: 'firefox-conformance-e2e',
+      testDir: './conformance/e2e',
       workers: 1,
       use: {
         browserName: 'firefox',
@@ -34,6 +34,43 @@ export default defineConfig({
           extensionPath: resolve(__dirname, '..', 'addon')
         },
         daemonMode: 'daemon-nm'
+      } as PlaywrightUseOptions & {
+        firefoxHarnessConfig: { extensionPath: string }
+        daemonMode: string
+      }
+    },
+    {
+      name: 'firefox-regression-browser',
+      testDir: './regression/browser',
+      use: { browserName: 'firefox' }
+    },
+    {
+      name: 'firefox-regression',
+      testDir: './regression',
+      testIgnore: ['**/*.browser.spec.ts'],
+      workers: 1,
+      use: {
+        browserName: 'firefox',
+        firefoxHarnessConfig: {
+          extensionPath: resolve(__dirname, '..', 'addon')
+        },
+        daemonMode: 'daemon-nm'
+      } as PlaywrightUseOptions & {
+        firefoxHarnessConfig: { extensionPath: string }
+        daemonMode: string
+      }
+    },
+    {
+      name: 'firefox-regression-forwarder',
+      testDir: './regression',
+      testMatch: ['**/nm-runtime-port.spec.ts', '**/transport-revoke.spec.ts'],
+      workers: 1,
+      use: {
+        browserName: 'firefox',
+        firefoxHarnessConfig: {
+          extensionPath: resolve(__dirname, '..', 'addon')
+        },
+        daemonMode: 'forwarder'
       } as PlaywrightUseOptions & {
         firefoxHarnessConfig: { extensionPath: string }
         daemonMode: string

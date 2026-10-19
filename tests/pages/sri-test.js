@@ -1,1 +1,0 @@
-self.sriTestRan = true;

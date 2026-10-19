@@ -1,5 +1,5 @@
 use super::*;
-use crate::batching::{MSG_INPUT_BATCH, write_batch_frame};
+use crate::batching::write_batch_frame;
 use bytes::Bytes;
 
 fn create_batch_frame(reports: &[(u8, Bytes)]) -> Vec<u8> {
@@ -92,11 +92,4 @@ fn test_feature_read_resp_large_data() {
     let len = u16::from_le_bytes([buf[6], buf[7]]);
     assert_eq!(len, 0);
     assert_eq!(buf.len(), 8);
-}
-
-#[test]
-fn test_batch_frame_uses_shared_writer() {
-    let reports: Vec<(u8, Bytes)> = vec![(0x01, Bytes::from(&[0xAA][..]))];
-    let frame = create_batch_frame(&reports);
-    assert_eq!(frame[0], MSG_INPUT_BATCH);
 }

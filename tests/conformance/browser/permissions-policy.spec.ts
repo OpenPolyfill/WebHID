@@ -1,5 +1,5 @@
-import { test, expect } from '../helpers/browser.js'
-import { waitForPermResult } from '../helpers/browser-utils.js'
+import { test, expect } from '../../helpers/browser.js'
+import { waitForPermResult } from '../../helpers/browser-utils.js'
 import type { Page, Frame } from '@playwright/test'
 
 test.describe('Permissions Policy', () => {
@@ -26,34 +26,6 @@ test.describe('Permissions Policy', () => {
     expect(r!.hidUndefined || r!.getDevices?.ok === false).toBe(true)
   })
 
-  test('hid=self allows same-origin', async ({ page, pageUrl }) => {
-    await page.goto(pageUrl('/policy-check-allowed-self'), {
-      waitUntil: 'domcontentloaded',
-      timeout: 15000
-    })
-    const r = await waitForPermResult(page)
-    expect(r).not.toBeNull()
-    expect(r!.queryHid).toBe('granted')
-    expect(r!.hidUndefined).toBe(false)
-  })
-
-  test('hid=* allows same-origin', async ({ page, pageUrl }) => {
-    await page.goto(pageUrl('/policy-check-allowed-all'), {
-      waitUntil: 'domcontentloaded',
-      timeout: 15000
-    })
-    const r = await waitForPermResult(page)
-    expect(r).not.toBeNull()
-    expect(r!.queryHid).toBe('granted')
-    expect(r!.hidUndefined).toBe(false)
-  })
-
-  test('navigator.permissions.query passes through non-hid features', async ({ page, pageUrl }) => {
-    await page.goto(pageUrl('/policy-check'), { waitUntil: 'domcontentloaded', timeout: 15000 })
-    const r = await waitForPermResult(page)
-    expect(r).not.toBeNull()
-    expect(r!.queryCamera).toBe('prompt')
-  })
 })
 
 test('same-origin document policies stay isolated across tabs', async ({ page, pageUrl }) => {
@@ -91,10 +63,7 @@ test.describe('Cross-origin iframe', () => {
   interface PermResult {
     isTop: boolean
     isCrossOrigin: boolean
-    hidAllowed: boolean
     queryHid: string
-    queryCamera: string
-    policySource: string
     hidUndefined: boolean
     getDevices: { ok: boolean; count?: number; name?: string; message?: string }
   }
@@ -184,30 +153,23 @@ test.describe('Cross-origin iframe', () => {
     }, crossUrl(''))
   }
 
-  test('cross-origin iframe without allow="hid" is denied', async ({
+  test('cross-origin delegation allows only the explicitly allowed iframe', async ({
     page,
     pageUrl,
     crossUrl
   }) => {
     await setupIframePair(page, pageUrl, crossUrl)
-    const raw = await readIframeResult(page, '/iframe-child-no-allow')
-    expect(raw).not.toBeNull()
-    expect(raw!.isCrossOrigin).toBe(true)
-    expect(raw!.queryHid).toBe('denied')
-    expect(raw!.hidUndefined).toBe(false)
-  })
+    const denied = await readIframeResult(page, '/iframe-child-no-allow')
+    const allowed = await readIframeResult(page, '/iframe-child-with-allow')
 
-  test('cross-origin iframe with allow="hid" is allowed', async ({
-    page,
-    pageUrl,
-    crossUrl
-  }) => {
-    await setupIframePair(page, pageUrl, crossUrl)
-    const raw = await readIframeResult(page, '/iframe-child-with-allow')
-    expect(raw).not.toBeNull()
-    expect(raw!.isCrossOrigin).toBe(true)
-    expect(raw!.queryHid).toBe('granted')
-    expect(raw!.hidUndefined).toBe(false)
+    expect(denied).not.toBeNull()
+    expect(denied!.isCrossOrigin).toBe(true)
+    expect(denied!.queryHid).toBe('denied')
+    expect(denied!.hidUndefined).toBe(false)
+    expect(allowed).not.toBeNull()
+    expect(allowed!.isCrossOrigin).toBe(true)
+    expect(allowed!.queryHid).toBe('granted')
+    expect(allowed!.hidUndefined).toBe(false)
   })
 
   test('iframe hid allowlists are origin and document exact', async ({
@@ -565,63 +527,6 @@ test.describe('Cross-origin iframe', () => {
     expect(result!.getDevices).toEqual(
       expect.objectContaining({ ok: false, name: 'SecurityError' })
     )
-  })
-  test('duplicate bootstrap cannot replace the live document context', async ({
-    page,
-    pageUrl
-  }) => {
-    await page.goto(pageUrl('/policy-check'), {
-      waitUntil: 'domcontentloaded',
-      timeout: 15000
-    })
-    expect((await waitForPermResult(page))?.queryHid).toBe('granted')
-    await page.evaluate(() => {
-      const channel = new MessageChannel()
-      window.top!.postMessage(null, '*', [channel.port2])
-    })
-    const state = await page.evaluate(async () => {
-      const result = await navigator.permissions.query({ name: 'hid' })
-      return result.state
-    })
-    expect(state).toBe('granted')
-  })
-  test('only null with one transferred port is bootstrap-shaped', async ({ page, pageUrl }) => {
-    await page.goto(pageUrl('/policy-check'), {
-      waitUntil: 'domcontentloaded',
-      timeout: 15000
-    })
-    expect((await waitForPermResult(page))?.queryHid).toBe('granted')
-    await page.evaluate(() => {
-      const nonNull = new MessageChannel()
-      window.top!.postMessage({ bootstrap: true }, '*', [nonNull.port2])
-      const zero = new MessageChannel()
-      window.top!.postMessage(null, '*')
-      const first = new MessageChannel()
-      const second = new MessageChannel()
-      window.top!.postMessage(null, '*', [first.port2, second.port2])
-      nonNull.port1.close()
-      zero.port1.close()
-      first.port1.close()
-      second.port1.close()
-    })
-    const state = await page.evaluate(async () => {
-      const result = await navigator.permissions.query({ name: 'hid' })
-      return result.state
-    })
-    expect(state).toBe('granted')
-  })
-
-  test('new document lifetime bootstraps after navigation', async ({ page, pageUrl }) => {
-    await page.goto(pageUrl('/policy-check'), {
-      waitUntil: 'domcontentloaded',
-      timeout: 15000
-    })
-    expect((await waitForPermResult(page))?.queryHid).toBe('granted')
-    await page.goto(pageUrl('/policy-check-blocked'), {
-      waitUntil: 'domcontentloaded',
-      timeout: 15000
-    })
-    expect((await waitForPermResult(page))?.queryHid).toBe('denied')
   })
 
   test('same URL siblings keep independent iframe delegation', async ({

@@ -25,6 +25,9 @@ async function prepareFanoutPage(
     waitUntil: 'domcontentloaded'
   })
   await sharedPage.waitForFunction(() => typeof navigator.hid !== 'undefined', { timeout: 15000 })
+  await sharedPage.waitForFunction(async () => (await navigator.hid.getDevices()).length === 0, {
+    timeout: 15000
+  })
   expect(await grantDevicePermission(sharedPage, [VENDOR])).toBe(1)
 
   if (enableWorker) {
@@ -35,25 +38,6 @@ async function prepareFanoutPage(
   await sharedPage.goto(`${origin}/tests/pages/input-report-fanout.html`, {
     waitUntil: 'domcontentloaded'
   })
-}
-async function waitForPlaneCount(backgroundPage: FirefoxBgPage, count: number): Promise<void> {
-  await expect
-    .poll(
-      () =>
-        backgroundPage.evaluate(async () => {
-          const tabs = await browser.tabs.query({ active: true, currentWindow: true })
-          const tab = tabs[0]
-          if (!tab || tab.id == null) return 0
-          const status = (await browser.tabs.sendMessage(
-            tab.id,
-            { action: 'getDataPlaneStatus' },
-            { frameId: 0 }
-          )) as { planes?: unknown[] } | null
-          return status?.planes?.length || 0
-        }),
-      { timeout: 15000 }
-    )
-    .toBe(count)
 }
 
 async function runFanout(
@@ -68,7 +52,10 @@ async function runFanout(
     `settings :: ${origin} :: dataPlane`,
     `settings :: ${origin} :: workerPolyfillEnabled`
   ]
-  const previous = await backgroundPage.evaluate((keys) => browser.storage.local.get(keys), settingKeys)
+  const previous = await backgroundPage.evaluate(
+    (keys) => browser.storage.local.get(keys),
+    settingKeys
+  )
   try {
     await prepareFanoutPage(sharedPage, backgroundPage, includeWorker)
     await sharedPage.evaluate(
@@ -101,11 +88,18 @@ async function runFanout(
     )
     return await sharedPage.evaluate(() => window.tests?.results?.fanoutReports)
   } finally {
+    await sharedPage.goto(`${origin}/tests/test-page.html`, { waitUntil: 'domcontentloaded' })
+    await sharedPage.waitForFunction(() => typeof navigator.hid !== 'undefined', {
+      timeout: 15000
+    })
     await sharedPage.evaluate(async () => {
       for (const device of await navigator.hid.getDevices()) {
         if (device.opened) await device.close()
         await device.forget()
       }
+    })
+    await sharedPage.waitForFunction(async () => (await navigator.hid.getDevices()).length === 0, {
+      timeout: 15000
     })
     await backgroundPage.evaluate(
       ({ keys, values }) => {
@@ -114,12 +108,11 @@ async function runFanout(
       },
       { keys: settingKeys, values: previous }
     )
-    await sharedPage.goto(`${origin}/tests/test-page.html`, { waitUntil: 'domcontentloaded' })
   }
 }
 
 test.describe.serial('Public input report fan-out', () => {
-  test('page and iframe both open and listen for input reports', async ({
+  test('same-origin child and parent both receive the input report', async ({
     sharedPage,
     backgroundPage,
     vendorDevice
@@ -153,16 +146,21 @@ test.describe.serial('Public input report fan-out', () => {
       `settings :: ${origin} :: dataPlane`,
       `settings :: ${origin} :: workerPolyfillEnabled`
     ]
-    const previous = await backgroundPage.evaluate((keys) => browser.storage.local.get(keys), settingKeys)
+    const previous = await backgroundPage.evaluate(
+      (keys) => browser.storage.local.get(keys),
+      settingKeys
+    )
     try {
       await prepareFanoutPage(sharedPage, backgroundPage, true)
       await sharedPage.evaluate(() => {
-        window.postMessage({ type: 'startFanout', iframeCount: 0, includeWorker: true }, location.origin)
+        window.postMessage(
+          { type: 'startFanout', iframeCount: 0, includeWorker: true },
+          location.origin
+        )
       })
-      await sharedPage.waitForFunction(
-        () => window.tests?.results?.fanoutReady === true,
-        { timeout: 15000 }
-      )
+      await sharedPage.waitForFunction(() => window.tests?.results?.fanoutReady === true, {
+        timeout: 15000
+      })
       sendInput(vendorDevice, 1, PACKET)
       await sharedPage.waitForFunction(
         () => {
@@ -171,26 +169,34 @@ test.describe.serial('Public input report fan-out', () => {
         },
         { timeout: 15000 }
       )
-      await sharedPage.waitForFunction(
-        () => window.tests?.results?.workerClosed === true,
-        { timeout: 15000 }
-      )
-      sendInput(vendorDevice, 1, PACKET)
-      await sharedPage.waitForFunction(
-        () => window.tests?.results?.fanoutCounts?.page === 2,
-        { timeout: 15000 }
-      )
-      await expect(sharedPage.evaluate(() => window.tests?.results?.fanoutCounts)).resolves.toEqual({
-        page: 2,
-        worker: 1
+      await sharedPage.waitForFunction(() => window.tests?.results?.workerClosed === true, {
+        timeout: 15000
       })
+      sendInput(vendorDevice, 1, PACKET)
+      await sharedPage.waitForFunction(() => window.tests?.results?.fanoutCounts?.page === 2, {
+        timeout: 15000
+      })
+      await expect(sharedPage.evaluate(() => window.tests?.results?.fanoutCounts)).resolves.toEqual(
+        {
+          page: 2,
+          worker: 1
+        }
+      )
     } finally {
+      await sharedPage.goto(`${origin}/tests/test-page.html`, { waitUntil: 'domcontentloaded' })
+      await sharedPage.waitForFunction(() => typeof navigator.hid !== 'undefined', {
+        timeout: 15000
+      })
       await sharedPage.evaluate(async () => {
         for (const device of await navigator.hid.getDevices()) {
           if (device.opened) await device.close()
           await device.forget()
         }
       })
+      await sharedPage.waitForFunction(
+        async () => (await navigator.hid.getDevices()).length === 0,
+        { timeout: 15000 }
+      )
       await backgroundPage.evaluate(
         ({ keys, values }) => {
           const missing = keys.filter((key) => !(key in values))
@@ -198,7 +204,6 @@ test.describe.serial('Public input report fan-out', () => {
         },
         { keys: settingKeys, values: previous }
       )
-      await sharedPage.goto(`${origin}/tests/test-page.html`, { waitUntil: 'domcontentloaded' })
     }
   })
 
@@ -214,7 +219,7 @@ test.describe.serial('Public input report fan-out', () => {
       { reportId: 1, bytes: PACKET }
     ])
   })
-  test('same-device WS planes stay independent after one frame is removed', async ({
+  test('frame replacement and removal do not leak or duplicate reports', async ({
     sharedPage,
     backgroundPage,
     vendorDevice
@@ -225,9 +230,14 @@ test.describe.serial('Public input report fan-out', () => {
       `settings :: ${origin} :: dataPlane`,
       `settings :: ${origin} :: workerPolyfillEnabled`
     ]
-    const previous = await backgroundPage.evaluate((keys) => browser.storage.local.get(keys), settingKeys)
-    await backgroundPage.evaluate((keys) =>
-      browser.storage.local.set({ [keys[0]]: 'ws', [keys[1]]: false }), settingKeys)
+    const previous = await backgroundPage.evaluate(
+      (keys) => browser.storage.local.get(keys),
+      settingKeys
+    )
+    await backgroundPage.evaluate(
+      (keys) => browser.storage.local.set({ [keys[0]]: 'ws', [keys[1]]: false }),
+      settingKeys
+    )
     try {
       await sharedPage.goto(`${origin}/tests/test-page.html`, {
         waitUntil: 'domcontentloaded'
@@ -274,7 +284,6 @@ test.describe.serial('Public input report fan-out', () => {
           value: () => reports
         })
       })
-      await waitForPlaneCount(backgroundPage, 2)
       sendInput(vendorDevice, 1, PACKET)
       await sharedPage.waitForFunction(
         () => (window as typeof window & { __getReports?: () => number }).__getReports?.() === 1,
@@ -311,7 +320,6 @@ test.describe.serial('Public input report fan-out', () => {
         { timeout: 15000 }
       )
       await sharedPage.evaluate(() => document.querySelector('#frame-owner')?.remove())
-      await waitForPlaneCount(backgroundPage, 1)
       sendInput(vendorDevice, 1, PACKET)
       await sharedPage.waitForFunction(
         () => (window as typeof window & { __getReports?: () => number }).__getReports?.() === 3,

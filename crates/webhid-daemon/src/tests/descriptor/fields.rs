@@ -19,15 +19,11 @@ fn test_pack_usage_fido() {
 }
 
 #[test]
-fn test_nibble_as_i8_positive() {
-    assert_eq!(nibble_as_i8(0), 0);
-    assert_eq!(nibble_as_i8(7), 7);
-}
-
-#[test]
-fn test_nibble_as_i8_negative() {
-    assert_eq!(nibble_as_i8(15), -1);
-    assert_eq!(nibble_as_i8(8), -8);
+fn test_nibble_as_i8() {
+    let cases = [(0, 0), (7, 7), (8, -8), (15, -1)];
+    for (nibble, expected) in cases {
+        assert_eq!(nibble_as_i8(nibble), expected, "nibble {nibble}");
+    }
 }
 
 #[test]

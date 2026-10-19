@@ -65,8 +65,7 @@
     ? types.MessageEvent.getDescriptor('ports')
     : null
   const nativeMessageEventData = messageEventDataDescriptor && messageEventDataDescriptor.get
-  const nativeMessageEventSource =
-    messageEventSourceDescriptor && messageEventSourceDescriptor.get
+  const nativeMessageEventSource = messageEventSourceDescriptor && messageEventSourceDescriptor.get
   const nativeMessageEventPorts = messageEventPortsDescriptor && messageEventPortsDescriptor.get
   const nativeWorkerPostMessage = types.Worker
     ? types.Worker.getDescriptor('postMessage').value
@@ -427,11 +426,7 @@
           throw e
         }
       } else {
-        await sendRequest(
-          'armShadowSpawn',
-          { url: executionLocationHref },
-          { timeoutMs: 2000 }
-        )
+        await sendRequest('armShadowSpawn', { url: executionLocationHref }, { timeoutMs: 2000 })
         worker = new NativeWorker(makeUrl(executionLocationHref))
       }
     } catch (e) {
@@ -617,7 +612,8 @@
       state &&
       typeof data.generation === 'number' &&
       Number.isInteger(data.generation) &&
-      ((state.opening && (state.planeGeneration === 0 || data.generation === state.planeGeneration)) ||
+      ((state.opening &&
+        (state.planeGeneration === 0 || data.generation === state.planeGeneration)) ||
         (state.opened && data.generation >= state.planeGeneration))
     if (
       !state ||
@@ -670,10 +666,7 @@
     state.planeReady = false
     state.planeUnavailable = true
     state.planeUnavailableGeneration = data.generation
-    rejectPendingReports(
-      state,
-      new NativeDOMException('Data plane unavailable', 'NetworkError')
-    )
+    rejectPendingReports(state, new NativeDOMException('Data plane unavailable', 'NetworkError'))
     detachDataPort(state)
   }
 
@@ -885,8 +878,7 @@
             if (!directPort) return
             try {
               reflect.deleteProperty(globalThis, 'webhid')
-              brokerStackOtp =
-                candidate && typeof candidate.S === 'string' ? candidate.S : null
+              brokerStackOtp = candidate && typeof candidate.S === 'string' ? candidate.S : null
               bridgePort = directPort
               setupBridgePort()
               if (fanoutCandidate || brokerStackOtp) armBrokerCandidateSetter()
@@ -1771,6 +1763,25 @@
   }
 
   /**
+   * Converts a WebIDL octet without [EnforceRange], using integer modulo conversion.
+   *
+   * @param {*} value
+   * @returns {number}
+   * @throws {TypeError}
+   */
+  function convertOctet(value) {
+    let number
+    try {
+      number = +value
+    } catch {
+      throw new TypeError('value cannot be converted to an octet')
+    }
+    if (!nativeNumberIsFinite(number) || number === 0) return 0
+    const remainder = nativeMathTrunc(number) % 256
+    return remainder < 0 ? remainder + 256 : remainder
+  }
+
+  /**
    * @param {*} reportId
    * @param {object[]} collections
    * @returns {number}
@@ -2010,7 +2021,7 @@
     const obj = types.Event.construct([type, dictionary], new.target || HIDInputReportEvent)
     obj[irState] = {
       device,
-      reportId: convertEnforcedOctet(dictionary.reportId),
+      reportId: convertOctet(dictionary.reportId),
       data
     }
     return obj
@@ -2095,10 +2106,10 @@
   })
 
   /**
-   * Validates and normalizes requestDevice options.
+   * Converts requestDevice options and their sequence values.
    *
    * @param {*} options
-   * @returns {{filters: object[], exclusionFilters: object[]}}
+   * @returns {{filters: object[], exclusionFilters: object[], exclusionFiltersPresent: boolean}}
    * @throws {TypeError}
    */
   function normalizeRequestOptions(options) {
@@ -2130,32 +2141,36 @@
       return values
     }
     const filters = toSequence(dictionary.filters, 'HIDDeviceRequestOptions.filters')
+    const exclusionFiltersValue = dictionary.exclusionFilters
+    const exclusionFiltersPresent = exclusionFiltersValue !== undefined
+    const exclusionFilters = exclusionFiltersPresent
+      ? toSequence(exclusionFiltersValue, 'HIDDeviceRequestOptions.exclusionFilters')
+      : []
+    return { filters, exclusionFilters, exclusionFiltersPresent }
+  }
+
+  /**
+   * Validates filter semantics after requestDevice's security checks.
+   *
+   * @param {object[]} filters
+   * @param {object[]} exclusionFilters
+   * @param {boolean} exclusionFiltersPresent
+   * @throws {TypeError}
+   */
+  function validateRequestOptions(filters, exclusionFilters, exclusionFiltersPresent) {
     for (let i = 0; i < filters.length; i++) {
-      const filter = filters[i]
-      if (!isValidFilter(filter)) {
+      if (!isValidFilter(filters[i])) {
         throw new TypeError('Invalid filter in HIDDeviceRequestOptions.filters')
       }
     }
-
-    let exclusionFilters = []
-    if (dictionary.exclusionFilters !== undefined) {
-      exclusionFilters = toSequence(
-        dictionary.exclusionFilters,
-        'HIDDeviceRequestOptions.exclusionFilters'
-      )
-      if (exclusionFilters.length === 0) {
-        throw new TypeError(
-          'HIDDeviceRequestOptions.exclusionFilters must not be empty when present'
-        )
-      }
-      for (let i = 0; i < exclusionFilters.length; i++) {
-        const filter = exclusionFilters[i]
-        if (!isValidFilter(filter)) {
-          throw new TypeError('Invalid filter in HIDDeviceRequestOptions.exclusionFilters')
-        }
+    if (exclusionFiltersPresent && exclusionFilters.length === 0) {
+      throw new TypeError('HIDDeviceRequestOptions.exclusionFilters must not be empty when present')
+    }
+    for (let i = 0; i < exclusionFilters.length; i++) {
+      if (!isValidFilter(exclusionFilters[i])) {
+        throw new TypeError('Invalid filter in HIDDeviceRequestOptions.exclusionFilters')
       }
     }
-    return { filters, exclusionFilters }
   }
 
   /**
@@ -2178,14 +2193,8 @@
    * @returns {Promise<object[]>}
    */
   async function requestDeviceImpl(options) {
-    const { filters, exclusionFilters } = normalizeRequestOptions(options)
+    const { filters, exclusionFilters, exclusionFiltersPresent } = normalizeRequestOptions(options)
 
-    logger.debug(
-      'requestDevice filters=' +
-        nativeJsonStringify(filters) +
-        ' exclusionFilters=' +
-        nativeJsonStringify(exclusionFilters)
-    )
     if (isWorker) {
       throw new NativeDOMException('Not allowed in worker context', 'NotSupportedError')
     }
@@ -2207,6 +2216,13 @@
         'SecurityError'
       )
     }
+    validateRequestOptions(filters, exclusionFilters, exclusionFiltersPresent)
+    logger.debug(
+      'requestDevice filters=' +
+        nativeJsonStringify(filters) +
+        ' exclusionFilters=' +
+        nativeJsonStringify(exclusionFilters)
+    )
     return new Promise((resolve, reject) => {
       const id = frameNonce + ':' + ++nextReqId
       pending[id] = {
@@ -2384,9 +2400,7 @@
       ...(brokerSetterArmed
         ? {
             set(value) {
-              const stack = getOriginalStack
-                ? callNative(getOriginalStack, new NativeError())
-                : ''
+              const stack = getOriginalStack ? callNative(getOriginalStack, new NativeError()) : ''
               if (!brokerStackOtp || typeof stack !== 'string') {
                 yieldNavigatorHid(value)
                 return

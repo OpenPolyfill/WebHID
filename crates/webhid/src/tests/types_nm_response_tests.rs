@@ -1,8 +1,8 @@
 use super::*;
 
 #[test]
-fn test_nm_response_hid_permission_serializes_as_p() {
-    let resp = NmResponse {
+fn nm_response_serializes_optional_hid_permission() {
+    let with_permission = NmResponse {
         status: Some(200),
         ws_port: Some(31337),
         ws_nonce: Some("nonce".into()),
@@ -11,16 +11,20 @@ fn test_nm_response_hid_permission_serializes_as_p() {
         hid_permission: Some(1),
         ..Default::default()
     };
-    let json = serde_json::to_string(&resp).unwrap();
-    assert!(json.contains("\"P\":1"), "json={json}");
-    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(value["P"], 1);
-    assert_eq!(value["w"], 31337);
-}
 
-#[test]
-fn test_nm_response_hid_permission_omitted_when_none() {
-    let resp = NmResponse::ok();
-    let json = serde_json::to_string(&resp).unwrap();
-    assert!(!json.contains("\"P\""), "json={json}");
+    for (response, expected_permission, expected_ws_port) in [
+        (with_permission, Some(1), Some(31337)),
+        (NmResponse::ok(), None, None),
+    ] {
+        let value: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&response).unwrap()).unwrap();
+        assert_eq!(
+            value.get("P").cloned(),
+            expected_permission.map(serde_json::Value::from)
+        );
+        assert_eq!(
+            value.get("w").cloned(),
+            expected_ws_port.map(serde_json::Value::from)
+        );
+    }
 }

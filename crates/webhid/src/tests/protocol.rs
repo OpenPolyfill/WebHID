@@ -1,41 +1,28 @@
 use super::*;
 
 #[tokio::test]
-async fn test_write_then_read_u32() {
-    let mut buf = Vec::new();
-    write_message(&mut buf, &42u32).await.unwrap();
-
-    let mut reader: &[u8] = &buf;
-    let val: u32 = read_message(&mut reader).await.unwrap();
-    assert_eq!(val, 42);
-}
-
-#[tokio::test]
-async fn test_write_then_read_string() {
-    let mut buf = Vec::new();
-    write_message(&mut buf, &"hello".to_string()).await.unwrap();
-
-    let mut reader: &[u8] = &buf;
-    let val: String = read_message(&mut reader).await.unwrap();
-    assert_eq!(val, "hello");
-}
-
-#[tokio::test]
-async fn test_write_then_read_struct() {
+async fn framed_messages_round_trip_across_consecutive_types() {
     #[derive(serde::Serialize, serde::Deserialize)]
     struct Point {
         x: i32,
         y: i32,
     }
 
-    let pt = Point { x: 10, y: -5 };
-    let mut buf = Vec::new();
-    write_message(&mut buf, &pt).await.unwrap();
+    let point = Point { x: 10, y: -5 };
+    let mut buffer = Vec::new();
+    write_message(&mut buffer, &42u32).await.unwrap();
+    write_message(&mut buffer, &"hello".to_string())
+        .await
+        .unwrap();
+    write_message(&mut buffer, &point).await.unwrap();
 
-    let mut reader: &[u8] = &buf;
-    let de: Point = read_message(&mut reader).await.unwrap();
-    assert_eq!(de.x, 10);
-    assert_eq!(de.y, -5);
+    let mut reader: &[u8] = &buffer;
+    let number: u32 = read_message(&mut reader).await.unwrap();
+    let text: String = read_message(&mut reader).await.unwrap();
+    let point: Point = read_message(&mut reader).await.unwrap();
+    assert_eq!(number, 42);
+    assert_eq!(text, "hello");
+    assert_eq!((point.x, point.y), (10, -5));
 }
 
 #[tokio::test]
@@ -48,13 +35,6 @@ async fn test_rejects_oversized_message() {
     let result: Result<serde_json::Value, _> = read_message(&mut reader).await;
     assert!(result.is_err());
     assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::InvalidData);
-}
-
-#[tokio::test]
-async fn test_empty_writer_flushes() {
-    let mut buf = Vec::new();
-    write_message(&mut buf, &true).await.unwrap();
-    assert!(!buf.is_empty());
 }
 
 /// Frame `json` as a length-prefixed message and parse it as an NmRequest.

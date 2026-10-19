@@ -106,9 +106,7 @@ test.describe.serial('Exact frame endpoint fanout', () => {
       await backgroundPage.evaluate(
         ({ keys, values }) => {
           const missing = keys.filter((key) => !(key in values))
-          return browser.storage.local
-            .remove(missing)
-            .then(() => browser.storage.local.set(values))
+          return browser.storage.local.remove(missing).then(() => browser.storage.local.set(values))
         },
         { keys: settingKeys, values: previous }
       )

@@ -114,7 +114,7 @@ install-e2e-udev-rule: install-webhid-group
 	install -Dm644 "$(MANIFEST_DIR)/72-webhid-e2e.rules" "$(DESTDIR)$(UDEV_DIR)/72-webhid-e2e.rules"
 	modprobe uhid 2>/dev/null || true
 	udevadm control --reload-rules && udevadm trigger
-	@echo "Done. Users in the '$(WEBHID_GROUP)' group can now run tests/e2e without root."
+	@echo "Done. Users in the '$(WEBHID_GROUP)' group can now run tests/conformance without root."
 
 ## ---- Daemon-as-NM-host mode ----
 ## Installs only the daemon binary + its own NM manifest. The daemon speaks

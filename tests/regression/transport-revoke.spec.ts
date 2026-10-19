@@ -1,5 +1,4 @@
 import { test, expect } from '../helpers/e2e.js'
-import { sleep } from '../helpers/test-utils.js'
 import { spawn, type ChildProcess } from 'child_process'
 import { createConnection } from 'net'
 import { createHash } from 'crypto'
@@ -206,22 +205,6 @@ test.describe.serial('WebHID E2E (transport revocation)', () => {
         timeout: 10000
       })
 
-      const closeA = await nm.request<{ s: number }>({ a: 3, i: deviceId, T: tokenA })
-      expect(closeA.s).toBe(204)
-
-      await sharedPage.waitForFunction(() => window.__wsState?.closed === true, undefined, {
-        timeout: 10000
-      })
-      const aState = await sharedPage.evaluate(() => window.__wsState!)
-
-      expect(aState.closeCode).not.toBe(0)
-
-      await sleep(500)
-      sendInput(vendorDevice, 1, new Array<number>(VENDOR_INPUT_SIZE).fill(0xbb))
-      await sleep(1000)
-      const aMessagesAfter = await sharedPage.evaluate(() => window.__wsState!.messages)
-      expect(aMessagesAfter).toBe(aState.messages)
-
       await sharedPage.evaluate(
         ({ port, hash }: { port: number; hash: string }) => {
           const state: WsState = {
@@ -248,8 +231,43 @@ test.describe.serial('WebHID E2E (transport revocation)', () => {
       await sharedPage.waitForFunction(() => window.__wsBState?.opened === true, undefined, {
         timeout: 10000
       })
+
+      sendInput(vendorDevice, 1, new Array<number>(VENDOR_INPUT_SIZE).fill(0xbb))
+      await Promise.all([
+        sharedPage.waitForFunction(() => (window.__wsState?.messages ?? 0) > 1, undefined, {
+          timeout: 10000
+        }),
+        sharedPage.waitForFunction(() => (window.__wsBState?.messages ?? 0) > 0, undefined, {
+          timeout: 10000
+        })
+      ])
+      const aStateBeforeClose = await sharedPage.evaluate(() => window.__wsState!)
+      const bMessagesBeforeClose = await sharedPage.evaluate(() => window.__wsBState!.messages)
+
+      const closeA = await nm.request<{ s: number }>({ a: 3, i: deviceId, T: tokenA })
+      expect(closeA.s).toBe(204)
+
+      await sharedPage.waitForFunction(() => window.__wsState?.closed === true, undefined, {
+        timeout: 10000
+      })
+      expect((await sharedPage.evaluate(() => window.__wsState!.closeCode))).not.toBe(0)
+
       sendInput(vendorDevice, 1, new Array<number>(VENDOR_INPUT_SIZE).fill(0xcc))
-      await sharedPage.waitForFunction(() => (window.__wsBState?.messages ?? 0) > 0, undefined, {
+      await sharedPage.waitForFunction(
+        (previous) => (window.__wsBState?.messages ?? 0) > previous,
+        bMessagesBeforeClose,
+        { timeout: 10000 }
+      )
+      const afterRevocation = await sharedPage.evaluate(() => ({
+        aMessages: window.__wsState!.messages,
+        bMessages: window.__wsBState!.messages
+      }))
+      expect(afterRevocation.aMessages).toBe(aStateBeforeClose.messages)
+      expect(afterRevocation.bMessages).toBeGreaterThan(bMessagesBeforeClose)
+
+      const closeB = await nm.request<{ s: number }>({ a: 3, i: deviceId, T: tokenB })
+      expect(closeB.s).toBe(204)
+      await sharedPage.waitForFunction(() => window.__wsBState?.closed === true, undefined, {
         timeout: 10000
       })
 

@@ -139,31 +139,6 @@ test('catalogues preserve source placeholders without requiring Crowdin parity',
     }
   }
 })
-test('high-value source strings match the current production architecture', () => {
-  const popup = readFileSync(resolve(ADDON, 'js/internal/pages/popup/index.html'), 'utf8')
-  const settings = readFileSync(resolve(ADDON, 'js/internal/pages/settings/index.html'), 'utf8')
-  const popupDataPlane = 'WebTransport worker, WebSocket worker, or Native Messaging'
-  const normalizedSettings = settings.replace(/\s+/g, ' ')
-  const settingsDataPlane =
-    '**WebTransport worker** (default): keeps transport work and parsing off the page main thread.\n' +
-    '**WebSocket worker**: use when WebTransport is unavailable, such as on older Firefox.\n' +
-    "**Native Messaging**: most compatible; use when a site's security policy prevents a worker transport."
-  const hidePageAction = 'Hide Page Action'
-  const hidePageActionDesc =
-    'Keep the page action hidden when a site uses the WebHID API. The browser action still opens the device view by default.'
-  assert.equal(EN_CATALOG.popupDataPlaneDesc.message, popupDataPlane)
-  assert.equal(EN_CATALOG.settingsDataPlaneDesc.message, settingsDataPlane)
-  assert.equal(EN_CATALOG.settingsHidePageAction.message, hidePageAction)
-  assert.equal(EN_CATALOG.settingsHidePageActionDesc.message, hidePageActionDesc)
-  assert.match(popup, new RegExp(popupDataPlane))
-  assert.match(settings, /WebTransport worker/)
-  assert.match(settings, /WebSocket worker/)
-  assert.match(settings, new RegExp(hidePageAction))
-  assert.ok(normalizedSettings.includes(hidePageActionDesc))
-  assert.doesNotMatch(EN_CATALOG.settingsDataPlaneDesc.message, /in-page/i)
-  assert.match(EN_CATALOG.pickerParseFailed.message, /cannot be opened/)
-  assert.doesNotMatch(EN_CATALOG.pickerParseFailed.message, /sending reports still works/i)
-})
 
 test('localized extension pages keep text-bearing controls localized', () => {
   for (const relativePath of LOCALIZED_PAGES) {

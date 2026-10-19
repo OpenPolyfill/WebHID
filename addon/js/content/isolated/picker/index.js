@@ -40,6 +40,8 @@
     fragmentReady = null
     /** @type {Function|null} */
     resolveShow = null
+    /** @type {Promise<void>} */
+    showQueue = Promise.resolve()
     /** @type {boolean} */
     filterApplied = false
     /** @type {boolean} */
@@ -49,6 +51,8 @@
     constructor() {
       this.host = document.createElement('div')
       this.host.id = 'webhid-shadow-host'
+      this.host.tabIndex = -1
+      this.host.setAttribute('aria-busy', 'false')
       this.shadow = this.host.attachShadow({ mode: 'closed' })
       this.fragmentReady = this.loadFragment()
     }
@@ -77,6 +81,7 @@
         }
 
         const hide = () => {
+          if (this.dialog.open) return
           this.dialog.style.display = 'none'
         }
         this.dialog.addEventListener('transitionend', hide, { once: true })
@@ -89,7 +94,9 @@
           .querySelectorAll('.webhid-device-item')
           .forEach((el) => el.classList.remove('selected'))
         e.target.closest('.webhid-device-item').classList.add('selected')
-        this.dialog.querySelector('#webhidConnectBtn').disabled = false
+        const connectButton = this.dialog.querySelector('#webhidConnectBtn')
+        connectButton.disabled = false
+        connectButton.focus()
       })
 
       this.dialog.addEventListener('click', (e) => {
@@ -97,13 +104,13 @@
       })
 
       this.dialog.addEventListener('keydown', (e) => {
-        if (e.target.matches('.webhid-device-item') && (e.key === 'Enter' || e.key === ' ')) {
-          e.preventDefault()
-          const radio = e.target.querySelector('.webhid-device-radio')
-          if (radio && !radio.disabled) {
-            radio.checked = true
-            radio.dispatchEvent(new Event('change', { bubbles: true }))
-          }
+        const item = e.target.closest('.webhid-device-item')
+        if (!item || (e.key !== 'Enter' && e.key !== ' ')) return
+        e.preventDefault()
+        const radio = item.querySelector('.webhid-device-radio')
+        if (radio && !radio.disabled) {
+          radio.checked = true
+          radio.dispatchEvent(new Event('change', { bubbles: true }))
         }
       })
     }
@@ -114,30 +121,43 @@
      * @returns {Promise<{devices: HIDDeviceInfo[]}>}
      */
     async show(filters = [], exclusionFilters = []) {
-      await this.fragmentReady
-      this.filters = filters
-      this.exclusionFilters = exclusionFilters
-
-      if (typeof this.dialog.showModal === 'function') {
-        if (this.dialog.open) this.dialog.close()
-        this.dialog.style.display = ''
-        await new Promise((r) => requestAnimationFrame(r))
-        this.dialog.showModal()
-      } else {
-        this.dialog.setAttribute('open', '')
-      }
-
-      this.loadDevices()
-
-      return new Promise((resolve) => {
-        this.resolveShow = resolve
+      const previousShow = this.showQueue
+      let releaseShow
+      this.showQueue = new Promise((resolve) => {
+        releaseShow = resolve
       })
+      await previousShow
+
+      try {
+        await this.fragmentReady
+        this.filters = filters
+        this.exclusionFilters = exclusionFilters
+
+        const showPromise = new Promise((resolve) => {
+          this.resolveShow = resolve
+        })
+
+        if (typeof this.dialog.showModal === 'function') {
+          this.dialog.style.display = ''
+          await new Promise((resolve) => requestAnimationFrame(resolve))
+          this.dialog.showModal()
+        } else {
+          this.dialog.setAttribute('open', '')
+        }
+
+        this.host.setAttribute('aria-busy', 'true')
+        this.loadDevices()
+        return await showPromise
+      } finally {
+        releaseShow()
+      }
     }
 
     /** @returns {Promise<void>} */
     async refreshDevices() {
       if (!this.dialog || !this.dialog.open) return
       this.pairedDevices = null
+      this.host.setAttribute('aria-busy', 'true')
       await this.loadDevices()
     }
 
@@ -170,7 +190,9 @@
             logger.warn('enumerate returned status', code)
           }
         }
-        this.renderDevices()
+        await this.renderDevices()
+        await this.focusFirstDeviceItem()
+        this.host.setAttribute('aria-busy', 'false')
       } catch (error) {
         this.devices = []
         this.filterApplied = false
@@ -179,8 +201,17 @@
           'enumerate exception:',
           error != null ? (error.message != null ? error.message : error) : error
         )
-        this.renderDevices()
+        await this.renderDevices()
+        await this.focusFirstDeviceItem()
+        this.host.setAttribute('aria-busy', 'false')
       }
+    }
+    /** @returns {Promise<void>} */
+    async focusFirstDeviceItem() {
+      await Promise.all(
+        this.dialog.getAnimations().map((animation) => animation.finished.catch(() => {}))
+      )
+      if (this.dialog.open) this.dialog.querySelector('.webhid-device-item')?.focus()
     }
 
     /**

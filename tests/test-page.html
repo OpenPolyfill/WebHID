@@ -11,17 +11,11 @@
         'use strict'
         window.tests = window.tests || { helper: {}, results: {} }
 
-        // navigator.hid.requestDevice requires transient user activation, and the
-        // polyfill enforces it exactly like native WebHID (SecurityError otherwise).
-        // page.evaluate has no user gesture, so tests go through this shim: a
-        // synthetic click() counts as user interaction per the HTML spec, which lets
-        // the picker open while Playwright drives it with the keyboard. Resolves
-        // with the number of granted devices (HIDDevice objects are not
-        // serializable, so the count is all the test can observe here; device
-        // details come from navigator.hid.getDevices() in later evaluates).
-        window.tests.helper.requestDevice = (filters) =>
-          new Promise((resolve, reject) => {
-            const btn = document.getElementById('request-device-btn')
+        // Test-only request entrypoint. WebHID activation is covered by the browser conformance suite.
+        window.tests.helper.requestDevice = (filters) => {
+          const btn = document.getElementById('request-device-btn')
+          btn.style.display = 'none'
+          window.tests.results.requestDevice = new Promise((resolve, reject) => {
             btn.onclick = async () => {
               try {
                 const devices = await navigator.hid.requestDevice({ filters: filters || [] })
@@ -30,8 +24,10 @@
                 reject(e)
               }
             }
-            btn.click()
           })
+          btn.click()
+        }
+        window.tests.helper.requestDeviceResult = () => window.tests.results.requestDevice
       })()
     </script>
   </body>

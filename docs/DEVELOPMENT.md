@@ -56,8 +56,9 @@ For the supported Linux E2E path, run the suite on the host after applying the e
 ```sh
 sudo make install-e2e-udev-rule
 newgrp webhid
-npm run test:e2e:daemon
-npm run test:e2e:forwarder
+npm run test:conformance
+npm run test:regression
+npm run test:regression:forwarder
 ```
 
 If a separate container runtime integration can explicitly pass each newly created VID `0x16C0` `hidraw` node, it must also preserve the `webhid` group permissions and the host-assigned device major/minor values. Do not guess those values. This is intentionally outside the default devcontainer because dynamic device passthrough is runtime-specific.
@@ -164,87 +165,56 @@ The bridge uses a `SettingsStore` Proxy-based observer. `storage.onChanged` extr
 
 ## Testing
 
-### Layer 1: daemon unit tests
-
-```sh
-cargo test --manifest-path crates/Cargo.toml
-```
-
-### Layer 2: browser specs (Playwright)
-
-Automated browser tests under `tests/browser/` use Playwright + `firefox-webext-playwright-harness` to load the addon through RDP without real hardware. The harness forces Firefox preference `network.lna.enabled: false`, so these tests do not exercise the real Firefox 154 LNA permission flow. The suite covers WebHID class and event shapes, Permissions Policy, activation, page-action behavior, MAIN-world race resistance, worker polyfill injection, worker spawn and shadow redirects, CSP and Trusted Types behavior, self-script/self-worker injection, and destination rewriting.
+`npm test` runs WebHID conformance checks. WebIDL, Permissions Policy, activation, and Dedicated Worker coverage lives in `tests/conformance/browser/`. The mock-device scenarios in `tests/conformance/e2e/` cover permission grants, descriptor exposure, device lifecycle, events, input/output report I/O, and errors for unsupported feature-report IDs.
 
 ```sh
 npm ci
 npx playwright install firefox
-npm run test:browser          # builds dist/addon first, runs the browser project against it
-npm run test:browser:src      # runs the browser project against addon/ directly
-npm run test:headed           # browser + e2e projects, headed
+npm test
+# Browser checks against the source or built addon:
+npm run test:browser:src
+npm run test:browser
 ```
 
-All Playwright dependencies live in the root `package.json`. The browser project is `firefox-browser` in `tests/playwright.config.ts`. See `tests/browser/` for the current spec inventory rather than relying on a hardcoded count.
+The standard Playwright configuration is `tests/playwright.config.ts`. E2E runs use daemon-as-Native-Messaging-host mode and one worker because tests share virtual HID devices. They require the debug binaries (`cargo build --manifest-path crates/Cargo.toml`) and Linux `/dev/uhid` access. The existing Linux setup below installs `manifests/72-webhid-e2e.rules`.
 
-### Layer 3: E2E specs (Playwright + webhid-mock)
-
-End-to-end tests spawn the debug daemon + `webhid-mock` (a virtual HID device creator: `/dev/uhid` on Linux, `IOHIDUserDevice` on macOS) as subprocesses and drive `navigator.hid` through a test page. They run as serial chains (`test.describe.serial`) against a worker-scoped page and Firefox profile, so pairing and opening happen once and every later test reuses the same device. No per-test reset.
-
-The serial E2E chains currently cover:
-
-- `e2e.spec.ts`: core polyfill, grant, open/close, input, output, feature, disconnect, and forget behavior.
-- `fanout-mux-transport.spec.ts`: optional same-origin top-broker pairing/upgrade while the child keeps its direct bridge, plus child HID control continuity.
-- `input-report-fanout.spec.ts`: input delivery to authorized consumers across direct and fanout paths.
-- `nm-report-reqid.spec.ts`: NM report request-id correlation.
-- `nm-runtime-port.spec.ts`: exact-frame NM endpoint teardown, fanout lifetime, and stale-open/document-replacement regressions.
-- `picker-bypass.spec.ts`: consent and bridge-channel bypass regression coverage.
-- `transport-revoke.spec.ts`: session and transport authority revocation.
-- `wt.spec.ts`: worker WebTransport setup, reports, mode switching, and certificate-generation lifecycle.
-
-All share the same worker-scoped fixture model. The suite deliberately avoids a hardcoded test total because serial-chain coverage changes with regression cases.
-
-Two projects run them, one per daemon deployment mode (both force `workers: 1`, see the concurrency note below):
-
-- `firefox-e2e-daemon` (`tests/playwright.config.ts`): daemon spawned as the NM host directly (`daemonMode: 'daemon-nm'`)
-- `firefox-e2e-forwarder` (`tests/playwright.forwarder.config.ts`): daemon runs normally, NM host is the thin forwarder (`daemonMode: 'forwarder'`)
+On Linux, install the UHID rule and grant the test user access once:
 
 ```sh
-npm run test:e2e            # both projects, serialized (daemon-nm, then forwarder)
-npm run test:e2e:daemon     # daemon-as-NM-host project only
-npm run test:e2e:forwarder  # forwarder project only
+sudo groupadd --system webhid 2>/dev/null || true
+sudo usermod -aG webhid "$USER"
+sudo install -Dm644 manifests/72-webhid-e2e.rules /etc/udev/rules.d/72-webhid-e2e.rules
+sudo modprobe uhid
+sudo udevadm control --reload-rules
+sudo udevadm trigger
 ```
 
-The harness (`tests/helpers/e2e.ts`) builds worker-scoped fixtures (`daemon`, `nmManifest`, `harnessCtx`, `sharedPage`) so all tests in a chain share one Firefox profile, one page, and one paired+opened device. Each generated descriptor is its own mock device (all at VID 0x16C0, unique PIDs from `DEVICES` in `tests/helpers/e2e-devices.ts`): `vendor` (0x0001, report ID 1, 64-byte input/output) drives the primary chain and the feature-report path, `gamepad` (0x0002, no report ID, 5-byte input) drives the WS-data-plane-with-URL-fragment and fresh-pairing gates, `mouse` (0x0003) and `keyboard` (0x0004) are available for multi-device scenarios. Devices spawn lazily on first use and are torn down when the worker ends.
+Log out and back in, or run `newgrp webhid`, before starting E2E tests. macOS uses `IOHIDUserDevice` and needs no setup. The browser-only harness disables Firefox's `network.lna.enabled` preference, so it does not test the local-network-access permission prompt.
 
-> E2E tests require the debug binaries (`cargo build --manifest-path crates/Cargo.toml`, produces `webhid-daemon` and `webhid-mock`). On Linux, the current rule file is `manifests/72-webhid-e2e.rules`. Install it and grant the test user access once:
->
-> ```sh
-> sudo groupadd --system webhid 2>/dev/null || true
-> sudo usermod -aG webhid "$USER"
-> sudo install -Dm644 manifests/72-webhid-e2e.rules /etc/udev/rules.d/72-webhid-e2e.rules
-> sudo modprobe uhid
-> sudo udevadm control --reload-rules
-> sudo udevadm trigger
-> ```
->
-> Log out/in (or `newgrp webhid`) once, then the E2E suite runs as a normal user. macOS needs no setup (`IOHIDUserDevice` works from a regular user session). **Source-tree note:** current HEAD's `make install-e2e-udev-rule` still references the removed `99-webhid-e2e.rules`; use the explicit command above until that Makefile target is synced to `72-webhid-e2e.rules`.
-
-**Two gotchas baked into the fixtures** (see `AGENTS.md` for the full story):
-
-- Report-level blocking drops input reports, rejects output/feature writes, and prunes blocked reports from the page-visible `collections` tree (`prune_device_info` at enumerate + hotplug connect events) for report IDs declared by any collection matching `crates/webhid-daemon/src/blocklist.rs` (Generic Desktop Mouse/Keyboard/Keypad/System Control, FIDO 0xF1D0), plus Chromium's hardcoded always-protected usages and the parse-failure interface fallback (see the AGENTS.md blocklist bullet for the full model). A device whose collections all become empty is hidden entirely, matching Chromium. The `vendor.bin` fixture (Joystick 0x01/0x04 + vendor 0xFF1C report 1) and `gamepad.bin` (Joystick 0x01/0x04, unnumbered) carry no protected usages, so they are unaffected in default builds; `mouse.bin` and `keyboard.bin` are consumer-input fixtures whose reports ARE dropped and whose devices are hidden (the mouse reports propagate to their Mouse Application ancestor, matching Chromium's ancestor propagation). `mouse.bin`/`keyboard.bin` are regenerated from `scripts/gen-descriptors.mjs`, which emits Constant padding / Array items to satisfy hidreport's usage-count check. Verify a fixture's usages against this blocklist before giving it a primary role in a default-features build.
-- Usages must cover a non-constant main item's report count: `hidreport` rejects "Missing Usages for main item" when reportCount exceeds the number of declared usages on a Data/Variable item.
-
-Both E2E configs force `workers: 1`: two heavy Firefox plus daemon stacks in parallel can occasionally drop a vendor input report under WS data-plane CPU contention. `npm run test:e2e` runs the daemon-host and forwarder projects sequentially.
-
-### Watching logs
+Focused regressions live in `tests/regression/` and protect cross-context permission isolation, hostile page intrinsics, session lifetime, input-report fan-out, and transport revocation. Chooser and consent behavior is covered by conformance.
 
 ```sh
-# Daemon (systemd)
-journalctl -u webhid-daemon -f
+npm run test:regression
+# The forwarder profile runs only NM runtime-port and session-revocation scenarios.
+npm run test:regression:forwarder
+# Conformance E2E and daemon-host regressions without browser-only specs:
+npm run test:e2e
+```
 
-# Addon background
-# about:debugging → FF WebHID → Inspect → Console
+The forwarder project deliberately runs only `nm-runtime-port.spec.ts` and `transport-revoke.spec.ts`. The complete E2E suite is not repeated for a second daemon deployment profile. Playwright retries are disabled so a failing first run remains visible.
 
-# Page (polyfill)
-# F12 Web Console on the page you're testing
+JavaScript unit tests and Rust protocol, descriptor, device identity, and security invariants are separate commands:
+
+```sh
+npm run test:unit
+npm run test:rs
+```
+
+Benchmarks use `tests/playwright.benchmark.config.ts` and run independently from conformance and regressions:
+
+```sh
+npm run test:benchmark
+npm run test:benchmark:loss
 ```
 
 ## Repository layout
@@ -324,7 +294,7 @@ Most build/package/bump workflows live in `package.json` (they were pure npm/nod
 | `make install-system`                                    | System-wide install: binaries + NM manifest + systemd unit, `/usr/local` |
 | `make install-user`                                      | User-local install into `~/.local` (no root)                             |
 | `make install-udev-rule`                                 | Install `72-webhid.rules` (uaccess + FIDO exclusions)                    |
-| `make install-e2e-udev-rule`                             | Intended E2E rule/group helper; current HEAD still references removed `99-webhid-e2e.rules`, while the repository rule is `72-webhid-e2e.rules` |
+| `make install-e2e-udev-rule`                             | Install the test-device udev rule and add `$SUDO_USER` to the `webhid` group |
 | `make install-webhid-group`                              | Create the `webhid` group and add `$SUDO_USER`                           |
 | `make install-daemon-nm-host-system` / `-user`           | Install daemon binary + `webhid.daemon_nm_host` manifest                 |
 | `make uninstall` / `uninstall-system` / `uninstall-user` | Remove the above                                                         |

@@ -222,4 +222,4 @@ The benchmark harness can write `dataPlane: 'wt'` and `useWorker: false`. In tha
 - `crates/webhid-daemon/src/device_mgr.rs`: Sessions, Entries, reservations, `nm_hot`, authority, reader, and persistent I/O worker.
 - `crates/webhid-daemon/src/client.rs`: persistent NM client writer and report dispatch.
 - `crates/webhid-daemon/src/batching.rs`, `websocket.rs`, and `webtransport.rs`: transport framing and batched delivery.
-- `tests/unit/frame-endpoint-topology.test.js`, `tests/e2e/fanout-mux-transport.spec.ts`, `tests/e2e/input-report-fanout.spec.ts`, and `tests/e2e/nm-runtime-port.spec.ts`: direct-bridge, optional-broker, fanout, and endpoint-lifetime regression coverage.
+- `tests/regression/input-report-fanout.spec.ts` and `tests/regression/nm-runtime-port.spec.ts`: same-origin report delivery, child lifecycle, and session endpoint cleanup.

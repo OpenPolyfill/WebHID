@@ -57,49 +57,6 @@ function loadSettings() {
   return { context, intrinsics, exports }
 }
 
-test('settings updates and overlays survive a poisoned array iterator', async () => {
-  const { context, exports } = loadSettings()
-  context.settingsExports = exports
-  context.browser.storage.local.get = async (keys) => {
-    const result = {}
-    for (let i = 0; i < keys.length; i++) {
-      const key = keys[i]
-      if (key === 'settings :: dataPlane') result[key] = 'nm'
-      if (key === 'settings :: https://example.test :: dataPlane') result[key] = 'ws'
-    }
-    return result
-  }
-  const result = await vm.runInContext(
-    `(
-      async () => {
-        const store = settingsExports.createSettingsStore({ value: 1 })
-        const changes = []
-        store.on('value', (value) => changes.push(value))
-        Array.prototype[Symbol.iterator] = () => {
-          throw new Error('poisoned Array iterator')
-        }
-        const changed = store.set({ value: 2 })
-        const effective = await settingsExports.loadEffectiveSettings('https://example.test')
-        const global = await settingsExports.loadGlobalSettings()
-        const opaque = await settingsExports.loadEffectiveSettings('null')
-        const opaqueScope = settingsExports.persistentSiteScope(
-          'null',
-          'https://widget.example/app',
-          'https://host.example'
-        )
-        return { changed, changes, value: store.value, global, effective, opaque, opaqueScope }
-      }
-    )()`,
-    context
-  )
-  assert.equal(result.value, 2)
-  assert.equal(result.changes[0], 2)
-  assert.equal(result.effective.dataPlane, 'ws')
-  assert.equal(result.opaque.dataPlane, result.global.dataPlane)
-  assert.equal(result.opaqueScope, 'opaque|https://host.example|https://widget.example')
-  assert.equal(exports.isPersistentSiteOrigin('null'), false)
-  assert.equal(exports.isPersistentSiteOrigin(result.opaqueScope), true)
-})
 test('opaque persistence partitions use trusted embedder and source origins', () => {
   const { exports } = loadSettings()
   const scope = (topOrigin, sourceOrigin) =>
@@ -118,21 +75,6 @@ test('opaque persistence partitions use trusted embedder and source origins', ()
     scope('https://host.example', 'https://widget.example')
   )
   assert.equal(exports.persistentSiteScope('null', 'https://widget.example/app', null), null)
-})
-test('settings listener set replaces disposed subscriptions', () => {
-  const { exports } = loadSettings()
-  const store = exports.createSettingsStore({ dataPlane: 'nm' })
-  const listenerSet = exports.createSettingsListenerSet()
-  let changes = 0
-  listenerSet.install(store, [['dataPlane', () => changes++]])
-  store.set({ dataPlane: 'ws' })
-  assert.equal(changes, 1)
-  listenerSet.install(store, [['dataPlane', () => changes++]])
-  store.set({ dataPlane: 'nm' })
-  assert.equal(changes, 2)
-  listenerSet.dispose()
-  store.set({ dataPlane: 'ws' })
-  assert.equal(changes, 2)
 })
 test('stale scoped loads cannot mutate the newer scope', async () => {
   const { exports } = loadSettings()

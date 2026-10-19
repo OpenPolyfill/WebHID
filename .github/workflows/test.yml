@@ -7,6 +7,8 @@ on:
       - 'crates/**'
       - 'addon/**'
       - 'tests/**'
+      - 'package.json'
+      - 'package-lock.json'
       - '.github/workflows/test.yml'
   pull_request:
     branches: [main]
@@ -14,6 +16,8 @@ on:
       - 'crates/**'
       - 'addon/**'
       - 'tests/**'
+      - 'package.json'
+      - 'package-lock.json'
       - '.github/workflows/test.yml'
   workflow_dispatch:
 permissions:
@@ -21,7 +25,7 @@ permissions:
 
 jobs:
   unit:
-    name: Build and unit test
+    name: Build and unit tests
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -43,6 +47,8 @@ jobs:
           key: npm-${{ hashFiles('package-lock.json') }}
       - name: Install npm dependencies
         run: npm ci
+      - name: Run JavaScript unit tests
+        run: npm run test:unit
       - name: Build Rust binaries
         run: npm run build:rs:debug
       - name: Setup uhid + udev rules + webhid group
@@ -65,7 +71,7 @@ jobs:
             crates/target/debug/webhid-native-messaging
 
   e2e:
-    name: E2E tests
+    name: WebHID conformance and regression tests
     needs: unit
     runs-on: ubuntu-24.04
     steps:
@@ -74,7 +80,6 @@ jobs:
         uses: awalsh128/cache-apt-pkgs-action@b8f4936ae6bd604d21de6c1243d45b013396d81b
         with:
           packages: |
-            ffmpeg
             libatk1.0-0t64
             libcairo-gobject2
             libcairo2
@@ -130,16 +135,17 @@ jobs:
           sudo modprobe uhid
           sudo udevadm control --reload-rules
           sudo udevadm trigger
-      - name: Run E2E tests
+      - name: Run conformance and regression suites
         run: |
-          sg webhid -c "npm run test -- --workers=1 --retries=2"
-          sg webhid -c "npm run test:e2e:forwarder -- --workers=1 --retries=2"
+          sg webhid -c "npm run test:conformance"
+          sg webhid -c "npm run test:regression"
+          sg webhid -c "npm run test:regression:forwarder"
       - name: Upload Playwright test results on failure
         if: failure()
         uses: actions/upload-artifact@v7
         with:
           name: e2e-playwright-results
-          path: test-results/
+          path: tests/test-results/
           retention-days: 7
           if-no-files-found: ignore
 
@@ -216,6 +222,6 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: benchmark-playwright-results
-          path: test-results/
+          path: tests/test-results/
           retention-days: 7
           if-no-files-found: ignore

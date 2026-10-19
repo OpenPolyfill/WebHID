@@ -1,48 +1,52 @@
 use super::*;
 
 #[test]
-fn test_nm_request_id_enumerate() {
-    let req = NmRequest::Enumerate {
-        id: Some(5),
-        filter: None,
-    };
-    assert_eq!(req.id(), Some(5));
-}
+fn nm_request_ids_cover_every_variant_and_optional_values() {
+    let requests = [
+        (
+            NmRequest::Enumerate {
+                id: Some(5),
+                filter: None,
+            },
+            Some(5),
+        ),
+        (
+            NmRequest::Enumerate {
+                id: None,
+                filter: None,
+            },
+            None,
+        ),
+        (
+            NmRequest::Open {
+                id: Some(10),
+                device_id: 0x1234,
+            },
+            Some(10),
+        ),
+        (
+            NmRequest::Close {
+                id: Some(20),
+                device_id: 0x5678,
+                session_token: None,
+            },
+            Some(20),
+        ),
+        (NmRequest::Handshake { id: Some(30) }, Some(30)),
+        (
+            NmRequest::SendReport {
+                id: Some(40),
+                packed: vec![
+                    0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
+                ],
+            },
+            Some(40),
+        ),
+    ];
 
-#[test]
-fn test_nm_request_id_open() {
-    let req = NmRequest::Open {
-        id: Some(10),
-        device_id: 0x1234,
-    };
-    assert_eq!(req.id(), Some(10));
-}
-
-#[test]
-fn test_nm_request_id_close() {
-    let req = NmRequest::Close {
-        id: Some(20),
-        device_id: 0x5678,
-        session_token: None,
-    };
-    assert_eq!(req.id(), Some(20));
-}
-
-#[test]
-fn test_nm_request_id_handshake() {
-    let req = NmRequest::Handshake { id: Some(30) };
-    assert_eq!(req.id(), Some(30));
-}
-
-#[test]
-fn test_nm_request_id_send_report() {
-    let req = NmRequest::SendReport {
-        id: Some(40),
-        packed: vec![
-            0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
-        ],
-    };
-    assert_eq!(req.id(), Some(40));
+    for (request, expected) in requests {
+        assert_eq!(request.id(), expected);
+    }
 }
 
 #[test]

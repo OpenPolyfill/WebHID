@@ -133,7 +133,7 @@
               window.tests.results.fanoutReady = true
             })
             .catch((error) => {
-              window.tests.results.fanoutError = error.message
+              window.tests.results.fanoutError = `${message.id}: ${error.message}`
             })
         })
       })()

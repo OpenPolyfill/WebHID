@@ -5,8 +5,6 @@ import type {
   PlaywrightWorkerArgs,
   PlaywrightWorkerOptions
 } from '@playwright/test'
-import { resolve, dirname } from 'path'
-import { fileURLToPath } from 'url'
 import { rm } from 'fs/promises'
 import { startStaticServer } from '../serve.js'
 import {
@@ -33,13 +31,9 @@ import {
   type HarnessContext
 } from './harness.js'
 
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = dirname(__filename)
-
 interface E2eWorkerFixtures {
   daemon: DaemonProcess | null
   vendorDevice: MockDeviceFixture
-  gamepadDevice: MockDeviceFixture
   httpPort: number
   nmManifest: void
   daemonMode: string
@@ -54,8 +48,6 @@ interface MockDeviceFixture {
   ready: Promise<void>
   vid: number
   pid: number
-  descriptorPath: string
-  key: DeviceKey
 }
 
 /** Configures the addon to spawn the daemon as its NM host when running in
@@ -74,7 +66,6 @@ function deviceFixture(
   key: DeviceKey
 ): Record<string, [WorkerFixture<MockDeviceFixture, object>, { scope: 'worker' }]> {
   const def = DEVICES[key]
-  const descriptorPath = resolve(__dirname, '..', 'fixtures', 'descriptors', def.descriptor)
   return {
     [`${key}Device`]: [
       async ({}, use) => {
@@ -84,9 +75,7 @@ function deviceFixture(
           process: m.process,
           ready: m.ready,
           vid: def.vid,
-          pid: def.pid,
-          descriptorPath,
-          key
+          pid: def.pid
         }
         await use(live)
         stopWebhidMock({ process: live.process, ready: live.ready })
@@ -97,8 +86,7 @@ function deviceFixture(
 }
 
 const deviceFixtures = {
-  ...deviceFixture('vendor'),
-  ...deviceFixture('gamepad')
+  ...deviceFixture('vendor')
 }
 
 export const test = base.extend<

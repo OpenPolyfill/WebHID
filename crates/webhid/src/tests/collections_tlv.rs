@@ -1,41 +1,35 @@
 use super::*;
 
 #[test]
-fn test_unit_system_from_nibble_none() {
-    assert_eq!(unit_system_from_nibble(0), "none");
-}
+fn unit_system_nibble_mapping() {
+    let cases: &[(u8, &str)] = &[
+        (0, "none"),
+        (1, "si-linear"),
+        (2, "si-rotation"),
+        (3, "english-linear"),
+        (4, "english-rotation"),
+        (5, "reserved"),
+        (6, "reserved"),
+        (7, "reserved"),
+        (8, "reserved"),
+        (9, "reserved"),
+        (10, "reserved"),
+        (11, "reserved"),
+        (12, "reserved"),
+        (13, "reserved"),
+        (14, "reserved"),
+        (15, "vendor-defined"),
+        (16, "reserved"),
+        (u8::MAX, "reserved"),
+    ];
 
-#[test]
-fn test_unit_system_from_nibble_si_linear() {
-    assert_eq!(unit_system_from_nibble(1), "si-linear");
-}
-
-#[test]
-fn test_unit_system_from_nibble_si_rotation() {
-    assert_eq!(unit_system_from_nibble(2), "si-rotation");
-}
-
-#[test]
-fn test_unit_system_from_nibble_english_linear() {
-    assert_eq!(unit_system_from_nibble(3), "english-linear");
-}
-
-#[test]
-fn test_unit_system_from_nibble_english_rotation() {
-    assert_eq!(unit_system_from_nibble(4), "english-rotation");
-}
-
-#[test]
-fn test_unit_system_from_nibble_vendor_defined() {
-    assert_eq!(unit_system_from_nibble(15), "vendor-defined");
-}
-
-#[test]
-fn test_unit_system_from_nibble_reserved() {
-    assert_eq!(unit_system_from_nibble(5), "reserved");
-    assert_eq!(unit_system_from_nibble(7), "reserved");
-    assert_eq!(unit_system_from_nibble(8), "reserved");
-    assert_eq!(unit_system_from_nibble(14), "reserved");
+    for (nibble, expected) in cases {
+        assert_eq!(
+            unit_system_from_nibble(*nibble),
+            *expected,
+            "nibble {nibble}"
+        );
+    }
 }
 
 fn make_test_collection() -> Vec<Collection> {

@@ -2,10 +2,7 @@ import { type Page } from '@playwright/test'
 import type { DeviceFilter } from './e2e-types.js'
 
 export const DEVICES = {
-  vendor: { vid: 0x16c0, pid: 0x0001, descriptor: 'vendor.bin' },
-  gamepad: { vid: 0x16c0, pid: 0x0002, descriptor: 'gamepad.bin' },
-  mouse: { vid: 0x16c0, pid: 0x0003, descriptor: 'mouse.bin' },
-  keyboard: { vid: 0x16c0, pid: 0x0004, descriptor: 'keyboard.bin' }
+  vendor: { vid: 0x16c0, pid: 0x0001, descriptor: 'vendor.bin' }
 } as const
 
 export type DeviceKey = keyof typeof DEVICES
@@ -18,56 +15,70 @@ declare global {
   interface Window {
     tests?: {
       helper?: {
-        requestDevice?: (filters: DeviceFilter[]) => Promise<number>
-        requestDeviceWithoutGesture?: (delayMs: number) => Promise<{
-          ok: boolean
-          count?: number
-          name?: string
-          message?: string
-        }>
+        requestDevice?: (filters: DeviceFilter[]) => void
+        requestDeviceResult?: () => Promise<number>
       }
       results?: Record<string, unknown>
     }
   }
 }
 
-async function attemptGrant(page: Page, filters: DeviceFilter[]): Promise<number> {
-  const requestPromise = page.evaluate(
-    (flt: DeviceFilter[]) => window.tests!.helper!.requestDevice!(flt),
-    filters
+export async function grantDevicePermission(page: Page, filters: DeviceFilter[]): Promise<number> {
+  await page.evaluate(() => {
+    const results = window.tests!.results!
+    results.pickerStarted = new Promise<void>((resolve) => {
+      const check = () => {
+        if (document.querySelector('#webhid-shadow-host')?.getAttribute('aria-busy') !== 'true') {
+          return false
+        }
+        observer.disconnect()
+        resolve()
+        return true
+      }
+      const observer = new MutationObserver(check)
+      observer.observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ['aria-busy'],
+        childList: true,
+        subtree: true
+      })
+      check()
+    })
+  })
+  await page.evaluate((flt: DeviceFilter[]) => window.tests!.helper!.requestDevice!(flt), filters)
+  const pickerStart = await page.evaluate(() => {
+    const started = window.tests!.results!.pickerStarted as Promise<void>
+    const request = window.tests!.helper!.requestDeviceResult!()
+    return Promise.race([
+      started.then(() => ({ state: 'opened' as const })),
+      request.then(
+        (count) => ({ state: 'settled' as const, count }),
+        (error: unknown) => ({
+          state: 'rejected' as const,
+          error: error instanceof Error ? error.message : String(error)
+        })
+      )
+    ])
+  })
+  if (pickerStart.state !== 'opened') {
+    throw new Error(
+      `grantDevicePermission: requestDevice did not open its chooser: ${JSON.stringify(pickerStart)}`
+    )
+  }
+  await page.waitForFunction(
+    () => document.querySelector('#webhid-shadow-host')?.getAttribute('aria-busy') === 'false',
+    undefined,
+    { timeout: 15000 }
   )
-
-  await page.waitForTimeout(500)
-
-  await page.keyboard.press('Tab')
-  await page.waitForTimeout(50)
-
-  await page.keyboard.press('Tab')
-  await page.waitForTimeout(50)
-  await page.keyboard.press('Space')
-  await page.waitForTimeout(50)
-
-  await page.keyboard.press('Tab')
-  await page.waitForTimeout(50)
-
-  await page.keyboard.press('Tab')
-  await page.waitForTimeout(50)
-
-  await page.keyboard.press('Tab')
-  await page.waitForTimeout(50)
+  await page.keyboard.press('Enter')
   await page.keyboard.press('Enter')
 
-  return requestPromise
-}
-
-export async function grantDevicePermission(page: Page, filters: DeviceFilter[]): Promise<number> {
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const count = await attemptGrant(page, filters)
-    if (count > 0) return count
-    await page.waitForTimeout(500)
+  const count = await page.evaluate(() => window.tests!.helper!.requestDeviceResult!())
+  if (count === 0) {
+    throw new Error(
+      'grantDevicePermission: requestDevice resolved with no devices. ' +
+        'The chooser did not return a device matching the filter.'
+    )
   }
-  throw new Error(
-    'grantDevicePermission: requestDevice resolved with no devices after 3 attempts. ' +
-      'Picker may have cancelled or no device matched the filter.'
-  )
+  return count
 }

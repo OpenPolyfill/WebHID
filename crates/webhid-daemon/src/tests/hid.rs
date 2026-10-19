@@ -88,65 +88,47 @@ mod identity {
 mod uhid_siblings;
 
 #[test]
-fn test_uses_numbered_reports_empty() {
-    assert!(!uses_numbered_reports(&[]));
-}
-
-#[test]
-fn test_uses_numbered_reports_no_report_id() {
-    let desc = vec![
+fn numbered_report_detection_handles_descriptor_boundaries() {
+    let no_report_id = [
         0x05, 0x01, 0x09, 0x02, 0xA1, 0x01, 0x09, 0x01, 0x75, 0x08, 0x95, 0x03, 0x81, 0x02, 0xC0,
     ];
-    assert!(!uses_numbered_reports(&desc));
-}
-
-#[test]
-fn test_uses_numbered_reports_with_report_id() {
-    let desc = vec![
+    let report_id = [
         0x05, 0x01, 0x09, 0x02, 0xA1, 0x01, 0x85, 0x01, 0x09, 0x01, 0x75, 0x08, 0x95, 0x03, 0x81,
         0x02, 0xC0,
     ];
-    assert!(uses_numbered_reports(&desc));
-}
-
-#[test]
-fn test_uses_numbered_reports_long_item_skipped() {
-    let desc = vec![
+    let long_item_without_report_id = [
         0xFE, 0x02, 0x00, 0x00, 0x00, 0x05, 0x01, 0x09, 0x02, 0xA1, 0x01, 0x75, 0x08, 0x95, 0x01,
         0x81, 0x02, 0xC0,
     ];
-    assert!(!uses_numbered_reports(&desc));
-}
-
-#[test]
-fn test_uses_numbered_reports_report_id_after_long_item() {
-    let desc = vec![
+    let report_id_after_long_item = [
         0xFE, 0x00, 0x00, 0x85, 0x02, 0x75, 0x08, 0x95, 0x01, 0x81, 0x02,
     ];
-    assert!(uses_numbered_reports(&desc));
-}
-
-#[test]
-fn test_uses_numbered_reports_truncated_long_item() {
-    assert!(!uses_numbered_reports(&[0xFE]));
-}
-
-#[test]
-fn test_uses_numbered_reports_just_long_item_no_tag() {
-    assert!(!uses_numbered_reports(&[0xFE, 0x00]));
-}
-
-#[test]
-fn test_uses_numbered_reports_report_id_at_end() {
-    let desc = vec![0x05, 0x01, 0x09, 0x02, 0xA1, 0x01, 0x85, 0x01];
-    assert!(uses_numbered_reports(&desc));
-}
-
-#[test]
-fn test_uses_numbered_reports_non_report_id_global_items() {
-    let desc = vec![
+    let report_id_at_end = [0x05, 0x01, 0x09, 0x02, 0xA1, 0x01, 0x85, 0x01];
+    let non_report_id_globals = [
         0x05, 0x01, 0x15, 0x00, 0x25, 0x01, 0x75, 0x08, 0x95, 0x01, 0x35, 0x00, 0x45, 0x00, 0x65,
         0x00, 0x55, 0x00,
     ];
-    assert!(!uses_numbered_reports(&desc));
+    let cases: &[(&str, &[u8], bool)] = &[
+        ("empty", &[], false),
+        ("no report ID", &no_report_id, false),
+        ("report ID", &report_id, true),
+        ("long item skipped", &long_item_without_report_id, false),
+        (
+            "report ID after long item",
+            &report_id_after_long_item,
+            true,
+        ),
+        ("truncated long item", &[0xFE], false),
+        ("long item without tag", &[0xFE, 0x00], false),
+        ("report ID at end", &report_id_at_end, true),
+        ("other global items", &non_report_id_globals, false),
+    ];
+
+    for (name, descriptor, expected) in cases {
+        assert_eq!(
+            uses_numbered_reports(descriptor),
+            *expected,
+            "descriptor case: {name}"
+        );
+    }
 }

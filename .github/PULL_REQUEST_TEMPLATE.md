@@ -29,19 +29,20 @@
 - [ ] Tested against a real HID device if the change touches enumeration,
       report descriptor parsing, or the data plane
 
-### Addon (JS)
+### Addon (JavaScript)
 
 - [ ] `npm run lint:js` and `npm run lint` (web-ext) pass
-- [ ] `npm run test:browser` passes (no hardware needed)
-- [ ] `npm run test:e2e` passes if the change touches the data plane or
-      worker-spawn paths (see E2E setup note below)
+- [ ] `npm run test:unit` passes
+- [ ] `npm test` passes WebHID conformance, including mock-device E2E
+- [ ] `npm run test:regression` passes when changing permissions, sessions, or transports
+- [ ] `npm run test:regression:forwarder` passes when changing Native Messaging forwarding
 - [ ] `npm run test:benchmark` if the change affects throughput or latency
 - [ ] Manually tested the changed area in the browser
 
-E2E needs the debug binaries and one-time Linux setup
-(`sudo make install-e2e-udev-rule`); see
-[docs/DEVELOPMENT.md](../docs/DEVELOPMENT.md#testing). Running both e2e
-projects concurrently requires `--workers=1`.
+Linux E2E needs debug binaries, `/dev/uhid`, and the one-time
+`sudo make install-e2e-udev-rule` setup. See
+[docs/DEVELOPMENT.md](../docs/DEVELOPMENT.md#testing). The forwarder profile
+runs only selected runtime-port and revocation regressions.
 
 ## Checklist
 
