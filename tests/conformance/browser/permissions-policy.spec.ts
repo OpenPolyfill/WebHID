@@ -181,6 +181,10 @@ test.describe('Cross-origin iframe', () => {
       waitUntil: 'domcontentloaded',
       timeout: 15000
     })
+    // Register the top document's browser-owned endpoint before child delegation queries begin.
+    expect(
+      await page.evaluate(async () => (await navigator.permissions.query({ name: 'hid' })).state)
+    ).toBe('granted')
     await page.evaluate(
       ({ main, cross, pageUrlForTest }) => {
         const add = (id: string, src: string, allow: string) => {
