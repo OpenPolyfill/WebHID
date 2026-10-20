@@ -147,9 +147,9 @@ export const test = base.extend<
   rdpPort: rdpPortFixture(),
 
   harnessCtx: [
-    async ({ rdpPort, headless }, use) => {
+    async ({ headless }, use) => {
       const projectUse = test.info().project?.use as { launchOptions?: object } | undefined
-      await harnessCtxBody({ rdpPort, headless }, use, {
+      await harnessCtxBody({ headless }, use, {
         launchOptions: projectUse?.launchOptions
       })
     },

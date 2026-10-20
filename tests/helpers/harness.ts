@@ -1,84 +1,23 @@
 import {
-  type Page,
   type BrowserContext,
+  type Page,
   type TestFixture,
   type WorkerFixture
 } from '@playwright/test'
-import { createRequire } from 'module'
+import { launchFirefoxExtension } from '@openpolyfill/firefox-addon-playwright-harness'
 import { resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
-
-const require = createRequire(import.meta.url)
-
-const harnessRoot = require.resolve('firefox-webext-playwright-harness')
-const harnessDir = dirname(harnessRoot)
 
 export interface FirefoxBgPage {
   evaluate: Page['evaluate']
 }
 
-export interface FirefoxWebServer {
-  registerRoute(pattern: string, handler: (route: { continue(): void }) => void): void
-  unregisterRoute(pattern: string, handler: (route: { continue(): void }) => void): void
-  clearRoutes(): void
-}
-
-export interface NetworkEventBridge {
-  dispose(): void
-}
-
 export interface HarnessContext extends BrowserContext {
   _firefoxBgPage: FirefoxBgPage
-  _firefoxBridge: NetworkEventBridge
-  _firefoxWebServer: FirefoxWebServer
-  _rdpClient: unknown
-  _firefoxBackgroundConsoleActor: unknown
-  newPage(): Promise<Page>
-}
-
-export interface RdpPortHandle {
-  port: number
-  release: () => Promise<void>
-}
-
-export interface CreateFirefoxContextOptions {
-  routeHandler?: (route: { continue(): void }) => void
-  playwrightOptions?: { headless?: boolean; launchOptions?: object }
+  _rdpPort: number
 }
 
 export type RouteHandler = (route: { continue(): void }) => void
-
-const { acquireRdpPort } = require(`${harnessDir}/rdp-port.js`) as {
-  acquireRdpPort: (opts?: { maxAttempts?: number }) => Promise<RdpPortHandle>
-}
-const { createFirefoxContext, cleanupFirefoxContext, FirefoxBackgroundPage } = require(
-  `${harnessDir}/harness.js`
-) as {
-  createFirefoxContext: (
-    rdpPort: number,
-    extensionPath: string,
-    options?: CreateFirefoxContextOptions
-  ) => Promise<{ context: HarnessContext }>
-  cleanupFirefoxContext: (context: HarnessContext) => Promise<void>
-  FirefoxBackgroundPage: new (rdpClient: unknown, consoleActor: unknown) => FirefoxBgPage
-}
-const { NetworkEventBridge } = require(`${harnessDir}/network-bridge.js`) as {
-  NetworkEventBridge: new (firefoxWebServer: FirefoxWebServer) => NetworkEventBridge
-}
-const { wrapWithNetworkBridge } = require(`${harnessDir}/proxies.js`) as {
-  wrapWithNetworkBridge: <T>(
-    target: T,
-    bridge: NetworkEventBridge,
-    opts?: {
-      onRoute?: (pattern: string, handler: RouteHandler) => void
-      onUnroute?: (pattern: string, handler: RouteHandler) => void
-      onUnrouteAll?: () => void
-    }
-  ) => T
-}
-const { installAddScriptTagPatch } = require(`${harnessDir}/script-tag.js`) as {
-  installAddScriptTagPatch: (page: Page) => void
-}
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -96,84 +35,53 @@ export interface HarnessCtxOptions {
   launchOptions?: object
 }
 
-/**
- * Creates the harness context (Firefox with the extension installed, the
- * network bridge wired, the background page exposed) and hands it to `use`.
- * The browser harness installs a catch-all route; the e2e harness must not
- * (Juggler interception breaks page-context WebTransport, see AGENTS.md).
- */
+/** Creates a Firefox context using the OpenPolyfill harness and exposes its background evaluator. */
 export async function harnessCtxBody(
-  args: { rdpPort: number; headless?: boolean },
+  args: { headless?: boolean },
   use: (ctx: HarnessContext) => Promise<void>,
   opts: HarnessCtxOptions = {}
 ): Promise<void> {
-  const launchOptions = {
-    ...(opts.launchOptions ?? {}),
-    firefoxUserPrefs: {
-      ...(opts.launchOptions as { firefoxUserPrefs?: Record<string, unknown> } | undefined)
-        ?.firefoxUserPrefs,
-      'network.lna.enabled': false
-    }
-  }
-  const { context } = await createFirefoxContext(args.rdpPort, EXTENSION_PATH, {
-    routeHandler: defaultRouteHandler,
-    playwrightOptions: { headless: args.headless, launchOptions }
+  const running = await launchFirefoxExtension({
+    extensionPath: EXTENSION_PATH,
+    headless: args.headless,
+    firefoxUserPrefs: { 'network.lna.enabled': false },
+    launchOptions: opts.launchOptions as Record<string, unknown> | undefined
   })
 
-  let bridge: NetworkEventBridge | undefined
-  let onRoute: ((pattern: string, handler: RouteHandler) => void) | undefined
-  let onUnroute: ((pattern: string, handler: RouteHandler) => void) | undefined
-  let onUnrouteAll: (() => void) | undefined
   try {
+    const backgroundPage = running.extension.background
+    if (!backgroundPage) throw new Error('Firefox extension has no background context')
+
+    const context = running.context as HarnessContext
+    context._firefoxBgPage = {
+      evaluate: ((pageFunction: unknown, arg?: unknown) =>
+        backgroundPage.evaluate(
+          pageFunction as string | ((...args: unknown[]) => unknown),
+          arg === undefined ? [] : [arg]
+        )) as Page['evaluate']
+    }
+    context._rdpPort = running.rdpPort
+
     if (opts.catchAllRoute) await context.route('**/*', defaultRouteHandler)
-
-    bridge = new NetworkEventBridge(context._firefoxWebServer)
-    context._firefoxBridge = bridge
-
-    context._firefoxBgPage = new FirefoxBackgroundPage(
-      context._rdpClient,
-      context._firefoxBackgroundConsoleActor
-    )
-
-    onRoute = (pattern: string, handler: (route: { continue(): void }) => void) => {
-      if (typeof pattern !== 'string') return
-      context._firefoxWebServer.registerRoute(pattern, handler)
-    }
-    onUnroute = (pattern: string, handler: (route: { continue(): void }) => void) => {
-      if (typeof pattern !== 'string') return
-      context._firefoxWebServer.unregisterRoute(pattern, handler)
-    }
-    onUnrouteAll = () => {
-      context._firefoxWebServer.clearRoutes()
-    }
-  } catch (err) {
-    bridge?.dispose()
-    await cleanupFirefoxContext(context)
-    throw err
+    await use(context)
+  } finally {
+    await running.close()
   }
-
-  await use(wrapWithNetworkBridge(context, bridge, { onRoute, onUnroute, onUnrouteAll }))
-
-  bridge.dispose()
-  await cleanupFirefoxContext(context)
 }
 
-/** The harness context's initial page (or a fresh one), network-bridge wrapped. */
+/** Returns the initial page or creates one in the harness context. */
 export async function baseSharedPage(harnessCtx: HarnessContext): Promise<Page> {
-  const page = harnessCtx.pages()[0] ?? (await harnessCtx.newPage())
-  installAddScriptTagPatch(page)
-  return wrapWithNetworkBridge(page, harnessCtx._firefoxBridge)
+  const blankPage = harnessCtx.pages().find((candidate) => candidate.url() === 'about:blank')
+  return blankPage ?? (await harnessCtx.newPage())
 }
 
-export function rdpPortFixture(): [WorkerFixture<number, object>, { scope: 'worker' }] {
+export function rdpPortFixture(): [
+  WorkerFixture<number, { harnessCtx: HarnessContext }>,
+  { scope: 'worker' }
+] {
   return [
-    async ({}, use) => {
-      const { port, release } = await acquireRdpPort()
-      try {
-        await use(port)
-      } finally {
-        await release()
-      }
+    async ({ harnessCtx }, use) => {
+      await use(harnessCtx._rdpPort)
     },
     { scope: 'worker' }
   ]
@@ -198,9 +106,8 @@ export function pageFixture(): [
   return [
     async ({ harnessCtx }, use) => {
       const page = await harnessCtx.newPage()
-      installAddScriptTagPatch(page)
       try {
-        await use(wrapWithNetworkBridge(page, harnessCtx._firefoxBridge))
+        await use(page)
       } finally {
         await page.close().catch(() => {})
       }

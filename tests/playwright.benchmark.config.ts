@@ -1,10 +1,5 @@
 import { defineConfig } from '@playwright/test'
-import { fileURLToPath } from 'url'
-import { dirname, resolve } from 'path'
 import base from './playwright.config.js'
-
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = dirname(__filename)
 
 type PlaywrightUseOptions = Exclude<Parameters<typeof defineConfig>[0], undefined>['use']
 
@@ -18,16 +13,12 @@ export default defineConfig({
       testIgnore: ['**/chromium/**', '**/chromium-addon/**', '**/loss/**'],
       use: {
         browserName: 'firefox',
-        firefoxHarnessConfig: {
-          extensionPath: resolve(__dirname, '..', 'addon')
-        },
         daemonMode: 'daemon-nm',
         benchmarkRuns: 10,
         launchOptions: {
           firefoxUserPrefs: { 'privacy.reduceTimerPrecision': false }
         }
       } as PlaywrightUseOptions & {
-        firefoxHarnessConfig: { extensionPath: string }
         daemonMode: string
         benchmarkRuns: number
         launchOptions: { firefoxUserPrefs: { [key: string]: boolean } }
@@ -38,16 +29,12 @@ export default defineConfig({
       testDir: './benchmark/loss',
       use: {
         browserName: 'firefox',
-        firefoxHarnessConfig: {
-          extensionPath: resolve(__dirname, '..', 'addon')
-        },
         daemonMode: 'daemon-nm',
         benchmarkRuns: 10,
         launchOptions: {
           firefoxUserPrefs: { 'privacy.reduceTimerPrecision': false }
         }
       } as PlaywrightUseOptions & {
-        firefoxHarnessConfig: { extensionPath: string }
         daemonMode: string
         benchmarkRuns: number
         launchOptions: { firefoxUserPrefs: { [key: string]: boolean } }

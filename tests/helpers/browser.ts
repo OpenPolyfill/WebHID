@@ -46,8 +46,8 @@ export const test = base.extend<
   rdpPort: rdpPortFixture(),
 
   harnessCtx: [
-    async ({ rdpPort, headless }, use) => {
-      await harnessCtxBody({ rdpPort, headless }, use, { catchAllRoute: true })
+    async ({ headless }, use) => {
+      await harnessCtxBody({ headless }, use, { catchAllRoute: true })
     },
     { scope: 'worker' }
   ],

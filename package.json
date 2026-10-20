@@ -67,6 +67,8 @@
     "@commitlint/cli": "^21.2.1",
     "@commitlint/config-conventional": "^21.2.0",
     "@eslint/js": "^10.0.1",
+    "@openpolyfill/firefox-addon-playwright-harness": "0.2.0",
+    "@openpolyfill/firefox-rdp": "https://registry.npmjs.org/@openpolyfill/firefox-rdp/-/firefox-rdp-0.1.0.tgz",
     "@playwright/test": "^1.62.0",
     "@prettier/plugin-xml": "^3.4.2",
     "@types/firefox-webext-browser": "^143.0.0",
@@ -74,7 +76,6 @@
     "commit-and-tag-version": "^13.1.0",
     "eslint": "^10.8.0",
     "eslint-plugin-jsdoc": "^63.3.2",
-    "firefox-webext-playwright-harness": "github:duckduckgo/firefox-webext-playwright-harness#c339f623db3b4ee464e6460e32287ca2ee588115",
     "husky": "^9.1.7",
     "jiti": "^2.7.0",
     "jszip": "^3.10.1",
@@ -88,7 +89,8 @@
   },
   "allowScripts": {
     "core-js@2.6.12": true,
-    "es5-ext@0.10.64": true
+    "es5-ext@0.10.64": true,
+    "@openpolyfill/firefox-addon-playwright-harness@0.2.0": true
   },
   "overrides": {
     "adm-zip": "0.6.0",
