@@ -165,7 +165,7 @@ The bridge uses a `SettingsStore` Proxy-based observer. `storage.onChanged` extr
 
 ## Testing
 
-`npm test` runs WebHID conformance checks. WebIDL, Permissions Policy, activation, and Dedicated Worker coverage lives in `tests/conformance/browser/`. The mock-device scenarios in `tests/conformance/e2e/` cover permission grants, descriptor exposure, device lifecycle, events, input/output report I/O, and errors for unsupported feature-report IDs.
+`npm test` runs WebHID conformance checks. WebIDL, Permissions Policy, activation, and Dedicated Worker coverage lives in `tests/conformance/browser/`. The WPT project runs the three live WebHID Permissions Policy pages from `wpt.live/webhid/`, enables the worker polyfill for those tests, and requires network access to `wpt.live`. Mock-device scenarios in `tests/conformance/e2e/` cover permission grants, descriptor exposure, device lifecycle, events, input/output report I/O, and errors for unsupported feature-report IDs.
 
 ```sh
 npm ci
@@ -174,6 +174,8 @@ npm test
 # Browser checks against the source or built addon:
 npm run test:browser:src
 npm run test:browser
+# Run the three upstream WPT WebHID pages separately. Requires access to wpt.live.
+npm run test:conformance:wpt
 ```
 
 The standard Playwright configuration is `tests/playwright.config.ts`. E2E runs use daemon-as-Native-Messaging-host mode and one worker because tests share virtual HID devices. They require the debug binaries (`cargo build --manifest-path crates/Cargo.toml`) and Linux `/dev/uhid` access. The existing Linux setup below installs `manifests/72-webhid-e2e.rules`.

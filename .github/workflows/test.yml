@@ -171,7 +171,7 @@ jobs:
           sudo modprobe uhid
           sudo udevadm control --reload-rules
           sudo udevadm trigger
-      - name: Run conformance and regression suites
+      - name: Run conformance, WPT, and regression suites
         run: |
           sg webhid -c "npm run test:conformance"
           sg webhid -c "npm run test:regression"

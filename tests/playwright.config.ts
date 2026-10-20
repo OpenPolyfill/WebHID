@@ -20,6 +20,12 @@ export default defineConfig({
       use: { browserName: 'firefox' }
     },
     {
+      name: 'firefox-conformance-wpt',
+      testDir: './conformance/wpt',
+      workers: 1,
+      use: { browserName: 'firefox' }
+    },
+    {
       name: 'firefox-conformance-e2e',
       testDir: './conformance/e2e',
       workers: 1,
