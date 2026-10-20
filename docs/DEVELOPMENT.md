@@ -165,7 +165,7 @@ The bridge uses a `SettingsStore` Proxy-based observer. `storage.onChanged` extr
 
 ## Testing
 
-`npm test` runs WebHID conformance checks. WebIDL, Permissions Policy, activation, and Dedicated Worker coverage lives in `tests/conformance/browser/`. The WPT project runs the three live WebHID Permissions Policy pages from `wpt.live/webhid/`, enables the worker polyfill for those tests, and requires network access to `wpt.live`. Mock-device scenarios in `tests/conformance/e2e/` cover permission grants, descriptor exposure, device lifecycle, events, input/output report I/O, and errors for unsupported feature-report IDs.
+`npm test` runs WebHID conformance checks. WebIDL, Permissions Policy, activation, and Dedicated Worker coverage lives in `tests/conformance/browser/`. The WPT project runs the three live WebHID Permissions Policy pages from `wpt.live/webhid/`, enables the worker polyfill for those tests, and requires network access to `wpt.live`. Mock-device scenarios in `tests/conformance/e2e/` cover permission grants, descriptor exposure, device lifecycle, events, input/output report I/O, and errors for unsupported feature-report IDs. `tests/conformance/chromium-internal/` ports externally observable cases from Chromium's `third_party/blink/web_tests/wpt_internal/hid/` and runs them against the Firefox add-on with the repository's `webhid-mock` device.
 
 ```sh
 npm ci
@@ -178,7 +178,13 @@ npm run test:browser
 npm run test:conformance:wpt
 ```
 
+Run the Chromium internal-derived cases by themselves with `npm run test:conformance:chromium-internal`. This is a Firefox Playwright project. It uses the normal E2E daemon-as-Native-Messaging-host fixture and `chromium-internal.bin`; it does not launch Chromium or depend on Chromium extension APIs. Coverage includes request validation and cancellation, device metadata and object identity, open/close state, supported input/output/feature writes, permission revocation, and hotplug.
+
+Tests that inject Chromium Mojo service or connection failures, depend on fake physical-device IDs or `GCController`, or require a specific physical HID device are not ported. The mock returns empty feature-report data, so feature reads are not included.
+
 The standard Playwright configuration is `tests/playwright.config.ts`. E2E runs use daemon-as-Native-Messaging-host mode and one worker because tests share virtual HID devices. They require the debug binaries (`cargo build --manifest-path crates/Cargo.toml`) and Linux `/dev/uhid` access. The existing Linux setup below installs `manifests/72-webhid-e2e.rules`.
+
+The suite is part of `npm test` and the Linux CI conformance job. Like the other E2E tests, it requires `/dev/uhid` plus access to the mock-created `hidraw` device on Linux.
 
 On Linux, install the UHID rule and grant the test user access once:
 
@@ -290,16 +296,16 @@ The NM forwarder uses vectored I/O (`write_vectored`) on all platforms (no `spli
 
 Most build/package/bump workflows live in `package.json` (they were pure npm/node wrappers). The Makefile keeps the install/uninstall targets that need root or system integration:
 
-| Target                                                   | Effect                                                                   |
-| -------------------------------------------------------- | ------------------------------------------------------------------------ |
-| `make build`                                             | Release build of daemon + NM host                                        |
-| `make install-system`                                    | System-wide install: binaries + NM manifest + systemd unit, `/usr/local` |
-| `make install-user`                                      | User-local install into `~/.local` (no root)                             |
-| `make install-udev-rule`                                 | Install `72-webhid.rules` (uaccess + FIDO exclusions)                    |
+| Target                                                   | Effect                                                                       |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `make build`                                             | Release build of daemon + NM host                                            |
+| `make install-system`                                    | System-wide install: binaries + NM manifest + systemd unit, `/usr/local`     |
+| `make install-user`                                      | User-local install into `~/.local` (no root)                                 |
+| `make install-udev-rule`                                 | Install `72-webhid.rules` (uaccess + FIDO exclusions)                        |
 | `make install-e2e-udev-rule`                             | Install the test-device udev rule and add `$SUDO_USER` to the `webhid` group |
-| `make install-webhid-group`                              | Create the `webhid` group and add `$SUDO_USER`                           |
-| `make install-daemon-nm-host-system` / `-user`           | Install daemon binary + `webhid.daemon_nm_host` manifest                 |
-| `make uninstall` / `uninstall-system` / `uninstall-user` | Remove the above                                                         |
-| `make test` / `make clean` / `make help`                 | Misc                                                                     |
+| `make install-webhid-group`                              | Create the `webhid` group and add `$SUDO_USER`                               |
+| `make install-daemon-nm-host-system` / `-user`           | Install daemon binary + `webhid.daemon_nm_host` manifest                     |
+| `make uninstall` / `uninstall-system` / `uninstall-user` | Remove the above                                                             |
+| `make test` / `make clean` / `make help`                 | Misc                                                                         |
 
 Overridable variables: `PREFIX`, `USER_PREFIX`, `CARGO_ARGS`, `WEBHID_GROUP`, `SYSTEM_NM_DIR`, `SYSTEMD_DIR`, `UDEV_DIR`, `USER_NM_DIR`, `USER_SYSTEMD_DIR`.

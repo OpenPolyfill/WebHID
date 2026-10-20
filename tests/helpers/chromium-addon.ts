@@ -12,6 +12,7 @@ const NM_HOST_NAME = 'webhid.daemon_nm_host'
 declare global {
   interface Window {
     __webhidPairResult?: { ok: boolean; count?: number; name?: string; message?: string }
+    __webhidPairDevices?: unknown[]
   }
 }
 
@@ -143,6 +144,8 @@ export async function setExtensionSettings(
  */
 export async function pairViaPicker(page: Page): Promise<void> {
   await page.evaluate(() => {
+    window.__webhidPairResult = undefined
+    window.__webhidPairDevices = undefined
     let btn = document.getElementById('webhid-pair-btn')
     if (!btn) {
       btn = document.createElement('button')
@@ -159,6 +162,7 @@ export async function pairViaPicker(page: Page): Promise<void> {
         const devices = await navigator.hid.requestDevice({
           filters: [{ vendorId: 0x16c0, productId: 0x0001 }]
         })
+        window.__webhidPairDevices = devices
         window.__webhidPairResult = { ok: true, count: devices.length }
       } catch (e) {
         const err = e as { name?: string; message?: string }

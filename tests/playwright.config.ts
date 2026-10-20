@@ -26,6 +26,17 @@ export default defineConfig({
       use: { browserName: 'firefox' }
     },
     {
+      name: 'firefox-conformance-chromium-internal',
+      testDir: './conformance/chromium-internal',
+      workers: 1,
+      use: {
+        browserName: 'firefox',
+        daemonMode: 'daemon-nm'
+      } as PlaywrightUseOptions & {
+        daemonMode: string
+      }
+    },
+    {
       name: 'firefox-conformance-e2e',
       testDir: './conformance/e2e',
       workers: 1,

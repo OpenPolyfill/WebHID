@@ -19,6 +19,7 @@
             btn.onclick = async () => {
               try {
                 const devices = await navigator.hid.requestDevice({ filters: filters || [] })
+                window.tests.results.requestDeviceDevices = devices
                 resolve(devices.length)
               } catch (e) {
                 reject(e)

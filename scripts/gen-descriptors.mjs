@@ -37,6 +37,9 @@ function inputData(flags = 0x02) {
 function outputData(flags = 0x02) {
   return Buffer.from([0x91, flags])
 }
+function featureData(flags = 0x02) {
+  return Buffer.from([0xb1, flags])
+}
 
 function logicalMin(v) {
   if (v >= -128 && v <= 127) return Buffer.from([0x15, v & 0xff])
@@ -49,16 +52,36 @@ function logicalMax(v) {
   if (v >= 0 && v <= 65535) return Buffer.from([0x26, v & 0xff, (v >> 8) & 0xff])
   return Buffer.from([0x27, v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >> 24) & 0xff])
 }
+function physicalMin(v) {
+  if (v >= -128 && v <= 127) return Buffer.from([0x35, v & 0xff])
+  if (v >= -32768 && v <= 32767) return Buffer.from([0x36, v & 0xff, (v >> 8) & 0xff])
+  return Buffer.from([0x37, v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >> 24) & 0xff])
+}
+
+function physicalMax(v) {
+  if (v >= 0 && v <= 255) return Buffer.from([0x45, v & 0xff])
+  if (v >= 0 && v <= 65535) return Buffer.from([0x46, v & 0xff, (v >> 8) & 0xff])
+  return Buffer.from([0x47, v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >> 24) & 0xff])
+}
 
 function unitExponent(e) {
   return Buffer.from([0x55, e & 0xff])
 }
+function unit(v) {
+  if (v >= -128 && v <= 127) return Buffer.from([0x65, v & 0xff])
+  if (v >= -32768 && v <= 32767) return Buffer.from([0x66, v & 0xff, (v >> 8) & 0xff])
+  return Buffer.from([0x67, v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >> 24) & 0xff])
+}
 function usageMinimum(u) {
-  return u <= 0xff ? Buffer.from([0x18, u]) : Buffer.from([0x19, u & 0xff, (u >> 8) & 0xff])
+  if (u <= 0xff) return Buffer.from([0x19, u])
+  if (u <= 0xffff) return Buffer.from([0x1a, u & 0xff, (u >> 8) & 0xff])
+  return Buffer.from([0x1b, u & 0xff, (u >> 8) & 0xff, (u >> 16) & 0xff, (u >> 24) & 0xff])
 }
 
 function usageMaximum(u) {
-  return u <= 0xff ? Buffer.from([0x28, u]) : Buffer.from([0x29, u & 0xff, (u >> 8) & 0xff])
+  if (u <= 0xff) return Buffer.from([0x29, u])
+  if (u <= 0xffff) return Buffer.from([0x2a, u & 0xff, (u >> 8) & 0xff])
+  return Buffer.from([0x2b, u & 0xff, (u >> 8) & 0xff, (u >> 16) & 0xff, (u >> 24) & 0xff])
 }
 
 function cat(...chunks) {
@@ -180,11 +203,73 @@ function gamepadDescriptor() {
   )
 }
 
+function chromiumInternalDescriptor() {
+  return cat(
+    usagePage(0xff00),
+    usage(0x01),
+    collection(),
+    reportId(1),
+    usagePage(0x09),
+    usage(1),
+    logicalMin(0),
+    logicalMax(1),
+    physicalMin(0),
+    physicalMax(1),
+    reportSize(8),
+    reportCount(1),
+    inputData(),
+    reportId(2),
+    usagePage(0x01),
+    usage(0x30),
+    logicalMin(-127),
+    logicalMax(127),
+    physicalMin(-127),
+    physicalMax(127),
+    unitExponent(0x0c),
+    unit(0xe111),
+    reportSize(8),
+    reportCount(1),
+    inputData(),
+    unitExponent(0),
+    unit(0),
+    reportId(3),
+    usagePage(0x09),
+    usageMinimum(1),
+    usageMaximum(8),
+    logicalMin(0),
+    logicalMax(1),
+    reportSize(1),
+    reportCount(8),
+    inputData(),
+    reportId(4),
+    usagePage(0xff00),
+    usageMinimum(1),
+    usageMaximum(7),
+    logicalMin(0),
+    logicalMax(255),
+    reportSize(8),
+    reportCount(7),
+    inputData(),
+    usageMinimum(8),
+    usageMaximum(14),
+    reportSize(8),
+    reportCount(7),
+    outputData(),
+    reportId(5),
+    usageMinimum(15),
+    usageMaximum(21),
+    reportSize(8),
+    reportCount(7),
+    featureData(),
+    endCollection()
+  )
+}
 const DESCRIPTORS = {
   'mouse.bin': mouseDescriptor(),
   'keyboard.bin': keyboardDescriptor(),
   'vendor.bin': vendorDescriptor(),
-  'gamepad.bin': gamepadDescriptor()
+  'gamepad.bin': gamepadDescriptor(),
+  'chromium-internal.bin': chromiumInternalDescriptor()
 }
 
 function edgeEmpty() {

@@ -198,7 +198,9 @@
       off += 4
       const physicalMaximum = dv.getInt32(off, true)
       off += 4
-      const unitExponent = dv.getInt8(off++)
+      const unitExponentNibble = dv.getUint8(off++) & 0x0f
+      const unitExponent =
+        unitExponentNibble & 0x08 ? unitExponentNibble - 0x10 : unitExponentNibble
       const unitSystem = UNIT_SYSTEMS[dv.getUint8(off++)] || 'reserved'
       const unitFactors = readUnitFactors()
       const isRange = !!(flags & 4)
