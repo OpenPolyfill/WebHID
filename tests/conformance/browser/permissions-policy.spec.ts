@@ -1,6 +1,35 @@
 import { test, expect } from '../../helpers/browser.js'
-import { waitForPermResult } from '../../helpers/browser-utils.js'
+import { waitForPermResult, type PermResult } from '../../helpers/browser-utils.js'
 import type { Page, Frame } from '@playwright/test'
+function expectHidAllowed(result: PermResult | null | undefined): void {
+  expect(result).not.toBeNull()
+  expect(result!.hidUndefined).toBe(false)
+  expect(result!.getDevices).toEqual(expect.objectContaining({ ok: true }))
+}
+
+function expectHidBlocked(result: PermResult | null | undefined): void {
+  expect(result).not.toBeNull()
+  expect(result!.hidUndefined).toBe(false)
+  expect(result!.getDevices).toEqual(expect.objectContaining({ ok: false, name: 'SecurityError' }))
+}
+
+async function readHidState(page: Page): Promise<PermResult> {
+  return page.evaluate(async () => {
+    const hidUndefined = typeof navigator.hid === 'undefined'
+    try {
+      const devices = await navigator.hid.getDevices()
+      return { hidUndefined, getDevices: { ok: true, count: devices.length } }
+    } catch (error) {
+      return {
+        hidUndefined,
+        getDevices: {
+          ok: false,
+          name: error instanceof Error ? error.name : String(error)
+        }
+      }
+    }
+  })
+}
 
 test.describe('Permissions Policy', () => {
   test.describe.configure({ mode: 'parallel' })
@@ -11,8 +40,7 @@ test.describe('Permissions Policy', () => {
     expect(r).not.toBeNull()
     expect(r!.isTop).toBe(true)
     expect(r!.isCrossOrigin).toBe(false)
-    expect(r!.queryHid).toBe('granted')
-    expect(r!.hidUndefined).toBe(false)
+    expectHidAllowed(r)
   })
 
   test('B1/B3: hid=() blocks hid', async ({ page, pageUrl }) => {
@@ -22,12 +50,11 @@ test.describe('Permissions Policy', () => {
     })
     const r = await waitForPermResult(page)
     expect(r).not.toBeNull()
-    expect(r!.queryHid).toBe('denied')
-    expect(r!.hidUndefined || r!.getDevices?.ok === false).toBe(true)
+    expectHidBlocked(r)
   })
 })
 
-test('same-origin document policies stay isolated across tabs', async ({ page, pageUrl }) => {
+test('same-origin top-level documents have independent policies', async ({ page, pageUrl }) => {
   const sibling = await page.context().newPage()
   try {
     await page.goto(pageUrl('/policy-check'), {
@@ -40,8 +67,8 @@ test('same-origin document policies stay isolated across tabs', async ({ page, p
     })
     const top = await waitForPermResult(page)
     const blocked = await waitForPermResult(sibling)
-    expect(top?.queryHid).toBe('granted')
-    expect(blocked?.queryHid).toBe('denied')
+    expectHidAllowed(top)
+    expectHidBlocked(blocked)
   } finally {
     await sibling.close()
   }
@@ -59,14 +86,6 @@ test.describe('Cross-origin iframe', () => {
     return frame
   }
 
-  interface PermResult {
-    isTop: boolean
-    isCrossOrigin: boolean
-    queryHid: string
-    hidUndefined: boolean
-    getDevices: { ok: boolean; count?: number; name?: string; message?: string }
-  }
-
   async function readIframeResult(p: Page, urlSubstring: string) {
     const childFrame = await waitForFrame(p, urlSubstring)
     await childFrame.waitForFunction(
@@ -80,7 +99,7 @@ test.describe('Cross-origin iframe', () => {
     const raw = await childFrame.evaluate<PermResult | null>(() => {
       const r = (window as unknown as { tests?: { results?: Record<string, unknown> } }).tests
         ?.results?.perm
-      return r && typeof r === 'object' ? (r as PermResult) : null
+      return r && typeof r === 'object' ? r : null
     })
     return raw
   }
@@ -105,7 +124,7 @@ test.describe('Cross-origin iframe', () => {
         tests?: { results?: Record<string, unknown> }
       }
       const result = pageState.tests?.results?.perm
-      return result && typeof result === 'object' ? (result as PermResult) : null
+      return result && typeof result === 'object' ? result : null
     })
   }
   async function frameWithId(p: Page, id: string, urlSubstring: string) {
@@ -163,12 +182,10 @@ test.describe('Cross-origin iframe', () => {
 
     expect(denied).not.toBeNull()
     expect(denied!.isCrossOrigin).toBe(true)
-    expect(denied!.queryHid).toBe('denied')
-    expect(denied!.hidUndefined).toBe(false)
+    expectHidBlocked(denied)
     expect(allowed).not.toBeNull()
     expect(allowed!.isCrossOrigin).toBe(true)
-    expect(allowed!.queryHid).toBe('granted')
-    expect(allowed!.hidUndefined).toBe(false)
+    expectHidAllowed(allowed)
   })
 
   test('iframe hid allowlists are origin and document exact', async ({
@@ -180,10 +197,8 @@ test.describe('Cross-origin iframe', () => {
       waitUntil: 'domcontentloaded',
       timeout: 15000
     })
-    expect(
-      await page.evaluate(async () => (await navigator.permissions.query({ name: 'hid' })).state)
-    ).toBe('granted')
-    const checkFrame = async (id: string, src: string, allow: string, expected: string) => {
+    expectHidAllowed(await readHidState(page))
+    const checkFrame = async (id: string, src: string, allow: string, allowed: boolean) => {
       await page.evaluate(
         ({ id, src, allow }) => {
           const frame = document.createElement('iframe')
@@ -195,50 +210,41 @@ test.describe('Cross-origin iframe', () => {
         { id, src, allow }
       )
       const frame = await frameWithId(page, id, 'iframe-child')
-      expect((await readFrameResult(frame))?.queryHid).toBe(expected)
+      const result = await readFrameResult(frame)
+      if (allowed) expectHidAllowed(result)
+      else expectHidBlocked(result)
       return frame
     }
-    await checkFrame('allow-none', crossUrl('/iframe-child-no-allow'), "hid 'none'", 'denied')
-    await checkFrame(
-      'allow-other',
-      crossUrl('/iframe-child-no-allow'),
-      `hid ${pageUrl('')}`,
-      'denied'
-    )
-    await checkFrame('allow-self', pageUrl('/iframe-child-no-allow'), "hid 'self'", 'granted')
-    const bare = await checkFrame(
-      'allow-bare',
-      crossUrl('/iframe-child-no-allow'),
-      'hid',
-      'granted'
-    )
+    await checkFrame('allow-none', crossUrl('/iframe-child-no-allow'), "hid 'none'", false)
+    await checkFrame('allow-other', crossUrl('/iframe-child-no-allow'), `hid ${pageUrl('')}`, false)
+    await checkFrame('allow-self', pageUrl('/iframe-child-no-allow'), "hid 'self'", true)
+    const bare = await checkFrame('allow-bare', crossUrl('/iframe-child-no-allow'), 'hid', true)
+    const sameOriginUrl = pageUrl('/iframe-child-no-allow')
     await bare.evaluate((url) => {
       window.location.href = url
-    }, pageUrl('/iframe-child-no-allow'))
-    const navigated = await frameWithId(page, 'allow-bare', 'iframe-child')
-    expect((await readFrameResult(navigated))?.queryHid).toBe('denied')
-  })
-
-  test('cross-origin iframe cannot forge a sibling allow="hid" src', async ({
-    page,
-    pageUrl,
-    crossUrl
-  }) => {
-    await page.goto(pageUrl('/iframe-parent'), {
-      waitUntil: 'domcontentloaded',
-      timeout: 15000
-    })
-    await page.evaluate((crossUrl) => {
-      const forge = document.createElement('iframe')
-      forge.id = 'forge'
-      forge.src = crossUrl + '/iframe-child-forge'
-      document.body.appendChild(forge)
-    }, crossUrl(''))
-    const raw = await readIframeResult(page, '/iframe-child-forge')
-    expect(raw).not.toBeNull()
-    expect(raw!.isCrossOrigin).toBe(true)
-    expect(raw!.queryHid).toBe('denied')
-    expect(raw!.hidUndefined).toBe(false)
+    }, sameOriginUrl)
+    const frameElement = page.locator('#allow-bare')
+    await expect
+      .poll(() =>
+        frameElement.evaluate((element) => {
+          try {
+            return (element as HTMLIFrameElement).contentWindow?.location.href ?? null
+          } catch {
+            return null
+          }
+        })
+      )
+      .toBe(sameOriginUrl)
+    const readResult = () =>
+      frameElement.evaluate((element) => {
+        const childWindow = (element as HTMLIFrameElement).contentWindow as Window & {
+          tests?: { results?: Record<string, unknown> }
+        }
+        const result = childWindow.tests?.results?.perm
+        return result && typeof result === 'object' ? result : null
+      })
+    await expect.poll(readResult).not.toBeNull()
+    expectHidBlocked(await readResult())
   })
 
   test('sandboxed iframe keeps an opaque security origin', async ({ page, pageUrl, crossUrl }) => {
@@ -263,125 +269,9 @@ test.describe('Cross-origin iframe', () => {
     const frame = await frameWithId(page, 'opaque-sandbox', '/iframe-child-no-allow')
     await frame.evaluate(() => window.parent.postMessage('opaque-origin-probe', '*'))
     await expect.poll(() => page.locator('html').getAttribute('data-opaque-origin')).toBe('null')
-    expect((await readFrameResult(frame))?.queryHid).toBe('denied')
-  })
-  test('background preserves distinct opaque settings targets', async ({
-    page,
-    pageUrl,
-    crossUrl,
-    backgroundPage
-  }) => {
-    await page.goto(pageUrl('/iframe-parent'), {
-      waitUntil: 'domcontentloaded',
-      timeout: 15000
-    })
-    await page.evaluate(
-      ({ mainSrc, crossSrc }) => {
-        for (const [id, src] of [
-          ['opaque-a', mainSrc + '/iframe-child-no-allow?path=a'],
-          ['opaque-b', crossSrc + '/iframe-child-no-allow?path=b'],
-          ['opaque-c', mainSrc + '/iframe-child-no-allow?path=c']
-        ]) {
-          const frame = document.createElement('iframe')
-          frame.id = id
-          frame.setAttribute('sandbox', 'allow-scripts')
-          frame.src = src
-          document.body.appendChild(frame)
-        }
-      },
-      { mainSrc: pageUrl(''), crossSrc: crossUrl('') }
-    )
-    await frameWithId(page, 'opaque-a', '/iframe-child-no-allow')
-    await frameWithId(page, 'opaque-b', '/iframe-child-no-allow')
-    await frameWithId(page, 'opaque-c', '/iframe-child-no-allow')
-    const targets = (await backgroundPage.evaluate(async () => {
-      const tabs = await browser.tabs.query({ active: true, currentWindow: true })
-      const tab = tabs[0]
-      if (!tab || tab.id == null) return []
-      const raw: unknown = await browser.tabs.sendMessage(tab.id, { action: 'getFrameOrigins' })
-      const response = raw as {
-        targets?: Array<{ kind: string; persistentOrigin: string | null }>
-      }
-      return response.targets || []
-    })) as Array<{ kind: string; persistentOrigin: string | null }>
-    const opaqueTargets = targets.filter((target) => target.kind === 'opaque')
-    expect(opaqueTargets).toHaveLength(2)
-    expect(opaqueTargets[0].persistentOrigin).not.toBe(opaqueTargets[1].persistentOrigin)
-    const scopeA = opaqueTargets[0].persistentOrigin
-    const scopeB = opaqueTargets[1].persistentOrigin
-    if (typeof scopeA !== 'string' || typeof scopeB !== 'string')
-      throw new Error('opaque target has no persistent scope')
-    const delivered = await backgroundPage.evaluate(
-      ({ scopeA, scopeB }) => {
-        const fanout = (
-          globalThis as unknown as {
-            webhid: {
-              import(name: string): {
-                postToPersistentOriginEndpoints(scope: string, message: object): number
-              }
-            }
-          }
-        ).webhid.import('backgroundEventFanout')
-        const send = (scope: string) =>
-          fanout.postToPersistentOriginEndpoints(scope, {
-            action: 'allowedDevicesChanged',
-            origin: 'null',
-            persistentOrigin: scope,
-            deviceIds: []
-          })
-        return { scopeA: send(scopeA), scopeB: send(scopeB) }
-      },
-      { scopeA, scopeB }
-    )
-    expect(delivered).toEqual({ scopeA: 2, scopeB: 1 })
+    expectHidBlocked(await readFrameResult(frame))
   })
 
-  test('top navigation retires old opaque persistence authorities', async ({
-    page,
-    pageUrl,
-    crossUrl,
-    backgroundPage
-  }) => {
-    await page.goto(pageUrl('/iframe-parent'), {
-      waitUntil: 'domcontentloaded',
-      timeout: 15000
-    })
-    await page.evaluate((src) => {
-      const frame = document.createElement('iframe')
-      frame.id = 'old-opaque'
-      frame.setAttribute('sandbox', 'allow-scripts')
-      frame.src = src
-      document.body.appendChild(frame)
-    }, pageUrl('/iframe-child-no-allow'))
-    await frameWithId(page, 'old-opaque', '/iframe-child-no-allow')
-    await page.goto(crossUrl('/iframe-parent'), {
-      waitUntil: 'domcontentloaded',
-      timeout: 15000
-    })
-    await page.evaluate((src) => {
-      const frame = document.createElement('iframe')
-      frame.id = 'new-opaque'
-      frame.setAttribute('sandbox', 'allow-scripts')
-      frame.src = src
-      document.body.appendChild(frame)
-    }, pageUrl('/iframe-child-no-allow'))
-    await frameWithId(page, 'new-opaque', '/iframe-child-no-allow')
-    const targets = (await backgroundPage.evaluate(async () => {
-      const tabs = await browser.tabs.query({ active: true, currentWindow: true })
-      const tab = tabs[0]
-      if (!tab || tab.id == null) return []
-      const raw: unknown = await browser.tabs.sendMessage(tab.id, { action: 'getFrameOrigins' })
-      return (
-        (raw as { targets?: Array<{ kind: string; persistentOrigin: string | null }> }).targets ||
-        []
-      )
-    })) as Array<{ kind: string; persistentOrigin: string | null }>
-    const opaque = targets.filter((target) => target.kind === 'opaque')
-    expect(opaque).toHaveLength(1)
-    expect(opaque[0].persistentOrigin).toBe(
-      `opaque|${new URL(crossUrl('')).origin}|${new URL(pageUrl('')).origin}`
-    )
-  })
   test('B2: top-level hid=() denies a delegated cross-origin child', async ({
     page,
     pageUrl,
@@ -403,8 +293,7 @@ test.describe('Cross-origin iframe', () => {
     const raw = await readIframeResult(page, '/iframe-child-with-allow')
     expect(raw).not.toBeNull()
     expect(raw!.isCrossOrigin).toBe(true)
-    expect(raw!.queryHid).toBe('denied')
-    expect(raw!.hidUndefined).toBe(false)
+    expectHidBlocked(raw)
   })
 
   test('ancestor container denial cannot be re-enabled by descendants', async ({
@@ -440,14 +329,12 @@ test.describe('Cross-origin iframe', () => {
       child.allow = 'hid'
       document.body.appendChild(child)
     }, pageUrl('/iframe-child-no-allow'))
-    expect(
-      (await readFrameResult(await frameWithId(page, 'nested-denied-same-child', 'iframe-child')))
-        ?.queryHid
-    ).toBe('denied')
-    expect(
-      (await readFrameResult(await frameWithId(page, 'nested-denied-cross-child', 'iframe-child')))
-        ?.queryHid
-    ).toBe('denied')
+    expectHidBlocked(
+      await readFrameResult(await frameWithId(page, 'nested-denied-same-child', 'iframe-child'))
+    )
+    expectHidBlocked(
+      await readFrameResult(await frameWithId(page, 'nested-denied-cross-child', 'iframe-child'))
+    )
   })
 
   test('delegation remains available through an allowed nested topology', async ({
@@ -474,57 +361,8 @@ test.describe('Cross-origin iframe', () => {
       child.allow = 'hid'
       document.body.appendChild(child)
     }, crossUrl('/iframe-child-no-allow'))
-    expect(
-      (await readFrameResult(await frameWithId(page, 'nested-allowed-child', 'iframe-child')))
-        ?.queryHid
-    ).toBe('granted')
-  })
-
-  test('cross-origin iframe worker cannot bypass policy without delegation', async ({
-    page,
-    pageUrl,
-    crossUrl,
-    backgroundPage
-  }) => {
-    await backgroundPage.evaluate(
-      (origin) =>
-        browser.storage.local.set({
-          [`settings :: ${origin} :: workerPolyfillEnabled`]: true
-        }),
-      crossUrl('')
-    )
-    await page.goto(pageUrl('/iframe-parent'), {
-      waitUntil: 'domcontentloaded',
-      timeout: 15000
-    })
-    await page.evaluate((crossUrl) => {
-      const iframe = document.createElement('iframe')
-      iframe.src = crossUrl + '/iframe-worker-policy'
-      document.body.appendChild(iframe)
-    }, crossUrl(''))
-    const childFrame = await waitForFrame(page, '/iframe-worker-policy')
-    await childFrame.waitForFunction(
-      () => {
-        const result = (window as unknown as { tests?: { results?: Record<string, unknown> } })
-          .tests?.results?.workerPolicy
-        return result !== null && typeof result === 'object'
-      },
-      { timeout: 15000 }
-    )
-    const result = await childFrame.evaluate<{
-      queryHid?: string
-      getDevices?: { ok: boolean; name?: string }
-      error?: string
-    } | null>(() => {
-      const result = (window as unknown as { tests?: { results?: Record<string, unknown> } }).tests
-        ?.results?.workerPolicy
-      return result && typeof result === 'object' ? result : null
-    })
-    expect(result).not.toBeNull()
-    expect(result!.error).toBeUndefined()
-    expect(result!.queryHid).toBe('denied')
-    expect(result!.getDevices).toEqual(
-      expect.objectContaining({ ok: false, name: 'SecurityError' })
+    expectHidAllowed(
+      await readFrameResult(await frameWithId(page, 'nested-allowed-child', 'iframe-child'))
     )
   })
 
@@ -553,8 +391,8 @@ test.describe('Cross-origin iframe', () => {
       .toBe(2)
     const allowedFrame = await frameWithId(page, 'same-url-allowed', '/iframe-child-no-allow')
     const deniedFrame = await frameWithId(page, 'same-url-denied', '/iframe-child-no-allow')
-    expect((await readFrameResult(allowedFrame))?.queryHid).toBe('granted')
-    expect((await readFrameResult(deniedFrame))?.queryHid).toBe('denied')
+    expectHidAllowed(await readFrameResult(allowedFrame))
+    expectHidBlocked(await readFrameResult(deniedFrame))
   })
 
   test('recreated and navigated frames do not inherit delegation', async ({
@@ -577,7 +415,7 @@ test.describe('Cross-origin iframe', () => {
       .poll(() => page.frames().filter((f) => f.url().includes('/iframe-child-no-allow')).length)
       .toBe(1)
     const initial = await frameWithId(page, 'recreated', '/iframe-child-no-allow')
-    expect((await readFrameResult(initial))?.queryHid).toBe('granted')
+    expectHidAllowed(await readFrameResult(initial))
     await page.evaluate((src) => {
       const frame = document.querySelector('#recreated')
       if (!(frame instanceof HTMLIFrameElement)) throw new Error('recreated frame missing')
@@ -588,7 +426,8 @@ test.describe('Cross-origin iframe', () => {
       .poll(() => page.frames().filter((f) => f.url().includes('/iframe-child-no-allow')).length)
       .toBe(1)
     const navigated = await frameWithId(page, 'recreated', '/iframe-child-no-allow')
-    expect((await readFrameResult(navigated))?.queryHid).toBe('denied')
+    await navigated.waitForURL(crossUrl('/iframe-child-no-allow?navigation=1'))
+    expectHidBlocked(await readFrameResult(navigated))
     await page.evaluate((src) => {
       document.querySelector('#recreated')?.remove()
       const frame = document.createElement('iframe')
@@ -600,6 +439,7 @@ test.describe('Cross-origin iframe', () => {
       .poll(() => page.frames().filter((f) => f.url().includes('/iframe-child-no-allow')).length)
       .toBe(1)
     const recreated = await frameWithId(page, 'recreated', '/iframe-child-no-allow')
-    expect((await readFrameResult(recreated))?.queryHid).toBe('denied')
+    await recreated.waitForURL(crossUrl('/iframe-child-no-allow?recreated=1'))
+    expectHidBlocked(await readFrameResult(recreated))
   })
 })

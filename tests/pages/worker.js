@@ -14,11 +14,7 @@ async function tryCatch(fn) {
     hasHIDDevice: typeof self.HIDDevice === 'function',
     hasHIDInputReportEvent: typeof self.HIDInputReportEvent === 'function',
     hasHIDConnectionEvent: typeof self.HIDConnectionEvent === 'function',
-    hidToStringTag:
-      typeof navigator !== 'undefined' && navigator.hid
-        ? Object.prototype.toString.call(navigator.hid)
-        : 'undefined',
-    getDevicesResult: typeof navigator.hid.getDevices === 'function' ? { ok: true } : { ok: false },
+    getDevicesResult: await tryCatch(() => navigator.hid.getDevices()),
     requestDeviceError: await tryCatch(function () {
       return navigator.hid.requestDevice({ filters: [] })
     })

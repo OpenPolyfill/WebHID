@@ -11,26 +11,10 @@ interface WorkerResult {
   illegalConstructor: { ok: boolean; name?: string; message?: string }
 }
 
-test('Dedicated Workers expose the supported WebHID API', async ({
-  backgroundPage,
-  sharedPage,
-  pageUrl,
-  servers
+test('Dedicated Worker exposes WebHID APIs and rejects chooser requests', async ({
+  workerHidPage
 }) => {
-  const origin = `http://localhost:${servers.main.port}`
-  await backgroundPage.evaluate(
-    (origin) =>
-      browser.storage.local.set({
-        [`settings :: ${origin} :: workerPolyfillEnabled`]: true
-      }),
-    origin
-  )
-  await sharedPage.goto(pageUrl('/policy-check'), {
-    waitUntil: 'domcontentloaded',
-    timeout: 15000
-  })
-
-  const raw = await sharedPage.evaluate(
+  const raw = await workerHidPage.evaluate(
     () =>
       new Promise<WorkerResult>((resolve, reject) => {
         const worker = new Worker(`/worker.js?_=${Date.now()}`)

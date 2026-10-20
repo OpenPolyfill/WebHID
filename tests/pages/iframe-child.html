@@ -16,17 +16,18 @@
           }
         }
 
-        let qHid
+        let getDevices
         try {
-          qHid = (await navigator.permissions.query({ name: 'hid' })).state
+          const devices = await navigator.hid.getDevices()
+          getDevices = { ok: true, count: devices.length }
         } catch (e) {
-          qHid = 'ERROR: ' + e.message
+          getDevices = { ok: false, name: e.name, message: e.message }
         }
 
         const hidUndefined = typeof navigator.hid === 'undefined'
 
         window.tests = window.tests || { helper: {}, results: {} }
-        window.tests.results.perm = { isCrossOrigin, queryHid: qHid, hidUndefined }
+        window.tests.results.perm = { isCrossOrigin, getDevices, hidUndefined }
       })()
     </script>
   </body>

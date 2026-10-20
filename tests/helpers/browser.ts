@@ -20,7 +20,7 @@ import {
 type Servers = { main: { port: number; server: Server }; cross: { port: number; server: Server } }
 
 export const test = base.extend<
-  PlaywrightTestArgs & PlaywrightTestOptions,
+  PlaywrightTestArgs & PlaywrightTestOptions & { workerHidPage: Page },
   PlaywrightWorkerArgs &
     PlaywrightWorkerOptions & {
       servers: Servers
@@ -60,6 +60,35 @@ export const test = base.extend<
     },
     { scope: 'worker' }
   ],
+  workerHidPage: async ({ backgroundPage, sharedPage, pageUrl }, use) => {
+    const key = `settings :: ${new URL(pageUrl('')).origin} :: workerPolyfillEnabled`
+    const previous = await backgroundPage.evaluate(async (settingKey) => {
+      const values = (await browser.storage.local.get(settingKey)) as Record<string, unknown>
+      return {
+        exists: Object.prototype.hasOwnProperty.call(values, settingKey),
+        value: values[settingKey] as boolean | undefined
+      }
+    }, key)
+    try {
+      await backgroundPage.evaluate(
+        (settingKey) => browser.storage.local.set({ [settingKey]: true }),
+        key
+      )
+      await sharedPage.goto(pageUrl('/policy-check'), {
+        waitUntil: 'domcontentloaded',
+        timeout: 15000
+      })
+      await use(sharedPage)
+    } finally {
+      await backgroundPage.evaluate(
+        ({ settingKey, previous }) => {
+          if (previous.exists) return browser.storage.local.set({ [settingKey]: previous.value })
+          return browser.storage.local.remove(settingKey)
+        },
+        { settingKey: key, previous }
+      )
+    }
+  },
 
   page: pageFixture(),
 

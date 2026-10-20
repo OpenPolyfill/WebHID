@@ -13,7 +13,6 @@ export async function navigateToPolicyCheck(
 export interface PermResult {
   isTop?: boolean
   isCrossOrigin?: boolean
-  queryHid?: string
   hidUndefined?: boolean
   getDevices?: { ok: boolean; count?: number; name?: string; message?: string }
 }
@@ -42,4 +41,3 @@ export async function waitForPermResult(page: Page, timeout = 10000): Promise<Pe
   )
   return getPermResult(page)
 }
-

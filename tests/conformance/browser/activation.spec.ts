@@ -1,14 +1,7 @@
 import { test, expect } from '../../helpers/browser.js'
 import { navigateToPolicyCheck } from '../../helpers/browser-utils.js'
+
 test.describe('requestDevice conformance', () => {
-  let origin: string
-  const settingKey = () => `settings :: ${origin} :: allowActivationlessRequestDevice`
-
-  test.beforeAll(async ({ backgroundPage, servers }) => {
-    origin = `http://localhost:${servers.main.port}`
-    await backgroundPage.evaluate((key) => browser.storage.local.remove(key), settingKey())
-  })
-
   test('requestDevice without user activation rejects with SecurityError', async ({
     sharedPage,
     pageUrl
@@ -31,21 +24,16 @@ test.describe('requestDevice conformance', () => {
       undefined,
       { timeout: 10000 }
     )
-    const result = await sharedPage
-      .locator('html')
-      .getAttribute('data-request-device-probe-result')
+    const result = await sharedPage.locator('html').getAttribute('data-request-device-probe-result')
     expect(result).toBe('SecurityError')
   })
 
-  test('requestDevice validates option and filter shapes', async ({
-    backgroundPage,
-    sharedPage,
-    pageUrl
-  }) => {
-    await backgroundPage.evaluate((key) => browser.storage.local.set({ [key]: true }), settingKey())
-    try {
-      await navigateToPolicyCheck(sharedPage, pageUrl)
-      const result = await sharedPage.evaluate(async () => {
+  test('requestDevice validates option and filter shapes', async ({ sharedPage, pageUrl }) => {
+    await navigateToPolicyCheck(sharedPage, pageUrl)
+    await sharedPage.evaluate(() => {
+      const button = document.createElement('button')
+      button.id = 'request-device-validation'
+      button.addEventListener('click', () => {
         const options: unknown[] = [
           undefined,
           {},
@@ -59,20 +47,31 @@ test.describe('requestDevice conformance', () => {
         const requestDevice = navigator.hid.requestDevice.bind(navigator.hid) as unknown as (
           options?: unknown
         ) => Promise<unknown>
-        const errors: string[] = []
-        for (const option of options) {
+        const results = options.map((option) => {
           try {
-            await requestDevice(option)
-            errors.push('resolved')
+            return Promise.resolve(requestDevice(option)).then(
+              () => 'resolved',
+              (error: unknown) => (error instanceof Error ? error.name : String(error))
+            )
           } catch (error) {
-            errors.push(error instanceof Error ? error.name : String(error))
+            return Promise.resolve(error instanceof Error ? error.name : String(error))
           }
-        }
-        return errors
+        })
+        void Promise.all(results).then((errors) => {
+          document.documentElement.dataset.requestDeviceValidationResults = JSON.stringify(errors)
+        })
       })
-      expect(result).toEqual(new Array(8).fill('TypeError'))
-    } finally {
-      await backgroundPage.evaluate((key) => browser.storage.local.remove(key), settingKey())
-    }
+      document.body.append(button)
+    })
+    await sharedPage.locator('#request-device-validation').click()
+    await sharedPage.waitForFunction(
+      () => document.documentElement.dataset.requestDeviceValidationResults != null,
+      undefined,
+      { timeout: 10000 }
+    )
+    const errors = await sharedPage.evaluate(
+      () => JSON.parse(document.documentElement.dataset.requestDeviceValidationResults!) as string[]
+    )
+    expect(errors).toEqual(new Array(8).fill('TypeError'))
   })
 })

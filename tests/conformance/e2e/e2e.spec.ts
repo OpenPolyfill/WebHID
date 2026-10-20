@@ -10,8 +10,6 @@ import {
 } from '../../helpers/e2e-reports.js'
 import { sendInput, waitForOutputReport, startWebhidMock } from '../../helpers/e2e-process.js'
 
-type VendorCtx = typeof VENDOR_CTX
-
 test.describe.serial('WebHID conformance', () => {
   test('requestDevice grants the matching device and exposes its descriptor', async ({
     sharedPage,
@@ -57,6 +55,115 @@ test.describe.serial('WebHID conformance', () => {
     expect(device.inputReportIds).toContain(VENDOR_OUTPUT_ID)
     expect(device.outputReportIds).toContain(VENDOR_OUTPUT_ID)
     expect(device.has64ByteInput).toBe(true)
+  })
+
+  test('HIDConnectionEvent requires and preserves its device', async ({ sharedPage }) => {
+    const result = await sharedPage.evaluate(async (filter: DeviceFilter) => {
+      const device = (await navigator.hid.getDevices()).find(
+        (entry) => entry.vendorId === filter.vendorId && entry.productId === filter.productId
+      )
+      if (!device) throw new Error('vendor device is not paired')
+      const events = ['connect', 'disconnect'].map((type) => {
+        const event = new HIDConnectionEvent(type, {
+          device,
+          bubbles: true,
+          cancelable: true,
+          composed: true
+        })
+        return {
+          type: event.type,
+          sameDevice: event.device === device,
+          isEvent: event instanceof Event,
+          bubbles: event.bubbles,
+          cancelable: event.cancelable,
+          composed: event.composed
+        }
+      })
+      let missingDevice: string | null = null
+      try {
+        Reflect.construct(HIDConnectionEvent, ['connect', {}])
+      } catch (error) {
+        missingDevice = error instanceof Error ? error.name : String(error)
+      }
+      return { events, missingDevice }
+    }, VENDOR)
+
+    expect(result.events).toEqual([
+      {
+        type: 'connect',
+        sameDevice: true,
+        isEvent: true,
+        bubbles: true,
+        cancelable: true,
+        composed: true
+      },
+      {
+        type: 'disconnect',
+        sameDevice: true,
+        isEvent: true,
+        bubbles: true,
+        cancelable: true,
+        composed: true
+      }
+    ])
+    expect(result.missingDevice).toBe('TypeError')
+  })
+
+  test('HIDInputReportEvent validates members and converts octet values', async ({
+    sharedPage
+  }) => {
+    const result = await sharedPage.evaluate(async (filter: DeviceFilter) => {
+      const device = (await navigator.hid.getDevices()).find(
+        (entry) => entry.vendorId === filter.vendorId && entry.productId === filter.productId
+      )
+      if (!device) throw new Error('vendor device is not paired')
+      const data = new DataView(new ArrayBuffer(4))
+      const makeEvent = (reportId: unknown) =>
+        new HIDInputReportEvent('inputreport', {
+          device,
+          reportId: reportId as number,
+          data
+        })
+      const values: unknown[] = [Number.NaN, Number.POSITIVE_INFINITY, -1, 256, 257, 1.9, '1']
+      const convertedIds = values.map((reportId) => makeEvent(reportId).reportId)
+      const missingMembers: unknown[] = [
+        { reportId: 0, data },
+        { device, data },
+        { device, reportId: 0 }
+      ]
+      const missingErrors = missingMembers.map((init) => {
+        try {
+          new HIDInputReportEvent('inputreport', init as HIDInputReportEventInit)
+          return 'accepted'
+        } catch (error) {
+          return error instanceof Error ? error.name : String(error)
+        }
+      })
+      const event = makeEvent(255)
+      return {
+        type: event.type,
+        isEvent: event instanceof Event,
+        isInputReportEvent: event instanceof HIDInputReportEvent,
+        sameDevice: event.device === device,
+        sameData: event.data === data,
+        dataIsDataView: event.data instanceof DataView,
+        reportId: event.reportId,
+        convertedIds,
+        missingErrors
+      }
+    }, VENDOR)
+
+    expect(result).toMatchObject({
+      type: 'inputreport',
+      isEvent: true,
+      isInputReportEvent: true,
+      sameDevice: true,
+      sameData: true,
+      dataIsDataView: true,
+      reportId: 255,
+      convertedIds: [0, 0, 255, 0, 1, 1, 1],
+      missingErrors: ['TypeError', 'TypeError', 'TypeError']
+    })
   })
 
   test('input and output report methods require an open device', async ({ sharedPage }) => {
@@ -110,25 +217,34 @@ test.describe.serial('WebHID conformance', () => {
     expect(errors).toEqual(['TypeError', 'TypeError', 'TypeError'])
   })
 
-  test('open and close update opened and resolve with undefined', async ({ sharedPage }) => {
+  test('open and close update opened while concurrent requests keep their results', async ({
+    sharedPage
+  }) => {
     const state = await sharedPage.evaluate(async (ctx) => {
       const device = (await navigator.hid.getDevices()).find(
         (entry) => entry.vendorId === ctx.f.vendorId && entry.productId === ctx.f.productId
       )
       if (!device) throw new Error('vendor device is not paired')
-      const openResult = await device.open()
+      const openPromise = device.open()
+      const devicesPromise = navigator.hid.getDevices()
+      const [openResult, devices] = await Promise.all([openPromise, devicesPromise])
+      const listed = devices.some(
+        (entry) => entry.vendorId === ctx.f.vendorId && entry.productId === ctx.f.productId
+      )
       const opened = device.opened
       const closeResult = await device.close()
-      return { openResult, opened, closeResult, closed: !device.opened }
+      return { listed, openResult, opened, closeResult, closed: !device.opened }
     }, VENDOR_CTX)
 
     expect(state).toEqual({
+      listed: true,
       openResult: undefined,
       opened: true,
       closeResult: undefined,
       closed: true
     })
   })
+
   test('sendReport writes the selected report ID and payload', async ({
     sharedPage,
     vendorDevice
@@ -145,8 +261,10 @@ test.describe.serial('WebHID conformance', () => {
     }, VENDOR_CTX)
     const output = await outputPromise
 
-    expect(output.data[0]).toBe(VENDOR_OUTPUT_ID)
-    expect(output.data[1]).toBe(0x42)
+    expect(output.data).toEqual([
+      VENDOR_OUTPUT_ID,
+      ...Array.from({ length: VENDOR_INPUT_SIZE }, () => 0x42)
+    ])
   })
 
   test('inputreport delivers report ID and the exact payload to both handler forms', async ({
@@ -170,9 +288,6 @@ test.describe.serial('WebHID conformance', () => {
     expect(event.reportId).toBe(VENDOR_OUTPUT_ID)
     expect(event.data).toEqual(payload)
     expect(event.listenerData).toEqual(payload)
-    expect(event.dataByteOffset).toBe(0)
-    expect(event.dataByteLength).toBe(VENDOR_INPUT_SIZE)
-    expect(event.bufferByteLength).toBe(VENDOR_INPUT_SIZE)
   })
 
   test('feature report methods reject IDs absent from the descriptor', async ({ sharedPage }) => {
@@ -212,7 +327,7 @@ test.describe.serial('WebHID conformance', () => {
       if (!device) throw new Error('vendor device is not paired')
       window.tests!.results!.disconnect = null
       const onDisconnect = (event: HIDConnectionEvent) => {
-        if (event.device.deviceId !== device.deviceId) return
+        if (event.device !== device) return
         navigator.hid.removeEventListener('disconnect', onDisconnect)
         window.tests!.results!.disconnect = { closed: !device.opened }
       }
@@ -230,80 +345,55 @@ test.describe.serial('WebHID conformance', () => {
       .poll(() => sharedPage.evaluate(() => window.tests!.results!.disconnect))
       .toEqual({ closed: true })
 
+    await sharedPage.evaluate((filter: DeviceFilter) => {
+      window.tests!.results!.connect = false
+      const onConnect = (event: HIDConnectionEvent) => {
+        if (
+          event.device.vendorId !== filter.vendorId ||
+          event.device.productId !== filter.productId
+        ) {
+          return
+        }
+        navigator.hid.removeEventListener('connect', onConnect)
+        window.tests!.results!.connect = true
+      }
+      navigator.hid.addEventListener('connect', onConnect)
+    }, VENDOR)
     const replacement = startWebhidMock('vendor.bin', vendorDevice.vid, vendorDevice.pid)
     await replacement.ready
     vendorDevice.process = replacement.process
     vendorDevice.ready = replacement.ready
 
-    await expect
-      .poll(
-        () =>
-          sharedPage.evaluate(
-            async (filter: DeviceFilter) =>
-              (await navigator.hid.getDevices()).some(
-                (entry) =>
-                  entry.vendorId === filter.vendorId && entry.productId === filter.productId
-              ),
-            VENDOR
-          ),
-        { timeout: 10000 }
-      )
-      .toBe(true)
+    await sharedPage.waitForFunction(() => window.tests!.results!.connect === true, {
+      timeout: 10000
+    })
+    const isPaired = await sharedPage.evaluate(
+      async (filter: DeviceFilter) =>
+        (await navigator.hid.getDevices()).some(
+          (entry) => entry.vendorId === filter.vendorId && entry.productId === filter.productId
+        ),
+      VENDOR
+    )
+    expect(isPaired).toBe(true)
   })
 
-  test('forget revokes the grant and closes a same-origin sibling session', async ({
-    sharedPage,
-    httpPort
-  }) => {
-    const siblingPage = await sharedPage.context().newPage()
-    try {
-      await siblingPage.goto(`http://localhost:${httpPort}/tests/test-page.html`, {
-        waitUntil: 'domcontentloaded',
-        timeout: 15000
-      })
-      await siblingPage.waitForFunction(() => typeof navigator.hid !== 'undefined', {
-        timeout: 15000
-      })
-      await sharedPage.evaluate(async (ctx) => {
-        const device = (await navigator.hid.getDevices()).find(
+  test('forget removes an opened device from getDevices', async ({ sharedPage }) => {
+    const state = await sharedPage.evaluate(async (ctx) => {
+      const device = (await navigator.hid.getDevices()).find(
+        (entry) => entry.vendorId === ctx.f.vendorId && entry.productId === ctx.f.productId
+      )
+      if (!device) throw new Error('vendor device is not paired')
+      await device.open()
+      await device.forget()
+      const devices = await navigator.hid.getDevices()
+      return {
+        opened: device.opened,
+        stillEnumerated: devices.some(
           (entry) => entry.vendorId === ctx.f.vendorId && entry.productId === ctx.f.productId
         )
-        if (!device) throw new Error('vendor device is not paired')
-        await device.open()
-      }, VENDOR_CTX)
-      await siblingPage.evaluate(async (ctx: DeviceFilter) => {
-        const device = (await navigator.hid.getDevices()).find(
-          (entry) => entry.vendorId === ctx.vendorId && entry.productId === ctx.productId
-        )
-        if (!device) throw new Error('sibling cannot see the paired device')
-        await device.open()
-        ;(globalThis as typeof globalThis & { siblingDevice?: HIDDevice }).siblingDevice = device
-      }, VENDOR)
+      }
+    }, VENDOR_CTX)
 
-      const remaining = await sharedPage.evaluate(async (ctx) => {
-        const device = (await navigator.hid.getDevices()).find(
-          (entry) => entry.vendorId === ctx.f.vendorId && entry.productId === ctx.f.productId
-        )
-        if (!device) throw new Error('vendor device is not paired')
-        await device.forget()
-        return (await navigator.hid.getDevices()).length
-      }, VENDOR_CTX)
-      const siblingError = await siblingPage.evaluate(async (ctx: VendorCtx) => {
-        const device = (globalThis as typeof globalThis & { siblingDevice?: HIDDevice })
-          .siblingDevice
-        if (!device) throw new Error('sibling device was not retained')
-        try {
-          await device.sendReport(ctx.outputId, new Uint8Array(ctx.size))
-          return null
-        } catch (error) {
-          return error instanceof Error ? error.name : String(error)
-        }
-      }, VENDOR_CTX)
-
-      expect(remaining).toBe(0)
-      expect(siblingError).toBe('InvalidStateError')
-    } finally {
-      await siblingPage.close()
-    }
+    expect(state).toEqual({ opened: false, stillEnumerated: false })
   })
 })

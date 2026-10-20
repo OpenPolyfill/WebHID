@@ -111,7 +111,7 @@ async function runFanout(
   }
 }
 
-test.describe.serial('Public input report fan-out', () => {
+test.describe.serial('OpenPolyfill input report fan-out', () => {
   test('same-origin child and parent both receive the input report', async ({
     sharedPage,
     backgroundPage,
@@ -164,7 +164,8 @@ test.describe.serial('Public input report fan-out', () => {
       sendInput(vendorDevice, 1, PACKET)
       await sharedPage.waitForFunction(
         () => {
-          const counts = window.tests?.results?.fanoutCounts
+          const counts = window.tests?.results?.fanoutCounts as
+            { page?: number; worker?: number } | undefined
           return counts?.page === 1 && counts.worker === 1
         },
         { timeout: 15000 }
@@ -173,9 +174,13 @@ test.describe.serial('Public input report fan-out', () => {
         timeout: 15000
       })
       sendInput(vendorDevice, 1, PACKET)
-      await sharedPage.waitForFunction(() => window.tests?.results?.fanoutCounts?.page === 2, {
-        timeout: 15000
-      })
+      await sharedPage.waitForFunction(
+        () => {
+          const counts = window.tests?.results?.fanoutCounts as { page?: number } | undefined
+          return counts?.page === 2
+        },
+        { timeout: 15000 }
+      )
       await expect(sharedPage.evaluate(() => window.tests?.results?.fanoutCounts)).resolves.toEqual(
         {
           page: 2,
@@ -252,13 +257,27 @@ test.describe.serial('Public input report fan-out', () => {
         iframe.src = '/tests/test-page.html'
         document.body.appendChild(iframe)
       })
-      await sharedPage.waitForFunction(
-        () => document.querySelector<HTMLIFrameElement>('#frame-owner')?.contentWindow != null,
-        { timeout: 15000 }
-      )
-      const child = sharedPage.frames().find((frame) => frame !== sharedPage.mainFrame())
-      expect(child).toBeTruthy()
-      await child!.waitForFunction(() => typeof navigator.hid !== 'undefined', undefined, {
+      await expect
+        .poll(
+          () =>
+            sharedPage
+              .frames()
+              .some(
+                (frame) =>
+                  frame !== sharedPage.mainFrame() &&
+                  frame.url() === `${origin}/tests/test-page.html`
+              ),
+          { timeout: 15000 }
+        )
+        .toBe(true)
+      const child = sharedPage
+        .frames()
+        .find(
+          (frame) =>
+            frame !== sharedPage.mainFrame() && frame.url() === `${origin}/tests/test-page.html`
+        )
+      if (!child) throw new Error('child frame was not attached')
+      await child.waitForFunction(() => typeof navigator.hid !== 'undefined', undefined, {
         timeout: 15000
       })
       await sharedPage.evaluate(async () => {
@@ -267,13 +286,12 @@ test.describe.serial('Public input report fan-out', () => {
         await device.open()
         let reports = 0
         device.addEventListener('inputreport', () => reports++)
-        ;(window as typeof window & { __reports?: number }).__reports = reports
         Object.defineProperty(window, '__getReports', {
           configurable: true,
           value: () => reports
         })
       })
-      await child!.evaluate(async () => {
+      await child.evaluate(async () => {
         const device = (await navigator.hid.getDevices())[0]
         if (!device) throw new Error('child frame device missing')
         await device.open()
@@ -289,16 +307,16 @@ test.describe.serial('Public input report fan-out', () => {
         () => (window as typeof window & { __getReports?: () => number }).__getReports?.() === 1,
         { timeout: 15000 }
       )
-      await child!.waitForFunction(
+      await child.waitForFunction(
         () => (window as typeof window & { __getReports?: () => number }).__getReports?.() === 1,
         undefined,
         { timeout: 15000 }
       )
-      await child!.goto(`${origin}/tests/test-page.html`, { waitUntil: 'domcontentloaded' })
-      await child!.waitForFunction(() => typeof navigator.hid !== 'undefined', undefined, {
+      await child.goto(`${origin}/tests/test-page.html`, { waitUntil: 'domcontentloaded' })
+      await child.waitForFunction(() => typeof navigator.hid !== 'undefined', undefined, {
         timeout: 15000
       })
-      await child!.evaluate(async () => {
+      await child.evaluate(async () => {
         const device = (await navigator.hid.getDevices())[0]
         if (!device) throw new Error('reloaded child device missing')
         await device.open()
@@ -314,7 +332,7 @@ test.describe.serial('Public input report fan-out', () => {
         () => (window as typeof window & { __getReports?: () => number }).__getReports?.() === 2,
         { timeout: 15000 }
       )
-      await child!.waitForFunction(
+      await child.waitForFunction(
         () => (window as typeof window & { __getReports?: () => number }).__getReports?.() === 1,
         undefined,
         { timeout: 15000 }

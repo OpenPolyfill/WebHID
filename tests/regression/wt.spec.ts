@@ -25,10 +25,7 @@ test('WebHID report I/O works with the WebTransport dataPlane setting', async ({
   }, settingKey)
 
   try {
-    await backgroundPage.evaluate(
-      (key) => browser.storage.local.set({ [key]: 'wt' }),
-      settingKey
-    )
+    await backgroundPage.evaluate((key) => browser.storage.local.set({ [key]: 'wt' }), settingKey)
     await sharedPage.reload({ waitUntil: 'domcontentloaded' })
     await sharedPage.waitForFunction(() => typeof navigator.hid !== 'undefined', {
       timeout: 15000
@@ -46,8 +43,7 @@ test('WebHID report I/O works with the WebTransport dataPlane setting', async ({
     const outputPromise = waitForOutputReport(vendorDevice)
     await sharedPage.evaluate(async (ctx) => {
       const device = (await navigator.hid.getDevices()).find(
-        (entry) =>
-          entry.vendorId === ctx.f.vendorId && entry.productId === ctx.f.productId
+        (entry) => entry.vendorId === ctx.f.vendorId && entry.productId === ctx.f.productId
       )
       if (!device) throw new Error('vendor device is not paired')
       await device.sendReport(ctx.outputId, new Uint8Array(ctx.size).fill(0x42))
@@ -62,12 +58,13 @@ test('WebHID report I/O works with the WebTransport dataPlane setting', async ({
     const input = await receiveReport()
     expect(input.reportId).toBe(VENDOR_OUTPUT_ID)
     expect(input.data).toEqual(payload)
-    expect(input.bufferByteLength).toBe(VENDOR_INPUT_SIZE)
+    expect(input.dataByteOffset).toBe(0)
+    expect(input.dataByteLength).toBe(VENDOR_INPUT_SIZE)
+    expect(input.bufferByteLength).toBe(input.dataByteLength)
 
     await sharedPage.evaluate(async (ctx) => {
       const device = (await navigator.hid.getDevices()).find(
-        (entry) =>
-          entry.vendorId === ctx.f.vendorId && entry.productId === ctx.f.productId
+        (entry) => entry.vendorId === ctx.f.vendorId && entry.productId === ctx.f.productId
       )
       if (device?.opened) await device.close()
     }, VENDOR_CTX)
