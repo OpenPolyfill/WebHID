@@ -41,6 +41,7 @@
   let controlPort = null
   let controlPending = null
   let nextHandshakeReqId = 0
+  let nextControlRequestId = 0
   const handshakePending = new Map()
   const pickerResultHandlers = new Map()
   let authorityOrigin = ''
@@ -94,7 +95,14 @@
    */
   function sendBackgroundRequest(request, context = null) {
     return new Promise((resolve, reject) => {
-      controlQueue.push({ request, resolve, reject, context })
+      const controlReqId = 'control:' + ++nextControlRequestId
+      controlQueue.push({
+        request: { ...request, controlReqId },
+        controlReqId,
+        resolve,
+        reject,
+        context
+      })
       pumpControlQueue()
     })
   }
@@ -169,10 +177,7 @@
         message.persistentOrigin === persistentOrigin
       ) {
         const origin = message.persistentOrigin
-        allowedByOrigin.set(
-          origin,
-          new Set(message.deviceIds.map((deviceId) => String(deviceId)))
-        )
+        allowedByOrigin.set(origin, new Set(message.deviceIds.map((deviceId) => String(deviceId))))
         loadedOrigins.add(origin)
         flushAllowedDeviceIdsQueue(origin)
         return
@@ -189,8 +194,9 @@
           return
         }
       }
-      if (controlPending) {
+      if (message && message.controlReqId != null) {
         const pending = controlPending
+        if (!pending || pending.controlReqId !== message.controlReqId) return
         controlPending = null
         pending.resolve(message)
         pumpControlQueue()
@@ -549,8 +555,7 @@
   function wireStatusListener() {
     browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
       const isStatusRequest =
-        request.action === 'getDataPlaneStatus' ||
-        request.action === 'getDataPlaneStatusForOrigin'
+        request.action === 'getDataPlaneStatus' || request.action === 'getDataPlaneStatusForOrigin'
       if (
         request.action !== 'getOpenDeviceIds' &&
         !isStatusRequest &&
@@ -1112,10 +1117,7 @@
         origin
       })
       if (resp && Array.isArray(resp.deviceIds)) {
-        allowedByOrigin.set(
-          origin,
-          new Set(resp.deviceIds.map((deviceId) => String(deviceId)))
-        )
+        allowedByOrigin.set(origin, new Set(resp.deviceIds.map((deviceId) => String(deviceId))))
       } else {
         allowedByOrigin.set(origin, new Set())
       }
@@ -2140,10 +2142,7 @@
         return false
       }
       try {
-        pagePort.postMessage(
-          { type: 'brokerDataPort', deviceId, generation },
-          [pageDataPort]
-        )
+        pagePort.postMessage({ type: 'brokerDataPort', deviceId, generation }, [pageDataPort])
       } catch {
         try {
           pageDataPort.close()
@@ -2183,7 +2182,6 @@
     await sendBrokerRequest({ type: 'nmDetach', deviceId, clientKey }, key).catch(() => {})
   }
 
-
   /**
    * Handles report requests arriving on the data port transferred to a child
    * MAIN realm. The top owns the other endpoint and the shared NM runtime port.
@@ -2196,7 +2194,11 @@
    */
   function handleTopChildDataMessage(context, deviceId, clientKey, message, replyPort) {
     if (!message) return
-    if (message.type !== 'send' && message.type !== 'sendFeature' && message.type !== 'receiveFeature')
+    if (
+      message.type !== 'send' &&
+      message.type !== 'sendFeature' &&
+      message.type !== 'receiveFeature'
+    )
       return
     const key = brokerAttachmentKey(context, deviceId, clientKey)
     if (!brokerAttachments.has(key)) {
@@ -2229,15 +2231,9 @@
       ensureRuntimeDataPort(deviceId).postMessage(request)
     } catch {
       dataPending.delete(reqId)
-      handleWorkerReportResponse(
-        { ...message, reqId: message.reqId },
-        replyPort,
-        { s: 503 }
-      )
+      handleWorkerReportResponse({ ...message, reqId: message.reqId }, replyPort, { s: 503 })
     }
   }
-
-
 
   /**
    * Handles only the authenticated NM broker protocol on a top-owned private
@@ -2931,13 +2927,7 @@
       nmPlanes.add(key)
       const brokered = fanoutCandidate && brokerPairReady
       if (brokered) {
-        const attached = await attachNmBroker(
-          context,
-          deviceId,
-          response.t,
-          clientKey,
-          generation
-        )
+        const attached = await attachNmBroker(context, deviceId, response.t, clientKey, generation)
         if (!attached) {
           nmPlanes.delete(key)
           return { accepted: false, error: 'NM broker attach failed' }
@@ -3486,7 +3476,6 @@
     }
   }
 
-
   /** @returns {void} */
   function handleGlobalReset() {
     logger.warn('global reset: clearing daemon state')
@@ -3880,10 +3869,7 @@
         message.persistentOrigin === persistentOrigin
       ) {
         const origin = message.persistentOrigin
-        allowedByOrigin.set(
-          origin,
-          new Set(message.deviceIds.map((deviceId) => String(deviceId)))
-        )
+        allowedByOrigin.set(origin, new Set(message.deviceIds.map((deviceId) => String(deviceId))))
         loadedOrigins.add(origin)
         flushAllowedDeviceIdsQueue(origin)
       }

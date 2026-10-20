@@ -709,7 +709,10 @@
           .then(async (response) => {
             if (typeof response.P === 'number') lastHidPermission = response.P
             if (http.isOk(response.s) && response.i) {
-              const stillAllowed = deviceIdInList(await getAllowedDevices(persistentOrigin), deviceId)
+              const stillAllowed = deviceIdInList(
+                await getAllowedDevices(persistentOrigin),
+                deviceId
+              )
               const ownerStillCurrent = scopeAuthorityIsCurrent(authority)
               if (!stillAllowed || !ownerStillCurrent) {
                 if (response.t)
@@ -1183,8 +1186,7 @@
   function handleGetDataPlaneStatus(request, sender, sendResponse, port) {
     const tabId = Number.isInteger(request.tabId) ? request.tabId : sender.tab?.id
     const endpoint = endpointForSender(request, sender, port)
-    const requestedOrigin =
-      typeof request.statusOrigin === 'string' ? request.statusOrigin : null
+    const requestedOrigin = typeof request.statusOrigin === 'string' ? request.statusOrigin : null
     const endpointOrigin = endpoint ? endpoint.persistentOrigin || endpoint.origin : ''
     const origin =
       endpoint && requestedOrigin
@@ -1320,7 +1322,10 @@
     if (fromPage) {
       getAllowedDevices(request.origin || '').then((ids) => {
         const tabId = sender.tab != null ? sender.tab.id : undefined
-        if (deviceIdInList(ids, request.deviceId) || isTabAuthorizedForDevice(tabId, request.deviceId)) {
+        if (
+          deviceIdInList(ids, request.deviceId) ||
+          isTabAuthorizedForDevice(tabId, request.deviceId)
+        ) {
           getDeviceInfo(request.deviceId).then((device) => sendResponse({ device }))
         } else {
           sendResponse({ device: null })
@@ -1985,6 +1990,8 @@
           if (responded) return
           responded = true
           const responseMessage = { ...(response || {}) }
+          if (effectiveRequest.controlReqId != null)
+            responseMessage.controlReqId = effectiveRequest.controlReqId
           if (effectiveRequest.reqId != null) responseMessage.reqId = effectiveRequest.reqId
           try {
             port.postMessage(responseMessage)

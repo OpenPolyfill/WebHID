@@ -25,7 +25,6 @@ test.describe('Permissions Policy', () => {
     expect(r!.queryHid).toBe('denied')
     expect(r!.hidUndefined || r!.getDevices?.ok === false).toBe(true)
   })
-
 })
 
 test('same-origin document policies stay isolated across tabs', async ({ page, pageUrl }) => {
@@ -181,42 +180,38 @@ test.describe('Cross-origin iframe', () => {
       waitUntil: 'domcontentloaded',
       timeout: 15000
     })
-    // Register the top document's browser-owned endpoint before child delegation queries begin.
     expect(
       await page.evaluate(async () => (await navigator.permissions.query({ name: 'hid' })).state)
     ).toBe('granted')
-    await page.evaluate(
-      ({ main, cross, pageUrlForTest }) => {
-        const add = (id: string, src: string, allow: string) => {
+    const checkFrame = async (id: string, src: string, allow: string, expected: string) => {
+      await page.evaluate(
+        ({ id, src, allow }) => {
           const frame = document.createElement('iframe')
           frame.id = id
           frame.src = src
           frame.allow = allow
           document.body.appendChild(frame)
-        }
-        add('allow-none', cross + '/iframe-child-no-allow', "hid 'none'")
-        add('allow-other', cross + '/iframe-child-no-allow', `hid ${main}`)
-        add('allow-self', pageUrlForTest, "hid 'self'")
-        add('allow-bare', cross + '/iframe-child-no-allow', 'hid')
-      },
-      { main: pageUrl(''), cross: crossUrl(''), pageUrlForTest: pageUrl('/iframe-child-no-allow') }
-    )
-    await expect
-      .poll(
-        () => page.frames().filter((frame) => frame.url().includes('/iframe-child-no-allow')).length
+        },
+        { id, src, allow }
       )
-      .toBe(4)
-    expect(
-      (await readFrameResult(await frameWithId(page, 'allow-none', 'iframe-child')))?.queryHid
-    ).toBe('denied')
-    expect(
-      (await readFrameResult(await frameWithId(page, 'allow-other', 'iframe-child')))?.queryHid
-    ).toBe('denied')
-    expect(
-      (await readFrameResult(await frameWithId(page, 'allow-self', 'iframe-child')))?.queryHid
-    ).toBe('granted')
-    const bare = await frameWithId(page, 'allow-bare', 'iframe-child')
-    expect((await readFrameResult(bare))?.queryHid).toBe('granted')
+      const frame = await frameWithId(page, id, 'iframe-child')
+      expect((await readFrameResult(frame))?.queryHid).toBe(expected)
+      return frame
+    }
+    await checkFrame('allow-none', crossUrl('/iframe-child-no-allow'), "hid 'none'", 'denied')
+    await checkFrame(
+      'allow-other',
+      crossUrl('/iframe-child-no-allow'),
+      `hid ${pageUrl('')}`,
+      'denied'
+    )
+    await checkFrame('allow-self', pageUrl('/iframe-child-no-allow'), "hid 'self'", 'granted')
+    const bare = await checkFrame(
+      'allow-bare',
+      crossUrl('/iframe-child-no-allow'),
+      'hid',
+      'granted'
+    )
     await bare.evaluate((url) => {
       window.location.href = url
     }, pageUrl('/iframe-child-no-allow'))
