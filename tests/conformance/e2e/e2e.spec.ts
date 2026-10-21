@@ -475,6 +475,7 @@ test.describe.serial('WebHID conformance', () => {
 
     expect(errors).toEqual(['InvalidStateError', 'InvalidStateError', 'InvalidStateError'])
   })
+
   test('report methods reject octet conversion errors with Promises', async ({ sharedPage }) => {
     const results = await sharedPage.evaluate(async (ctx) => {
       const device = (await navigator.hid.getDevices()).find(

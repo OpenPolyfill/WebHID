@@ -2,7 +2,7 @@ import { test, expect } from '../../helpers/browser.js'
 import { navigateToPolicyCheck } from '../../helpers/browser-utils.js'
 
 test.describe('requestDevice conformance', () => {
-  test('requestDevice without user activation rejects with SecurityError', async ({
+  test('requestDevice returns a rejected Promise without user activation', async ({
     sharedPage,
     pageUrl
   }) => {
@@ -28,7 +28,10 @@ test.describe('requestDevice conformance', () => {
     expect(result).toBe('SecurityError')
   })
 
-  test('requestDevice validates option and filter shapes', async ({ sharedPage, pageUrl }) => {
+  test('requestDevice rejects invalid option and filter shapes as Promises', async ({
+    sharedPage,
+    pageUrl
+  }) => {
     await navigateToPolicyCheck(sharedPage, pageUrl)
     await sharedPage.evaluate(() => {
       const button = document.createElement('button')
@@ -48,17 +51,20 @@ test.describe('requestDevice conformance', () => {
           options?: unknown
         ) => Promise<unknown>
         const results = options.map((option) => {
+          let promise: Promise<unknown>
           try {
-            return Promise.resolve(requestDevice(option)).then(
-              () => 'resolved',
-              (error: unknown) => (error instanceof Error ? error.name : String(error))
-            )
+            promise = requestDevice(option)
           } catch (error) {
-            return Promise.resolve(error instanceof Error ? error.name : String(error))
+            return Promise.resolve(`threw:${error instanceof Error ? error.name : String(error)}`)
           }
+          if (!(promise instanceof Promise)) return Promise.resolve('not-a-Promise')
+          return promise.then(
+            () => 'resolved',
+            (error: unknown) => `rejected:${error instanceof Error ? error.name : String(error)}`
+          )
         })
-        void Promise.all(results).then((errors) => {
-          document.documentElement.dataset.requestDeviceValidationResults = JSON.stringify(errors)
+        void Promise.all(results).then((outcomes) => {
+          document.documentElement.dataset.requestDeviceValidationResults = JSON.stringify(outcomes)
         })
       })
       document.body.append(button)
@@ -72,9 +78,9 @@ test.describe('requestDevice conformance', () => {
     const errors = await sharedPage.evaluate(
       () => JSON.parse(document.documentElement.dataset.requestDeviceValidationResults!) as string[]
     )
-    expect(errors).toEqual(new Array(8).fill('TypeError'))
+    expect(errors).toEqual(new Array(8).fill('rejected:TypeError'))
   })
-  test('requestDevice converts WebIDL dictionaries before returning a Promise', async ({
+  test('requestDevice converts dictionaries and rejects conversion errors as Promises', async ({
     sharedPage,
     pageUrl
   }) => {
@@ -97,16 +103,22 @@ test.describe('requestDevice conformance', () => {
     )
     const result = await sharedPage.evaluate(() => {
       return window.tests!.results.requestDeviceDictionaryConversion as {
-        immediateErrors: string[]
+        conversionResults: Array<{ returnedPromise: boolean; error: string }>
         convertedAtReturn: string[]
         promiseError: string | null
+        promiseReturned: boolean
+        coercionReturnedPromise: boolean
         coercionErrorPreserved: boolean
       }
     })
 
-    expect(result.immediateErrors).toEqual(Array(8).fill('TypeError'))
+    expect(result.conversionResults).toEqual(
+      Array(8).fill({ returnedPromise: true, error: 'TypeError' })
+    )
     expect(result.convertedAtReturn).toEqual(['vendorId', 'productId', 'usagePage', 'usage'])
     expect(result.promiseError).toBe('SecurityError')
+    expect(result.promiseReturned).toBe(true)
+    expect(result.coercionReturnedPromise).toBe(true)
     expect(result.coercionErrorPreserved).toBe(true)
   })
 
@@ -133,7 +145,14 @@ test.describe('requestDevice conformance', () => {
               const root = document.documentElement
               root.dataset.filterValidation = 'pending'
               try {
-                void navigator.hid.requestDevice(requestOptions as HIDDeviceRequestOptions).then(
+                const promise = navigator.hid.requestDevice(
+                  requestOptions as HIDDeviceRequestOptions
+                )
+                if (!(promise instanceof Promise)) {
+                  root.dataset.filterValidation = 'not-a-Promise'
+                  return
+                }
+                void promise.then(
                   () => {
                     root.dataset.filterValidation = 'resolved'
                   },
@@ -143,7 +162,7 @@ test.describe('requestDevice conformance', () => {
                   }
                 )
               } catch (error) {
-                root.dataset.filterValidation = error instanceof Error ? error.name : String(error)
+                root.dataset.filterValidation = `threw:${error instanceof Error ? error.name : String(error)}`
               }
             },
             { once: true }

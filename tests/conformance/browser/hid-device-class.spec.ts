@@ -1,7 +1,7 @@
 import { test, expect } from '../../helpers/browser.js'
 import { navigateToPolicyCheck } from '../../helpers/browser-utils.js'
 
-test('HIDDevice WebIDL members use the specified property descriptors', async ({
+test('HIDDevice inherits EventTarget methods and exposes Web IDL descriptors', async ({
   sharedPage,
   pageUrl
 }) => {
@@ -19,10 +19,7 @@ test('HIDDevice WebIDL members use the specified property descriptors', async ({
       'forget',
       'sendReport',
       'sendFeatureReport',
-      'receiveFeatureReport',
-      'addEventListener',
-      'removeEventListener',
-      'dispatchEvent'
+      'receiveFeatureReport'
     ].map((name) => {
       const descriptor = Object.getOwnPropertyDescriptor(HIDDevice.prototype, name)
       return [
@@ -33,6 +30,14 @@ test('HIDDevice WebIDL members use the specified property descriptors', async ({
         descriptor?.configurable
       ]
     })
+    const eventTargetMethods = ['addEventListener', 'removeEventListener', 'dispatchEvent'].map(
+      (name) => [
+        name,
+        Object.prototype.hasOwnProperty.call(HIDDevice.prototype, name),
+        Reflect.get(HIDDevice.prototype, name) === Reflect.get(EventTarget.prototype, name),
+        Object.getOwnPropertyDescriptor(EventTarget.prototype, name)?.enumerable
+      ]
+    )
     const attributes = [
       'opened',
       'vendorId',
@@ -61,31 +66,38 @@ test('HIDDevice WebIDL members use the specified property descriptors', async ({
       descriptor?.enumerable,
       descriptor?.configurable
     ])
-    const constructors = [
-      {
-        matches:
-          Object.getOwnPropertyDescriptor(HIDDevice.prototype, 'constructor')?.value === HIDDevice,
-        descriptor: Object.getOwnPropertyDescriptor(HIDDevice.prototype, 'constructor')
-      },
-      {
-        matches:
-          Object.getOwnPropertyDescriptor(HIDInputReportEvent.prototype, 'constructor')?.value ===
-          HIDInputReportEvent,
-        descriptor: Object.getOwnPropertyDescriptor(HIDInputReportEvent.prototype, 'constructor')
-      },
-      {
-        matches:
-          Object.getOwnPropertyDescriptor(HIDConnectionEvent.prototype, 'constructor')?.value ===
-          HIDConnectionEvent,
-        descriptor: Object.getOwnPropertyDescriptor(HIDConnectionEvent.prototype, 'constructor')
+    const interfaceDescriptors = (constructor: { prototype: object }) => {
+      const constructorDescriptor = Object.getOwnPropertyDescriptor(
+        constructor.prototype,
+        'constructor'
+      )
+      const prototypeDescriptor = Object.getOwnPropertyDescriptor(constructor, 'prototype')
+      return {
+        constructor: {
+          matches: constructorDescriptor?.value === constructor,
+          writable: constructorDescriptor?.writable,
+          enumerable: constructorDescriptor?.enumerable,
+          configurable: constructorDescriptor?.configurable
+        },
+        interfacePrototype: {
+          matches: prototypeDescriptor?.value === constructor.prototype,
+          writable: prototypeDescriptor?.writable,
+          enumerable: prototypeDescriptor?.enumerable,
+          configurable: prototypeDescriptor?.configurable
+        }
       }
-    ].map(({ matches, descriptor }) => ({
-      matches,
-      writable: descriptor?.writable,
-      enumerable: descriptor?.enumerable,
-      configurable: descriptor?.configurable
-    }))
-    return { constructorError, methods, attributes, eventAttributes, constructors }
+    }
+    const constructors = [HIDDevice, HIDInputReportEvent, HIDConnectionEvent].map(
+      interfaceDescriptors
+    )
+    return {
+      constructorError,
+      methods,
+      eventTargetMethods,
+      attributes,
+      eventAttributes,
+      constructors
+    }
   })
 
   expect(result).toEqual({
@@ -96,10 +108,12 @@ test('HIDDevice WebIDL members use the specified property descriptors', async ({
       ['forget', 'function', true, true, true],
       ['sendReport', 'function', true, true, true],
       ['sendFeatureReport', 'function', true, true, true],
-      ['receiveFeatureReport', 'function', true, true, true],
-      ['addEventListener', 'function', true, true, true],
-      ['removeEventListener', 'function', true, true, true],
-      ['dispatchEvent', 'function', true, true, true]
+      ['receiveFeatureReport', 'function', true, true, true]
+    ],
+    eventTargetMethods: [
+      ['addEventListener', false, true, true],
+      ['removeEventListener', false, true, true],
+      ['dispatchEvent', false, true, true]
     ],
     attributes: [
       ['opened', 'function', 'undefined', true, true],
@@ -116,10 +130,18 @@ test('HIDDevice WebIDL members use the specified property descriptors', async ({
       ['function', 'undefined', true, true]
     ],
     constructors: Array(3).fill({
-      matches: true,
-      writable: true,
-      enumerable: false,
-      configurable: true
+      constructor: {
+        matches: true,
+        writable: true,
+        enumerable: false,
+        configurable: true
+      },
+      interfacePrototype: {
+        matches: true,
+        writable: false,
+        enumerable: false,
+        configurable: false
+      }
     })
   })
 })

@@ -19,18 +19,36 @@
           { filters: [{ vendorId: Symbol('vendor') }] },
           { filters: [{ productId: BigInt(1) }] }
         ]
-        const immediateErrors = invalidOptions.map((options) => {
-          try {
-            void requestDevice.call(navigator.hid, options).catch(() => {})
-            return 'returned-promise'
-          } catch (error) {
-            return error instanceof Error ? error.name : String(error)
-          }
-        })
+        const conversionResults = await Promise.all(
+          invalidOptions.map(async (options) => {
+            let promise
+            try {
+              promise = requestDevice.call(navigator.hid, options)
+            } catch (error) {
+              return {
+                returnedPromise: false,
+                error: error instanceof Error ? error.name : String(error)
+              }
+            }
+            if (!(promise instanceof Promise)) {
+              return { returnedPromise: false, error: 'not a Promise' }
+            }
+            try {
+              await promise
+              return { returnedPromise: true, error: 'resolved' }
+            } catch (error) {
+              return {
+                returnedPromise: true,
+                error: error instanceof Error ? error.name : String(error)
+              }
+            }
+          })
+        )
         const coercionError = new Error('coercion sentinel')
+        let coercionReturnedPromise = false
         let coercionErrorPreserved = false
         try {
-          requestDevice.call(navigator.hid, {
+          const promise = requestDevice.call(navigator.hid, {
             filters: [
               {
                 vendorId: {
@@ -41,6 +59,14 @@
               }
             ]
           })
+          coercionReturnedPromise = promise instanceof Promise
+          if (coercionReturnedPromise) {
+            try {
+              await promise
+            } catch (error) {
+              coercionErrorPreserved = error === coercionError
+            }
+          }
         } catch (error) {
           coercionErrorPreserved = error === coercionError
         }
@@ -61,18 +87,31 @@
         })
         let convertedAtReturn = []
         let promiseError = null
+        let promiseReturned = false
         try {
           const promise = requestDevice.call(navigator.hid, { filters: new Set([filter]) })
+          promiseReturned = promise instanceof Promise
           convertedAtReturn = [...converted]
-          promiseError = await promise.then(
-            () => 'resolved',
-            (error) => (error instanceof Error ? error.name : String(error))
-          )
+          if (promiseReturned) {
+            promiseError = await promise.then(
+              () => 'resolved',
+              (error) => (error instanceof Error ? error.name : String(error))
+            )
+          } else {
+            promiseError = 'not a Promise'
+          }
         } catch (error) {
           convertedAtReturn = [...converted]
           promiseError = `sync:${error instanceof Error ? error.name : String(error)}`
         }
-        return { immediateErrors, convertedAtReturn, promiseError, coercionErrorPreserved }
+        return {
+          conversionResults,
+          convertedAtReturn,
+          promiseError,
+          promiseReturned,
+          coercionReturnedPromise,
+          coercionErrorPreserved
+        }
       }
 
       if (new URLSearchParams(window.location.search).has('no-activation')) {
@@ -102,11 +141,17 @@
                   return
                 }
                 try {
-                  await navigator.hid.requestDevice({ filters: [{ vendorId: 0x16c0 }] })
-                  document.documentElement.dataset.requestDeviceProbeResult = 'resolved'
+                  const promise = navigator.hid.requestDevice({ filters: [{ vendorId: 0x16c0 }] })
+                  if (!(promise instanceof Promise)) {
+                    document.documentElement.dataset.requestDeviceProbeResult = 'not-a-Promise'
+                    return
+                  }
+                  document.documentElement.dataset.requestDeviceProbeResult = await promise.then(
+                    () => 'resolved',
+                    (error) => (error instanceof Error ? error.name : 'Error')
+                  )
                 } catch (error) {
-                  document.documentElement.dataset.requestDeviceProbeResult =
-                    error instanceof Error ? error.name : 'Error'
+                  document.documentElement.dataset.requestDeviceProbeResult = `threw:${error instanceof Error ? error.name : 'Error'}`
                 }
               }, 0)
             }

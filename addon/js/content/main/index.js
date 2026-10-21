@@ -111,7 +111,7 @@
   const callNative = (fn, receiver, ...args) => reflect.apply(fn, receiver, args)
   const rejectWebIDLPromise = (error) => callNative(nativePromiseReject, NativePromise, error)
   /**
-   * Defines the required non-enumerable interface prototype constructor.
+   * Defines the Web IDL constructor links on an interface prototype and object.
    *
    * @param {object} prototype
    * @param {Function} constructor
@@ -123,6 +123,12 @@
       writable: true,
       enumerable: false,
       configurable: true
+    })
+    object.defineProperty(constructor, 'prototype', {
+      value: prototype,
+      writable: false,
+      enumerable: false,
+      configurable: false
     })
   }
   const readMessageEventData = (event) =>
@@ -1438,49 +1444,6 @@
       enumerable: true,
       configurable: true,
       writable: true
-    },
-    addEventListener: {
-      /**
-       * @param {string} type
-       * @param {EventListenerOrEventListenerObject} listener
-       * @param {boolean|object} [options]
-       * @returns {void}
-       */
-      value: function (type, listener, options) {
-        const state = requireState(devState, this)
-        eventTargetOps.addEventListener(state.eventTarget, type, listener, options)
-      },
-      enumerable: true,
-      configurable: true,
-      writable: true
-    },
-    removeEventListener: {
-      /**
-       * @param {string} type
-       * @param {EventListenerOrEventListenerObject} listener
-       * @param {boolean|object} [options]
-       * @returns {void}
-       */
-      value: function (type, listener, options) {
-        const state = requireState(devState, this)
-        eventTargetOps.removeEventListener(state.eventTarget, type, listener, options)
-      },
-      enumerable: true,
-      configurable: true,
-      writable: true
-    },
-    dispatchEvent: {
-      /**
-       * @param {Event} event
-       * @returns {boolean}
-       */
-      value: function (event) {
-        const state = requireState(devState, this)
-        return eventTargetOps.dispatchEvent(state.eventTarget, event)
-      },
-      enumerable: true,
-      configurable: true,
-      writable: true
     }
   })
 
@@ -1645,7 +1608,7 @@
     if (state.connectionState !== 'opened') {
       throw new NativeDOMException('Device is not open', 'InvalidStateError')
     }
-    const normalizedReportId = validateReportId(reportId, state.collections)
+    const normalizedReportId = validateReportId(reportId, state.usesReportIds)
     try {
       logger.debug('sendReport reportId=' + normalizedReportId + ' len=' + buffer.length)
       return await sendDeviceRequest(state, {
@@ -1669,7 +1632,7 @@
     if (state.connectionState !== 'opened') {
       throw new NativeDOMException('Device is not open', 'InvalidStateError')
     }
-    const normalizedReportId = validateReportId(reportId, state.collections)
+    const normalizedReportId = validateReportId(reportId, state.usesReportIds)
     try {
       return await sendDeviceRequest(state, {
         inPageType: MSG_RECEIVE_FEATURE_REPORT,
@@ -1696,7 +1659,7 @@
     if (state.connectionState !== 'opened') {
       throw new NativeDOMException('Device is not open', 'InvalidStateError')
     }
-    const normalizedReportId = validateReportId(reportId, state.collections)
+    const normalizedReportId = validateReportId(reportId, state.usesReportIds)
     try {
       logger.debug('sendFeatureReport reportId=' + normalizedReportId + ' len=' + buffer.length)
       return await sendDeviceRequest(state, {
@@ -2010,12 +1973,11 @@
 
   /**
    * @param {*} reportId
-   * @param {object[]} collections
+   * @param {boolean} usesReportIds
    * @returns {number}
    * @throws {TypeError}
    */
-  function validateReportId(reportId, collections) {
-    const usesReportIds = deviceUsesReportIds(collections)
+  function validateReportId(reportId, usesReportIds) {
     if (reportId === 0 && usesReportIds) {
       throw new TypeError('reportId must not be 0 for a device that uses report IDs')
     }
@@ -2336,6 +2298,7 @@
       vendorId: deviceInfo.vendorId,
       productId: deviceInfo.productId,
       productName: deviceInfo.productName,
+      usesReportIds: deviceUsesReportIds(deviceInfo.collections || []),
       collections: createFrozenCollections(deviceInfo.collections || []),
       connectionState: 'closed',
       openPromise: null,
@@ -2752,49 +2715,6 @@
           }
         }
       : {}),
-    addEventListener: {
-      /**
-       * @param {string} type
-       * @param {EventListenerOrEventListenerObject} listener
-       * @param {boolean|object} [options]
-       * @returns {void}
-       */
-      value: function (type, listener, options) {
-        const state = requireState(hidState, this)
-        eventTargetOps.addEventListener(state.eventTarget, type, listener, options)
-      },
-      enumerable: true,
-      configurable: true,
-      writable: true
-    },
-    removeEventListener: {
-      /**
-       * @param {string} type
-       * @param {EventListenerOrEventListenerObject} listener
-       * @param {boolean|object} [options]
-       * @returns {void}
-       */
-      value: function (type, listener, options) {
-        const state = requireState(hidState, this)
-        eventTargetOps.removeEventListener(state.eventTarget, type, listener, options)
-      },
-      enumerable: true,
-      configurable: true,
-      writable: true
-    },
-    dispatchEvent: {
-      /**
-       * @param {Event} event
-       * @returns {boolean}
-       */
-      value: function (event) {
-        const state = requireState(hidState, this)
-        return eventTargetOps.dispatchEvent(state.eventTarget, event)
-      },
-      enumerable: true,
-      configurable: true,
-      writable: true
-    },
     onconnect: {
       get() {
         const state = requireState(hidState, this)

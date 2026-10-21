@@ -35,15 +35,11 @@ test.describe('HID WebIDL', () => {
       constructorError: 'TypeError'
     })
   })
-  test('HID interface members use Web IDL property descriptors', async ({ sharedPage }) => {
+  test('HID interface methods inherit EventTarget methods and expose Web IDL descriptors', async ({
+    sharedPage
+  }) => {
     const result = await sharedPage.evaluate(() => {
-      const methods = [
-        'getDevices',
-        'requestDevice',
-        'addEventListener',
-        'removeEventListener',
-        'dispatchEvent'
-      ].map((name) => {
+      const methods = ['getDevices', 'requestDevice'].map((name) => {
         const descriptor = Object.getOwnPropertyDescriptor(HID.prototype, name)
         return [
           name,
@@ -53,6 +49,14 @@ test.describe('HID WebIDL', () => {
           descriptor?.configurable
         ]
       })
+      const eventTargetMethods = ['addEventListener', 'removeEventListener', 'dispatchEvent'].map(
+        (name) => [
+          name,
+          Object.prototype.hasOwnProperty.call(HID.prototype, name),
+          Reflect.get(HID.prototype, name) === Reflect.get(EventTarget.prototype, name),
+          Object.getOwnPropertyDescriptor(EventTarget.prototype, name)?.enumerable
+        ]
+      )
       const attributes = ['onconnect', 'ondisconnect'].map((name) => {
         const descriptor = Object.getOwnPropertyDescriptor(HID.prototype, name)
         return [
@@ -64,9 +68,11 @@ test.describe('HID WebIDL', () => {
         ]
       })
       const constructor = Object.getOwnPropertyDescriptor(HID.prototype, 'constructor')
+      const interfacePrototype = Object.getOwnPropertyDescriptor(HID, 'prototype')
       const navigatorHid = Object.getOwnPropertyDescriptor(Navigator.prototype, 'hid')
       return {
         methods,
+        eventTargetMethods,
         attributes,
         navigatorHid: {
           enumerable: navigatorHid?.enumerable,
@@ -77,6 +83,12 @@ test.describe('HID WebIDL', () => {
           writable: constructor?.writable,
           enumerable: constructor?.enumerable,
           configurable: constructor?.configurable
+        },
+        interfacePrototype: {
+          matches: interfacePrototype?.value === HID.prototype,
+          writable: interfacePrototype?.writable,
+          enumerable: interfacePrototype?.enumerable,
+          configurable: interfacePrototype?.configurable
         }
       }
     })
@@ -84,10 +96,12 @@ test.describe('HID WebIDL', () => {
     expect(result).toEqual({
       methods: [
         ['getDevices', 'function', true, true, true],
-        ['requestDevice', 'function', true, true, true],
-        ['addEventListener', 'function', true, true, true],
-        ['removeEventListener', 'function', true, true, true],
-        ['dispatchEvent', 'function', true, true, true]
+        ['requestDevice', 'function', true, true, true]
+      ],
+      eventTargetMethods: [
+        ['addEventListener', false, true, true],
+        ['removeEventListener', false, true, true],
+        ['dispatchEvent', false, true, true]
       ],
       attributes: [
         ['onconnect', 'function', 'function', true, true],
@@ -99,6 +113,12 @@ test.describe('HID WebIDL', () => {
         writable: true,
         enumerable: false,
         configurable: true
+      },
+      interfacePrototype: {
+        matches: true,
+        writable: false,
+        enumerable: false,
+        configurable: false
       }
     })
   })
