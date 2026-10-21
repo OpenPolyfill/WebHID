@@ -3508,7 +3508,10 @@
         logger.debug('frame device reconciliation failed', e)
       }
     }
-    if (!pagePortNotified && messageEvent.eventType === 'revoked') {
+    if (
+      !pagePortNotified &&
+      (messageEvent.eventType === 'revoked' || messageEvent.eventType === 'disconnect')
+    ) {
       try {
         context.port.postMessage({ type: 'event', event: messageEvent })
       } catch (e) {

@@ -4,6 +4,8 @@ use hidapi::{DeviceInfo as HidDeviceInfo, HidApi, HidDevice};
 use std::cell::RefCell;
 #[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
+#[cfg(target_os = "linux")]
+use std::time::{Duration, Instant};
 use webhid::{Collection, DeviceInfo, EnumerateFilter};
 
 thread_local! {
@@ -313,10 +315,15 @@ fn info_from_hidapi_pub_with_desc(
     Some(build_device_info(info, collections, desc))
 }
 #[cfg(target_os = "linux")]
+const USB_STRING_LOOKUP_BUDGET: Duration = Duration::from_secs(1);
+#[cfg(target_os = "linux")]
+const USB_STRING_REQUEST_TIMEOUT_MAX_MS: u32 = 100;
+#[cfg(target_os = "linux")]
 struct LinuxUsbStringReader {
     device: std::fs::File,
     language_id: Option<u16>,
     language_id_attempted: bool,
+    lookup_deadline: Instant,
 }
 
 #[cfg(target_os = "linux")]
@@ -348,6 +355,7 @@ impl LinuxUsbStringReader {
                     device,
                     language_id: None,
                     language_id_attempted: false,
+                    lookup_deadline: Instant::now() + USB_STRING_LOOKUP_BUDGET,
                 });
             }
             if !sysfs_path.pop() {
@@ -362,11 +370,12 @@ impl LinuxUsbStringReader {
             return None;
         }
         if !self.language_id_attempted {
-            self.language_id = read_usb_language_id(&self.device);
+            self.language_id = read_usb_language_id(&self.device, self.lookup_deadline);
             self.language_id_attempted = true;
         }
         let language_id = self.language_id?;
-        let descriptor = read_usb_string_descriptor(&self.device, index, language_id)?;
+        let descriptor =
+            read_usb_string_descriptor(&self.device, index, language_id, self.lookup_deadline)?;
         decode_usb_string_descriptor(&descriptor)
     }
 }
@@ -384,8 +393,8 @@ struct UsbControlTransfer {
 }
 
 #[cfg(target_os = "linux")]
-fn read_usb_language_id(device: &std::fs::File) -> Option<u16> {
-    let descriptor = read_usb_string_descriptor(device, 0, 0)?;
+fn read_usb_language_id(device: &std::fs::File, deadline: Instant) -> Option<u16> {
+    let descriptor = read_usb_string_descriptor(device, 0, 0, deadline)?;
     let length = usize::from(*descriptor.first()?);
     if descriptor.get(1) != Some(&3) || length < 4 || length > descriptor.len() || length % 2 != 0 {
         return None;
@@ -398,15 +407,18 @@ fn read_usb_string_descriptor(
     device: &std::fs::File,
     index: u8,
     language_id: u16,
+    deadline: Instant,
 ) -> Option<Vec<u8>> {
     let mut data = [0u8; 255];
+    let timeout =
+        usb_string_request_timeout_ms(deadline.saturating_duration_since(Instant::now()))?;
     let mut transfer = UsbControlTransfer {
         request_type: 0x80,
         request: 0x06,
         value: 0x0300 | u16::from(index),
         index: language_id,
         length: data.len() as u16,
-        timeout: 1000,
+        timeout,
         data: data.as_mut_ptr(),
     };
     let request = ((3u64 << 30)
@@ -430,6 +442,21 @@ fn read_usb_string_descriptor(
         return None;
     }
     Some(data[..length].to_vec())
+}
+#[cfg(target_os = "linux")]
+pub(crate) fn usb_string_request_timeout_ms(remaining: Duration) -> Option<u32> {
+    if remaining.is_zero() {
+        return None;
+    }
+    Some(
+        u32::try_from(
+            remaining
+                .as_millis()
+                .min(u128::from(USB_STRING_REQUEST_TIMEOUT_MAX_MS)),
+        )
+        .unwrap_or(USB_STRING_REQUEST_TIMEOUT_MAX_MS)
+        .max(1),
+    )
 }
 
 #[cfg(target_os = "linux")]

@@ -1903,15 +1903,10 @@
    *
    * @param {*} value
    * @returns {number}
-   * @throws {TypeError}
+   * @throws {*} The conversion error or TypeError for values outside the octet range.
    */
   function convertEnforcedOctet(value) {
-    let number
-    try {
-      number = +value
-    } catch {
-      throw new TypeError('reportId must be a number in the range 0-255')
-    }
+    const number = +value
     if (!nativeNumberIsFinite(number)) {
       throw new TypeError('reportId must be a number in the range 0-255')
     }
@@ -1950,6 +1945,7 @@
         byteLength = uint8ArrayGetters.byteLength(data)
       }
     }
+    arrayBufferGetters.byteLength(buffer)
     const view = new NativeUint8Array(buffer, byteOffset, byteLength)
     return new NativeUint8Array(view)
   }
@@ -1959,15 +1955,10 @@
    *
    * @param {*} value
    * @returns {number}
-   * @throws {TypeError}
+   * @throws {*} A ToNumber conversion error, if any.
    */
   function convertOctet(value) {
-    let number
-    try {
-      number = +value
-    } catch {
-      throw new TypeError('value cannot be converted to an octet')
-    }
+    const number = +value
     if (!nativeNumberIsFinite(number) || number === 0) return 0
     const remainder = nativeMathTrunc(number) % 256
     return remainder < 0 ? remainder + 256 : remainder
@@ -2316,12 +2307,7 @@
    * @returns {number}
    */
   function convertUnsignedInteger(value, bitLength) {
-    let number
-    try {
-      number = +value
-    } catch {
-      throw new TypeError('value cannot be converted to an unsigned integer')
-    }
+    const number = +value
     if (!nativeNumberIsFinite(number) || number === 0) return 0
     const modulus = 2 ** bitLength
     const remainder = nativeMathTrunc(number) % modulus

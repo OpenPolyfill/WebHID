@@ -340,11 +340,7 @@
             reportId,
             data: payload
           }
-          const dataPortReached = postToContentPorts(
-            null,
-            { event },
-            dataPortName
-          )
+          const dataPortReached = postToContentPorts(null, { event }, dataPortName)
           if (dataPortReached.size > 0) continue
           const targets = new Set(
             collectDeviceSessionOwners(deviceId)
@@ -388,31 +384,18 @@
         deviceId: message.i,
         device: message.v || null
       }
-      const owners =
-        message.e === EVT_DISCONNECT
-          ? new Set(
-              collectDeviceSessionOwners(message.i)
-                .map((owner) => owner.port)
-                .filter((port) => port != null)
-            )
-          : null
       if (message.e === EVT_DISCONNECT) clearDeviceOwnership(message.i)
       browser.runtime
         .sendMessage({ action: 'webhidDeviceEvent', event: normalized })
         .catch((e) => logger.debug('event forward to runtime failed', e))
-      if (owners && owners.size > 0) {
+      forTabsOfOrigin(null, (tab) => {
         const eventMessage = { action: 'webhidDeviceEvent', event: normalized }
-        for (const port of owners) postToContentPort(port, eventMessage)
-      } else {
-        forTabsOfOrigin(null, (tab) => {
-          const eventMessage = { action: 'webhidDeviceEvent', event: normalized }
-          const reached = postToContentPorts([tab.id], eventMessage, 'webhid-control')
-          if (reached.has(tab.id)) return
-          return browser.tabs
-            .sendMessage(tab.id, eventMessage)
-            .catch((e) => logger.debug('event forward to all tabs failed', e))
-        }).catch((e) => logger.debug('tabs.query failed', e))
-      }
+        const reached = postToContentPorts([tab.id], eventMessage, 'webhid-control')
+        if (reached.has(tab.id)) return
+        return browser.tabs
+          .sendMessage(tab.id, eventMessage)
+          .catch((e) => logger.debug('event forward to all tabs failed', e))
+      }).catch((e) => logger.debug('tabs.query failed', e))
     },
 
     onControlEvent(message) {
