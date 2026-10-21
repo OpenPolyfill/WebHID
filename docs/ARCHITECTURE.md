@@ -265,7 +265,7 @@ The persistent bridge Ports do not replace every one-shot message. Current inten
 
 ### Valid one-shot tab messages
 
-Product-code `tabs.sendMessage` remains a one-shot fallback for global reset and generic device/lifecycle event fanout. Popup configuration requests such as `getFrameOrigins` now go directly to background with `runtime.sendMessage`; tests may still address a tab bridge directly for assertions. NM input reports are different from both: they use a matching `webhid-data:<deviceId>` Port first and fall back to exact Session-owner control Ports only when no matching data Port exists.
+Product-code `tabs.sendMessage` remains a one-shot fallback for global reset and generic device/lifecycle event fanout. Daemon `connect` and `disconnect` events reach every `webhid-control` Port, so granted closed-device contexts receive `disconnect` even when another page holds an active session. Popup configuration requests such as `getFrameOrigins` now go directly to background with `runtime.sendMessage`; tests may still address a tab bridge directly for assertions. NM input reports are different from both: they use a matching `webhid-data:<deviceId>` Port first and fall back to exact Session-owner control Ports only when no matching data Port exists.
 
 ### Settings
 
