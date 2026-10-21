@@ -46,6 +46,7 @@ async function cancelDevicePermission(page: Page, filters: DeviceFilter[]): Prom
   await page.evaluate((requestedFilters) => {
     window.tests!.helper!.requestDevice!(requestedFilters)
   }, filters)
+  await page.locator('#request-device-btn').click()
 
   const pickerState = await page.evaluate(() => {
     const started = window.tests!.results!.pickerStarted as Promise<void>
