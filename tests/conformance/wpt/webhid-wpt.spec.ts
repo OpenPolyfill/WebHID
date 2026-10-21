@@ -27,7 +27,7 @@ interface WptWindow extends Window {
 
 let previousWorkerSetting: { exists: boolean; value: boolean | undefined } | undefined
 
-test.beforeAll(async ({ backgroundPage }) => {
+test.beforeAll(async ({ backgroundPage, sharedPage }) => {
   previousWorkerSetting = await backgroundPage.evaluate(async (key) => {
     const values = (await browser.storage.local.get(key)) as Record<string, boolean | undefined>
     return {
@@ -36,21 +36,8 @@ test.beforeAll(async ({ backgroundPage }) => {
     }
   }, WORKER_SETTING)
   await backgroundPage.evaluate((key) => browser.storage.local.set({ [key]: true }), WORKER_SETTING)
-})
-
-test.afterAll(async ({ backgroundPage }) => {
-  if (!previousWorkerSetting) return
-  await backgroundPage.evaluate(
-    ({ key, previous }) =>
-      previous.exists
-        ? browser.storage.local.set({ [key]: previous.value })
-        : browser.storage.local.remove(key),
-    { key: WORKER_SETTING, previous: previousWorkerSetting }
-  )
-})
-
-async function runWptPage(page: Page, url: string): Promise<void> {
-  await page.addInitScript(() => {
+  await sharedPage.context().addInitScript(() => {
+    if (window !== window.top) return
     const currentWindow = window as WptWindow
     const installCompletionCallback = () => {
       if (typeof currentWindow.add_completion_callback === 'function') {
@@ -71,7 +58,20 @@ async function runWptPage(page: Page, url: string): Promise<void> {
     }
     installCompletionCallback()
   })
+})
 
+test.afterAll(async ({ backgroundPage }) => {
+  if (!previousWorkerSetting) return
+  await backgroundPage.evaluate(
+    ({ key, previous }) =>
+      previous.exists
+        ? browser.storage.local.set({ [key]: previous.value })
+        : browser.storage.local.remove(key),
+    { key: WORKER_SETTING, previous: previousWorkerSetting }
+  )
+})
+
+async function runWptPage(page: Page, url: string): Promise<void> {
   await page.goto(url, { waitUntil: 'load', timeout: 30000 })
   await page.waitForFunction(
     () => (window as WptWindow).__webhidWptResult !== undefined,
@@ -88,17 +88,37 @@ async function runWptPage(page: Page, url: string): Promise<void> {
   ).toEqual([])
 }
 
-test('WPT WebHID Permissions Policy header', async ({ page, wptUrl }) => {
-  await runWptPage(page, wptUrl('/webhid/hid-allowed-by-permissions-policy.https.sub.html'))
-})
+const wptCases = [
+  {
+    name: 'WPT WebHID Permissions Policy header',
+    path: '/webhid/hid-allowed-by-permissions-policy.https.sub.html'
+  },
+  {
+    name: 'WPT WebHID Permissions Policy allow attribute',
+    path: '/webhid/hid-allowed-by-permissions-policy-attribute.https.sub.html'
+  },
+  {
+    name: 'WPT WebHID Permissions Policy after redirect',
+    path: '/webhid/hid-allowed-by-permissions-policy-attribute-redirect-on-load.https.sub.html'
+  }
+] as const
 
-test('WPT WebHID Permissions Policy allow attribute', async ({ page, wptUrl }) => {
-  await runWptPage(page, wptUrl('/webhid/hid-allowed-by-permissions-policy-attribute.https.sub.html'))
-})
-
-test('WPT WebHID Permissions Policy after redirect', async ({ page, wptUrl }) => {
-  await runWptPage(
-    page,
-    wptUrl('/webhid/hid-allowed-by-permissions-policy-attribute-redirect-on-load.https.sub.html')
+test('WPT WebHID Permissions Policy cases', async ({ sharedPage, wptUrl }) => {
+  const context = sharedPage.context()
+  const results = await Promise.allSettled(
+    wptCases.map(({ name, path }) =>
+      test.step(name, async () => {
+        const page = await context.newPage()
+        try {
+          await runWptPage(page, wptUrl(path))
+        } finally {
+          await page.close()
+        }
+      })
+    )
   )
+  const failures = results.flatMap((result, index) =>
+    result.status === 'rejected' ? [`${wptCases[index].name}: ${String(result.reason)}`] : []
+  )
+  expect(failures).toEqual([])
 })

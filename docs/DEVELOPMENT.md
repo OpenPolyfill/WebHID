@@ -165,7 +165,7 @@ The bridge uses a `SettingsStore` Proxy-based observer. `storage.onChanged` extr
 
 ## Testing
 
-`npm test` runs WebHID conformance checks. WebIDL, Permissions Policy, activation, and Dedicated Worker coverage lives in `tests/conformance/browser/`. The WPT project runs the three upstream WebHID Permissions Policy pages vendored from WPT revision `a99194d` in `tests/conformance/wpt/site/webhid/`. Playwright serves them locally with project-owned adapters for the shared harness helpers, so these tests do not require network access. The project enables the worker polyfill for these tests. Mock-device scenarios in `tests/conformance/e2e/` cover permission grants, descriptor exposure, device lifecycle, events, input/output report I/O, and errors for unsupported feature-report IDs. `tests/conformance/chromium-internal/` ports externally observable cases from Chromium's `third_party/blink/web_tests/wpt_internal/hid/` and runs them against the Firefox add-on with the repository's `webhid-mock` device.
+`npm test` runs WebHID conformance checks. WebIDL, Permissions Policy, activation, and Dedicated Worker coverage lives in `tests/conformance/browser/`. The WPT project runs the three upstream WebHID Permissions Policy pages vendored from WPT revision `a99194d` in `tests/conformance/wpt/site/webhid/` concurrently, each in a separate page within one Playwright worker. Playwright serves them locally with project-owned adapters for the shared harness helpers, so these tests do not require network access. The project enables the worker polyfill for these tests. Mock-device scenarios in `tests/conformance/e2e/` cover permission grants, descriptor exposure, device lifecycle, events, input/output report I/O, and errors for unsupported feature-report IDs. `tests/conformance/chromium-internal/` ports externally observable cases from Chromium's `third_party/blink/web_tests/wpt_internal/hid/` and runs them against the Firefox add-on with the repository's `webhid-mock` device.
 
 ```sh
 npm ci
@@ -174,7 +174,6 @@ npm test
 # Browser checks against the source or built addon:
 npm run test:browser:src
 npm run test:browser
-# Run the three vendored upstream WPT WebHID pages separately.
 npm run test:conformance:wpt
 ```
 
