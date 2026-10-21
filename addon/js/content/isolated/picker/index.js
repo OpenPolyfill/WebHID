@@ -46,6 +46,8 @@
     filterApplied = false
     /** @type {boolean} */
     enumerateError = false
+    /** @type {number} */
+    hideGeneration = 0
 
     /** @constructor */
     constructor() {
@@ -80,10 +82,13 @@
           this.onDeviceCancelled()
         }
 
+        const generation = this.hideGeneration
+
         const hide = () => {
-          if (this.dialog.open) return
+          if (generation !== this.hideGeneration || this.dialog.open) return
           this.dialog.style.display = 'none'
         }
+
         this.dialog.addEventListener('transitionend', hide, { once: true })
         setTimeout(hide, 300)
       })
@@ -130,6 +135,8 @@
 
       try {
         await this.fragmentReady
+        this.hideGeneration++
+
         this.filters = filters
         this.exclusionFilters = exclusionFilters
 
