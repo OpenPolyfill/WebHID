@@ -44,6 +44,8 @@
   const NativeObject = types.Object.constructor
   const NativePromise = types.Promise.constructor
   const Promise = NativePromise
+  const nativePromiseResolve = types.Promise.getStaticDescriptor('resolve').value
+  const nativePromiseReject = types.Promise.getStaticDescriptor('reject').value
   const mapOps = types.Map.proto.methods
   const weakMapOps = types.WeakMap.proto.methods
   const eventTargetOps = types.EventTarget.proto.methods
@@ -94,6 +96,11 @@
   const nativeCreateTrustedTypePolicy = host.trustedTypesCreatePolicy
   const nativeUserActivation = host.userActivation
   const nativeIsActiveGetter = host.userActivationIsActive
+  const nativeNavigatorUserAgent = host.navigatorUserAgent
+  const arrayBufferGetters = types.ArrayBuffer.proto.getters
+  const dataViewGetters = types.DataView.proto.getters
+  const uint8ArrayGetters = types.Uint8Array.proto.getters
+  const nativeArrayBufferIsView = types.ArrayBuffer.getStaticDescriptor('isView').value
   const callNative = (fn, receiver, ...args) => reflect.apply(fn, receiver, args)
   const readMessageEventData = (event) =>
     nativeMessageEventData ? callNative(nativeMessageEventData, event) : undefined
@@ -182,6 +189,14 @@
     const state = stateMap.get(receiver)
     if (state == null) throw new TypeError('Illegal invocation')
     return state
+  }
+
+  /**
+   * @param {object} state
+   * @returns {boolean}
+   */
+  function isDeviceOpeningOrOpen(state) {
+    return state.connectionState === 'opening' || state.connectionState === 'opened'
   }
 
   reflect.deleteProperty(globalThis, 'webhid')
@@ -360,7 +375,9 @@
         deviceId: plane.deviceId,
         resolve: (data) => resolve(mapResolve(data)),
         reject: (e) => {
-          if (e && e.blocked) {
+          if (e instanceof NativeDOMException) {
+            reject(e)
+          } else if (e && e.blocked) {
             reject(new NativeDOMException('Report is blocked', 'NotAllowedError'))
           } else {
             reject(
@@ -466,7 +483,7 @@
     state.planeGeneration = generation
     state.planeReady = false
     if (generationChanged) state.planeUnavailableGeneration = null
-    if (state.opened) state.planeUnavailable = true
+    if (state.connectionState === 'opened') state.planeUnavailable = true
     const dataChannel = new NativeMessageChannel()
     state.dataPort = dataChannel.port1
     state.dataPortGeneration = generation
@@ -538,7 +555,7 @@
       typeof data.generation !== 'number' ||
       data.generation !== state.planeGeneration ||
       state.planeUnavailableGeneration === data.generation ||
-      (!state.opened && !state.opening)
+      !isDeviceOpeningOrOpen(state)
     ) {
       return
     }
@@ -559,7 +576,7 @@
       !state ||
       typeof data.generation !== 'number' ||
       data.generation < state.planeGeneration ||
-      (!state.opened && !state.opening)
+      !isDeviceOpeningOrOpen(state)
     )
       return
     state.planeGeneration = data.generation
@@ -582,7 +599,7 @@
     const state = device ? devState.get(device) : null
     if (
       !state ||
-      (!state.opened && !state.opening) ||
+      !isDeviceOpeningOrOpen(state) ||
       typeof data.generation !== 'number' ||
       data.generation < state.planeGeneration
     )
@@ -603,15 +620,15 @@
       state &&
       typeof data.generation === 'number' &&
       Number.isInteger(data.generation) &&
-      ((state.opening &&
+      ((state.connectionState === 'opening' &&
         (state.planeGeneration === 0 || data.generation === state.planeGeneration)) ||
-        (state.opened && data.generation >= state.planeGeneration))
+        (state.connectionState === 'opened' && data.generation >= state.planeGeneration))
     if (
       !state ||
       !port ||
       !validGeneration ||
       state.planeUnavailableGeneration === data.generation ||
-      (!state.opened && !state.opening)
+      !isDeviceOpeningOrOpen(state)
     ) {
       if (port) {
         try {
@@ -803,8 +820,8 @@
     if (isWorker) return false
     try {
       throw new NativeError()
-    } catch (e) {
-      const stack = getOriginalStack ? callNative(getOriginalStack, e) : ''
+    } catch (error) {
+      const stack = getOriginalStack ? callNative(getOriginalStack, error) : ''
       if (typeof stack !== 'string') return false
       const lines = stringOps.split(stack, '\n')
       const callerFrame = arrayOps.at(lines, 2) || ''
@@ -1064,6 +1081,8 @@
 
   /** @type {string[]|null} */
   let pairedDevices = null
+  /** @type {Array<{deviceIds: number[]}>|null} */
+  let pairedDeviceGroups = null
   /** @type {Map<string, object> | null} */
   let deviceInfoCache = null
 
@@ -1073,9 +1092,11 @@
     try {
       const result = await sendRequest('getPairedDevices')
       pairedDevices = result.hashes || []
+      pairedDeviceGroups = result.groups || []
       deviceInfoCache = null
       return pairedDevices
     } catch {
+      pairedDeviceGroups = []
       return []
     }
   }
@@ -1209,7 +1230,9 @@
         generation,
         resolve: (data) => resolve(opts.mapResolve(data)),
         reject: (e) => {
-          if (e && e.blocked) {
+          if (e instanceof NativeDOMException) {
+            reject(e)
+          } else if (e && e.blocked) {
             reject(new NativeDOMException('Report is blocked', 'NotAllowedError'))
           } else {
             reject(
@@ -1250,8 +1273,7 @@
   object.defineProperties(HIDDevice.prototype, {
     opened: {
       get() {
-        const state = requireState(devState, this)
-        return state.opened != null ? state.opened : false
+        return requireState(devState, this).connectionState === 'opened'
       },
       enumerable: false,
       configurable: true
@@ -1302,76 +1324,8 @@
     },
     open: {
       /** @returns {Promise<void>} */
-      value: async function () {
-        const state = devState.get(this)
-        if (!state) throw new NativeDOMException('Invalid state', 'InvalidStateError')
-        if (state.forgotten)
-          throw new NativeDOMException('Device has been forgotten', 'InvalidStateError')
-        if (state.opened)
-          throw new NativeDOMException('Device is already open', 'InvalidStateError')
-        if (state.opening)
-          throw new NativeDOMException('Device is already open', 'InvalidStateError')
-        state.opening = true
-        try {
-          const response = await sendRequest('open', {
-            deviceId: state.deviceId,
-            reportSize: state.maxInputReportSize + 3
-          })
-          if (state.forgotten) {
-            promiseOps.catch(sendRequest('close', { deviceId: state.deviceId }), () => {})
-            throw new NativeDOMException('Device has been forgotten', 'InvalidStateError')
-          }
-          if (http.isOk(response.s)) {
-            await bridgeReady
-            if (state.forgotten) {
-              promiseOps.catch(sendRequest('close', { deviceId: state.deviceId }), () => {})
-              throw new NativeDOMException('Device has been forgotten', 'InvalidStateError')
-            }
-            if (typeof response.clientPlaneGeneration !== 'number') {
-              throw new NativeError('Open did not establish a client data plane')
-            }
-            state.planeGeneration = response.clientPlaneGeneration
-            if (response.clientPlaneOwner !== 'top') {
-              wireDevicePort(state, state.planeGeneration)
-            }
-            const ready = await sendRequest('waitDataPlaneReady', {
-              deviceId: state.deviceId,
-              generation: state.planeGeneration
-            })
-            if (!ready || !ready.ok) {
-              if (state.dataPort) {
-                if (state.dataPortHandler) {
-                  callNative(
-                    nativeMessagePortRemoveEventListener,
-                    state.dataPort,
-                    'message',
-                    state.dataPortHandler
-                  )
-                  state.dataPortHandler = null
-                }
-                callNative(nativeMessagePortClose, state.dataPort)
-                state.dataPort = null
-              }
-              await promiseOps.catch(sendRequest('close', { deviceId: state.deviceId }), () => {})
-              throw new NativeError(
-                'Client data plane is not ready: ' +
-                  (ready && ready.error ? ready.error : 'unknown')
-              )
-            }
-            state.planeReady = true
-            state.planeUnavailable = false
-            state.opened = true
-            eventTargetOps.dispatchEvent(state.eventTarget, new NativeEvent('open'))
-          } else {
-            throw new NativeError('Open failed: ' + (response.error || http.name(response.s || 0)))
-          }
-        } catch (error) {
-          throw error instanceof NativeDOMException
-            ? error
-            : new NativeDOMException(error.message, 'NetworkError')
-        } finally {
-          state.opening = false
-        }
+      value: function () {
+        return openDevice(requireState(devState, this))
       },
       enumerable: false,
       configurable: true,
@@ -1379,44 +1333,8 @@
     },
     close: {
       /** @returns {Promise<void>} */
-      value: async function () {
-        const state = devState.get(this)
-        if (!state) return
-        if (state.forgotten)
-          throw new NativeDOMException('Device has been forgotten', 'InvalidStateError')
-        if (!state.opened) return
-        logger.debug('close deviceId=' + state.deviceId)
-        try {
-          const response = await sendRequest('close', {
-            deviceId: state.deviceId
-          })
-          if (http.isOk(response.s)) {
-            state.opened = false
-            state.planeReady = false
-            state.planeUnavailable = false
-            state.planeUnavailableGeneration = null
-            rejectPendingReports(state, new NativeDOMException('Device closed', 'AbortError'))
-            if (state.dataPort) {
-              if (state.dataPortHandler) {
-                callNative(
-                  nativeMessagePortRemoveEventListener,
-                  state.dataPort,
-                  'message',
-                  state.dataPortHandler
-                )
-                state.dataPortHandler = null
-              }
-              callNative(nativeMessagePortClose, state.dataPort)
-              state.dataPort = null
-              state.dataPortGeneration = null
-            }
-            eventTargetOps.dispatchEvent(state.eventTarget, new NativeEvent('close'))
-          } else {
-            throw new NativeError('Failed to close device')
-          }
-        } catch (error) {
-          throw new NativeDOMException(error.message, 'InvalidStateError')
-        }
+      value: function () {
+        return closeDevice(requireState(devState, this))
       },
       enumerable: false,
       configurable: true,
@@ -1428,30 +1346,11 @@
        * @param {ArrayBuffer|DataView|TypedArray} data
        * @returns {Promise<void>}
        */
-      value: async function (reportId, data) {
+      value: function (reportId, data) {
+        const state = requireState(devState, this)
         const convertedReportId = convertEnforcedOctet(reportId)
-        const state = devState.get(this)
-        if (!state) throw new NativeDOMException('Invalid state', 'InvalidStateError')
-        if (!state.opened) throw new NativeDOMException('Device is not open', 'InvalidStateError')
-        const normalizedReportId = validateReportId(convertedReportId, state.collections)
-        const view =
-          data instanceof ArrayBuffer
-            ? new NativeUint8Array(data)
-            : new NativeUint8Array(data.buffer, data.byteOffset, data.byteLength)
-        const buffer = uint8Ops.slice(view)
-        try {
-          logger.debug('sendReport reportId=' + normalizedReportId + ' len=' + buffer.length)
-          return sendDeviceRequest(state, {
-            inPageType: MSG_SEND_REPORT,
-            portType: 'send',
-            reportId: normalizedReportId,
-            payload: buffer,
-            mapResolve: () => undefined,
-            failMessage: 'send failed'
-          })
-        } catch (error) {
-          throw new NativeDOMException(error.message, 'NetworkError')
-        }
+        const buffer = copyBufferSource(data)
+        return sendReportDevice(state, convertedReportId, buffer)
       },
       enumerable: false,
       configurable: true,
@@ -1462,28 +1361,10 @@
        * @param {number} reportId
        * @returns {Promise<DataView>}
        */
-      value: async function (reportId) {
+      value: function (reportId) {
+        const state = requireState(devState, this)
         const convertedReportId = convertEnforcedOctet(reportId)
-        const state = devState.get(this)
-        if (!state) throw new NativeDOMException('Invalid state', 'InvalidStateError')
-        if (!state.opened) throw new NativeDOMException('Device is not open', 'InvalidStateError')
-        const normalizedReportId = validateReportId(convertedReportId, state.collections)
-        try {
-          return sendDeviceRequest(state, {
-            inPageType: MSG_RECEIVE_FEATURE_REPORT,
-            portType: 'receiveFeature',
-            reportId: normalizedReportId,
-            payload: null,
-            mapResolve: (data) => {
-              if (!data) return new NativeDataView(new NativeArrayBuffer(0))
-              const b = data instanceof Uint8Array ? data : new NativeUint8Array(data)
-              return new NativeDataView(b.buffer, b.byteOffset, b.byteLength)
-            },
-            failMessage: 'receive failed'
-          })
-        } catch (error) {
-          throw new NativeDOMException(error.message, 'NetworkError')
-        }
+        return receiveFeatureReportDevice(state, convertedReportId)
       },
       enumerable: false,
       configurable: true,
@@ -1495,30 +1376,11 @@
        * @param {ArrayBuffer|DataView|TypedArray} data
        * @returns {Promise<void>}
        */
-      value: async function (reportId, data) {
+      value: function (reportId, data) {
+        const state = requireState(devState, this)
         const convertedReportId = convertEnforcedOctet(reportId)
-        const state = devState.get(this)
-        if (!state) throw new NativeDOMException('Invalid state', 'InvalidStateError')
-        if (!state.opened) throw new NativeDOMException('Device is not open', 'InvalidStateError')
-        const normalizedReportId = validateReportId(convertedReportId, state.collections)
-        const view =
-          data instanceof ArrayBuffer
-            ? new NativeUint8Array(data)
-            : new NativeUint8Array(data.buffer, data.byteOffset, data.byteLength)
-        const buffer = uint8Ops.slice(view)
-        logger.debug('sendFeatureReport reportId=' + normalizedReportId + ' len=' + buffer.length)
-        try {
-          return sendDeviceRequest(state, {
-            inPageType: MSG_SEND_FEATURE_REPORT,
-            portType: 'sendFeature',
-            reportId: normalizedReportId,
-            payload: buffer,
-            mapResolve: () => undefined,
-            failMessage: 'send failed'
-          })
-        } catch (error) {
-          throw new NativeDOMException(error.message, 'NetworkError')
-        }
+        const buffer = copyBufferSource(data)
+        return sendFeatureReportDevice(state, convertedReportId, buffer)
       },
       enumerable: false,
       configurable: true,
@@ -1526,14 +1388,8 @@
     },
     forget: {
       /** @returns {Promise<void>} */
-      value: async function () {
-        const state = devState.get(this)
-        if (!state || state.forgotten) return
-        const response = await sendRequest('unpairDevice', { deviceId: state.deviceId })
-        if (!response || response.success !== true) {
-          throw new NativeDOMException('Failed to forget device', 'NetworkError')
-        }
-        await teardownForgottenDevice(this, state)
+      value: function () {
+        return forgetDevice(requireState(devState, this))
       },
       enumerable: false,
       configurable: true,
@@ -1583,6 +1439,325 @@
       writable: true
     }
   })
+
+  function closeDataPort(state) {
+    if (state.dataPort) {
+      if (state.dataPortHandler) {
+        callNative(
+          nativeMessagePortRemoveEventListener,
+          state.dataPort,
+          'message',
+          state.dataPortHandler
+        )
+        state.dataPortHandler = null
+      }
+      callNative(nativeMessagePortClose, state.dataPort)
+      state.dataPort = null
+    }
+    state.dataPortGeneration = null
+    state.planeReady = false
+    state.planeUnavailable = false
+    state.planeUnavailableGeneration = null
+  }
+
+  function abortDeviceReports(state, message) {
+    const error = new NativeDOMException(message, 'AbortError')
+    rejectInPagePending(state.deviceId, error)
+    rejectPendingReports(state, error)
+  }
+
+  function openDevice(state) {
+    if (state.connectionState !== 'closed') {
+      return callNative(
+        nativePromiseReject,
+        NativePromise,
+        new NativeDOMException(
+          state.connectionState === 'forgotten' || state.connectionState === 'forgetting'
+            ? 'Device has been forgotten'
+            : 'Device is already opening or open',
+          'InvalidStateError'
+        )
+      )
+    }
+    state.connectionState = 'opening'
+    const openPromise = performOpenDevice(state)
+    state.openPromise = openPromise
+    promiseOps.then(
+      openPromise,
+      () => {
+        if (state.openPromise === openPromise) state.openPromise = null
+      },
+      () => {
+        if (state.openPromise === openPromise) state.openPromise = null
+      }
+    )
+    return openPromise
+  }
+
+  async function performOpenDevice(state) {
+    let backendOpened = false
+    try {
+      const response = await sendRequest('open', {
+        deviceId: state.deviceId,
+        reportSize: state.maxInputReportSize + 3
+      })
+      if (!http.isOk(response.s)) {
+        throw new NativeError('Open failed: ' + (response.error || http.name(response.s || 0)))
+      }
+      backendOpened = true
+      if (state.connectionState !== 'opening') {
+        throw new NativeDOMException('Device opening was cancelled', 'InvalidStateError')
+      }
+      await bridgeReady
+      if (state.connectionState !== 'opening') {
+        throw new NativeDOMException('Device opening was cancelled', 'InvalidStateError')
+      }
+      if (typeof response.clientPlaneGeneration !== 'number') {
+        throw new NativeError('Open did not establish a client data plane')
+      }
+      state.planeGeneration = response.clientPlaneGeneration
+      if (response.clientPlaneOwner !== 'top') {
+        wireDevicePort(state, state.planeGeneration)
+      }
+      const ready = await sendRequest('waitDataPlaneReady', {
+        deviceId: state.deviceId,
+        generation: state.planeGeneration
+      })
+      if (state.connectionState !== 'opening') {
+        throw new NativeDOMException('Device opening was cancelled', 'InvalidStateError')
+      }
+      if (!ready || !ready.ok) {
+        throw new NativeError(
+          'Client data plane is not ready: ' + (ready && ready.error ? ready.error : 'unknown')
+        )
+      }
+      state.planeReady = true
+      state.planeUnavailable = false
+      state.connectionState = 'opened'
+      state.closingWasOpened = false
+      eventTargetOps.dispatchEvent(state.eventTarget, new NativeEvent('open'))
+    } catch (error) {
+      closeDataPort(state)
+      if (backendOpened && state.connectionState !== 'closing') {
+        await promiseOps.catch(sendRequest('close', { deviceId: state.deviceId }), () => {})
+      }
+      if (state.connectionState === 'opening') state.connectionState = 'closed'
+      if (error instanceof NativeDOMException) throw error
+      throw new NativeDOMException(
+        error && error.message ? error.message : 'Failed to open device',
+        'NetworkError'
+      )
+    }
+  }
+
+  function closeDevice(state) {
+    if (state.connectionState === 'forgotten' || state.connectionState === 'forgetting') {
+      return callNative(
+        nativePromiseReject,
+        NativePromise,
+        new NativeDOMException('Device has been forgotten', 'InvalidStateError')
+      )
+    }
+    if (state.connectionState === 'closed') {
+      return callNative(nativePromiseResolve, NativePromise, undefined)
+    }
+    if (state.connectionState === 'closing' && state.closePromise) return state.closePromise
+
+    const wasOpened = state.connectionState === 'opened' || state.closingWasOpened
+    const openPromise = state.openPromise
+    state.connectionState = 'closing'
+    state.closingWasOpened = wasOpened
+    abortDeviceReports(state, 'Device closed')
+    closeDataPort(state)
+
+    const closePromise = performCloseDevice(state, openPromise, wasOpened)
+    state.closePromise = closePromise
+    promiseOps.then(
+      closePromise,
+      () => {
+        if (state.closePromise === closePromise) state.closePromise = null
+      },
+      () => {
+        if (state.closePromise === closePromise) state.closePromise = null
+      }
+    )
+    return closePromise
+  }
+
+  async function performCloseDevice(state, openPromise, wasOpened) {
+    if (openPromise) await promiseOps.catch(openPromise, () => {})
+    const response = await sendRequest('close', { deviceId: state.deviceId })
+    if (!response || !http.isOk(response.s)) {
+      throw new NativeDOMException('Failed to close device', 'InvalidStateError')
+    }
+    if (state.connectionState === 'closing') {
+      reconcileAuthoritativeLifetime(state)
+      state.closingWasOpened = false
+      if (wasOpened) eventTargetOps.dispatchEvent(state.eventTarget, new NativeEvent('close'))
+    }
+  }
+
+  async function sendReportDevice(state, reportId, buffer) {
+    if (state.connectionState !== 'opened') {
+      throw new NativeDOMException('Device is not open', 'InvalidStateError')
+    }
+    const normalizedReportId = validateReportId(reportId, state.collections)
+    try {
+      logger.debug('sendReport reportId=' + normalizedReportId + ' len=' + buffer.length)
+      return await sendDeviceRequest(state, {
+        inPageType: MSG_SEND_REPORT,
+        portType: 'send',
+        reportId: normalizedReportId,
+        payload: buffer,
+        mapResolve: () => undefined,
+        failMessage: 'send failed'
+      })
+    } catch (error) {
+      if (error instanceof NativeDOMException) throw error
+      throw new NativeDOMException(
+        error && error.message ? error.message : 'send failed',
+        'NetworkError'
+      )
+    }
+  }
+
+  async function receiveFeatureReportDevice(state, reportId) {
+    if (state.connectionState !== 'opened') {
+      throw new NativeDOMException('Device is not open', 'InvalidStateError')
+    }
+    const normalizedReportId = validateReportId(reportId, state.collections)
+    try {
+      return await sendDeviceRequest(state, {
+        inPageType: MSG_RECEIVE_FEATURE_REPORT,
+        portType: 'receiveFeature',
+        reportId: normalizedReportId,
+        payload: null,
+        mapResolve: (data) => {
+          if (!data) return new NativeDataView(new NativeArrayBuffer(0))
+          const bytes = data instanceof Uint8Array ? data : new NativeUint8Array(data)
+          return new NativeDataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+        },
+        failMessage: 'receive failed'
+      })
+    } catch (error) {
+      if (error instanceof NativeDOMException) throw error
+      throw new NativeDOMException(
+        error && error.message ? error.message : 'receive failed',
+        'NetworkError'
+      )
+    }
+  }
+
+  async function sendFeatureReportDevice(state, reportId, buffer) {
+    if (state.connectionState !== 'opened') {
+      throw new NativeDOMException('Device is not open', 'InvalidStateError')
+    }
+    const normalizedReportId = validateReportId(reportId, state.collections)
+    try {
+      logger.debug('sendFeatureReport reportId=' + normalizedReportId + ' len=' + buffer.length)
+      return await sendDeviceRequest(state, {
+        inPageType: MSG_SEND_FEATURE_REPORT,
+        portType: 'sendFeature',
+        reportId: normalizedReportId,
+        payload: buffer,
+        mapResolve: () => undefined,
+        failMessage: 'send failed'
+      })
+    } catch (error) {
+      if (error instanceof NativeDOMException) throw error
+      throw new NativeDOMException(
+        error && error.message ? error.message : 'send failed',
+        'NetworkError'
+      )
+    }
+  }
+
+  function permissionGroupStates(state) {
+    const ids = state.permissionDeviceIds || permissionDeviceIdsFor(state.deviceId)
+    const states = [state]
+    for (let i = 0; i < ids.length; i++) {
+      const device = deviceRegistry.get(ids[i])
+      const memberState = device ? devState.get(device) : null
+      if (memberState && !arrayOps.includes(states, memberState)) arrayOps.push(states, memberState)
+    }
+    return states
+  }
+
+  function forgetDevice(state) {
+    if (state.connectionState === 'forgotten') {
+      return callNative(nativePromiseResolve, NativePromise, undefined)
+    }
+    const states = permissionGroupStates(state)
+    for (let i = 0; i < states.length; i++) {
+      if (states[i].forgetPromise) return states[i].forgetPromise
+    }
+    const wasOpened = []
+    const operations = []
+    for (let i = 0; i < states.length; i++) {
+      const memberState = states[i]
+      arrayOps.push(
+        wasOpened,
+        memberState.connectionState === 'opened' || memberState.connectionState === 'closing'
+      )
+      memberState.connectionState = 'forgetting'
+      abortDeviceReports(memberState, 'Device forgotten')
+      closeDataPort(memberState)
+      if (memberState.openPromise) arrayOps.push(operations, memberState.openPromise)
+      if (memberState.closePromise) arrayOps.push(operations, memberState.closePromise)
+    }
+    const forgetPromise = (async () => {
+      for (let i = 0; i < operations.length; i++) {
+        await promiseOps.catch(operations[i], () => {})
+      }
+      try {
+        const response = await sendRequest('unpairDevice', { deviceId: state.deviceId })
+        if (!response || response.success !== true) {
+          throw new NativeDOMException('Failed to forget device', 'NetworkError')
+        }
+        pairedDevices = null
+        pairedDeviceGroups = null
+        deviceInfoCache = null
+        for (let i = 0; i < states.length; i++) {
+          const memberState = states[i]
+          reconcileAuthoritativeLifetime(memberState, { forgotten: true })
+          if (wasOpened[i]) {
+            eventTargetOps.dispatchEvent(memberState.eventTarget, new NativeEvent('close'))
+          }
+          deviceRegistry.delete(memberState.deviceId)
+        }
+      } catch (error) {
+        for (let i = 0; i < states.length; i++) {
+          const memberState = states[i]
+          if (memberState.connectionState !== 'forgetting') continue
+          if (wasOpened[i]) {
+            await promiseOps.catch(
+              sendRequest('close', { deviceId: memberState.deviceId }),
+              () => {}
+            )
+            eventTargetOps.dispatchEvent(memberState.eventTarget, new NativeEvent('close'))
+          }
+          memberState.connectionState = 'closed'
+          memberState.closingWasOpened = false
+        }
+        throw error
+      }
+    })()
+    for (let i = 0; i < states.length; i++) states[i].forgetPromise = forgetPromise
+    promiseOps.then(
+      forgetPromise,
+      () => {
+        for (let i = 0; i < states.length; i++) {
+          if (states[i].forgetPromise === forgetPromise) states[i].forgetPromise = null
+        }
+      },
+      () => {
+        for (let i = 0; i < states.length; i++) {
+          if (states[i].forgetPromise === forgetPromise) states[i].forgetPromise = null
+        }
+      }
+    )
+    return forgetPromise
+  }
 
   /**
    * @param {string} deviceId
@@ -1686,30 +1861,16 @@
    */
   function reconcileAuthoritativeLifetime(state, { forgotten = false } = {}) {
     if (!state) return
-    state.opening = false
-    if (forgotten) state.forgotten = true
-    state.opened = false
-    state.planeReady = false
-    state.planeUnavailable = false
-    state.planeUnavailableGeneration = null
-    rejectPendingReports(
-      state,
-      new NativeDOMException(forgotten ? 'Device forgotten' : 'Device disconnected', 'AbortError')
-    )
-    if (state.dataPort) {
-      if (state.dataPortHandler) {
-        callNative(
-          nativeMessagePortRemoveEventListener,
-          state.dataPort,
-          'message',
-          state.dataPortHandler
-        )
-        state.dataPortHandler = null
-      }
-      callNative(nativeMessagePortClose, state.dataPort)
-      state.dataPort = null
-      state.dataPortGeneration = null
+    state.connectionState = forgotten ? 'forgotten' : 'closed'
+    state.closingWasOpened = false
+    if (forgotten) {
+      abortDeviceReports(state, 'Device forgotten')
+    } else {
+      const error = new NativeDOMException('Device disconnected', 'NetworkError')
+      rejectInPagePending(state.deviceId, error)
+      rejectPendingReports(state, error)
     }
+    closeDataPort(state)
   }
 
   /**
@@ -1751,10 +1912,46 @@
     } catch {
       throw new TypeError('reportId must be a number in the range 0-255')
     }
-    if (!nativeNumberIsFinite(number) || number < 0 || number > 255) {
+    if (!nativeNumberIsFinite(number)) {
       throw new TypeError('reportId must be a number in the range 0-255')
     }
-    return nativeMathTrunc(number) || 0
+    const integer = nativeMathTrunc(number)
+    if (integer < 0 || integer > 255) {
+      throw new TypeError('reportId must be a number in the range 0-255')
+    }
+    return integer || 0
+  }
+
+  /**
+   * Copies bytes from a genuine WebIDL BufferSource.
+   *
+   * @param {*} data
+   * @returns {Uint8Array}
+   */
+  function copyBufferSource(data) {
+    let buffer
+    let byteOffset
+    let byteLength
+    try {
+      byteLength = arrayBufferGetters.byteLength(data)
+      buffer = data
+      byteOffset = 0
+    } catch {
+      if (!callNative(nativeArrayBufferIsView, NativeArrayBuffer, data)) {
+        throw new NativeTypeError('data must be an ArrayBuffer or an ArrayBufferView')
+      }
+      try {
+        buffer = dataViewGetters.buffer(data)
+        byteOffset = dataViewGetters.byteOffset(data)
+        byteLength = dataViewGetters.byteLength(data)
+      } catch {
+        buffer = uint8ArrayGetters.buffer(data)
+        byteOffset = uint8ArrayGetters.byteOffset(data)
+        byteLength = uint8ArrayGetters.byteLength(data)
+      }
+    }
+    const view = new NativeUint8Array(buffer, byteOffset, byteLength)
+    return new NativeUint8Array(view)
   }
 
   /**
@@ -1794,30 +1991,6 @@
   }
 
   /**
-   * @param {object} device
-   * @param {object} state
-   * @returns {Promise<void>}
-   */
-  async function teardownForgottenDevice(device, state) {
-    const wasOpened = !!state.opened
-    if (wasOpened) {
-      try {
-        await sendRequest('close', { deviceId: state.deviceId })
-      } catch (error) {
-        logger.warn(
-          'teardownForgottenDevice: close failed:',
-          error != null ? (error.message != null ? error.message : error) : error
-        )
-      }
-    }
-    reconcileAuthoritativeLifetime(state, { forgotten: true })
-    if (wasOpened) eventTargetOps.dispatchEvent(state.eventTarget, new NativeEvent('close'))
-    pairedDevices = null
-    deviceInfoCache = null
-    deviceRegistry.delete(state.deviceId)
-  }
-
-  /**
    * @param {string} deviceId
    * @returns {Promise<void>}
    */
@@ -1825,12 +1998,19 @@
     const device = deviceRegistry.get(deviceId)
     if (!device) {
       pairedDevices = null
+      pairedDeviceGroups = null
       deviceInfoCache = null
       return
     }
     const state = devState.get(device)
-    if (!state || state.forgotten) return
-    await teardownForgottenDevice(device, state)
+    if (!state || state.connectionState === 'forgotten') return
+    const wasOpened = state.connectionState === 'opened' || state.connectionState === 'closing'
+    reconcileAuthoritativeLifetime(state, { forgotten: true })
+    if (wasOpened) eventTargetOps.dispatchEvent(state.eventTarget, new NativeEvent('close'))
+    pairedDevices = null
+    pairedDeviceGroups = null
+    deviceInfoCache = null
+    deviceRegistry.delete(state.deviceId)
   }
 
   /**
@@ -1964,8 +2144,12 @@
       productId: deviceInfo.productId,
       productName: deviceInfo.productName,
       collections: deepFreeze(deviceInfo.collections || []),
-      opened: false,
-      opening: false,
+      connectionState: 'closed',
+      openPromise: null,
+      closePromise: null,
+      forgetPromise: null,
+      closingWasOpened: false,
+      permissionDeviceIds: null,
       planeGeneration: 0,
       planeReady: false,
       planeUnavailable: false,
@@ -1981,13 +2165,37 @@
   }
 
   /**
+   * @param {number|string} deviceId
+   * @returns {Array<number|string>}
+   */
+  function permissionDeviceIdsFor(deviceId) {
+    const ids = [deviceId]
+    const groups = pairedDeviceGroups || []
+    for (let i = 0; i < groups.length; i++) {
+      const members = groups[i].deviceIds || []
+      if (!arrayOps.includes(members, deviceId)) continue
+      for (let j = 0; j < members.length; j++) {
+        if (!arrayOps.includes(ids, members[j])) arrayOps.push(ids, members[j])
+      }
+    }
+    return ids
+  }
+
+  /**
    * @param {import("./types.js").HIDDeviceInfo} deviceInfo
    * @returns {object}
    */
   function getOrCreateDevice(deviceInfo) {
     const id = deviceInfo.deviceId
-    if (id && deviceRegistry.has(id)) return deviceRegistry.get(id)
+    if (id && deviceRegistry.has(id)) {
+      const existing = deviceRegistry.get(id)
+      const existingState = devState.get(existing)
+      if (existingState) existingState.permissionDeviceIds = permissionDeviceIdsFor(id)
+      return existing
+    }
     const device = createHIDDevice(deviceInfo)
+    const state = devState.get(device)
+    state.permissionDeviceIds = permissionDeviceIdsFor(id)
     if (id) deviceRegistry.set(id, device)
     return device
   }
@@ -1999,17 +2207,13 @@
    * @returns {Event}
    */
   function HIDInputReportEvent(type, init) {
+    if (!new.target) throw new NativeTypeError('Class constructor requires new')
+    const obj = types.Event.construct([type, init], new.target)
     const dictionary = init == null ? null : Object(init)
-    if (dictionary == null || !('device' in dictionary)) {
+    const device = dictionary == null ? undefined : dictionary.device
+    if (device === undefined) {
       throw new TypeError('HIDInputReportEventInit.device is required')
     }
-    if (!('reportId' in dictionary)) {
-      throw new TypeError('HIDInputReportEventInit.reportId is required')
-    }
-    if (!('data' in dictionary)) {
-      throw new TypeError('HIDInputReportEventInit.data is required')
-    }
-    const device = dictionary.device
     if (!devState.has(device)) {
       throw new TypeError('HIDInputReportEventInit.device must be a HIDDevice')
     }
@@ -2019,8 +2223,10 @@
     }
     const reportId = convertOctet(reportIdValue)
     const data = dictionary.data
+    if (data === undefined) {
+      throw new TypeError('HIDInputReportEventInit.data is required')
+    }
     types.DataView.proto.getters.buffer(data)
-    const obj = types.Event.construct([type, dictionary], new.target || HIDInputReportEvent)
     inputReportEventState.set(obj, { device, reportId, data })
     return obj
   }
@@ -2061,15 +2267,16 @@
    * @returns {Event}
    */
   function HIDConnectionEvent(type, init) {
+    if (!new.target) throw new NativeTypeError('Class constructor requires new')
+    const obj = types.Event.construct([type, init], new.target)
     const dictionary = init == null ? null : Object(init)
-    if (dictionary == null || !('device' in dictionary)) {
+    const device = dictionary == null ? undefined : dictionary.device
+    if (device === undefined) {
       throw new TypeError('HIDConnectionEventInit.device is required')
     }
-    const device = dictionary.device
     if (!devState.has(device)) {
       throw new TypeError('HIDConnectionEventInit.device must be a HIDDevice')
     }
-    const obj = types.Event.construct([type, dictionary], new.target || HIDConnectionEvent)
     evtState.set(obj, { device })
     return obj
   }
@@ -2102,7 +2309,68 @@
   })
 
   /**
-   * Converts requestDevice options and their sequence values.
+   * Converts a WebIDL unsigned integer without [EnforceRange].
+   *
+   * @param {*} value
+   * @param {number} bitLength
+   * @returns {number}
+   */
+  function convertUnsignedInteger(value, bitLength) {
+    let number
+    try {
+      number = +value
+    } catch {
+      throw new TypeError('value cannot be converted to an unsigned integer')
+    }
+    if (!nativeNumberIsFinite(number) || number === 0) return 0
+    const modulus = 2 ** bitLength
+    const remainder = nativeMathTrunc(number) % modulus
+    return remainder < 0 ? remainder + modulus : remainder
+  }
+
+  /**
+   * Converts a HIDDeviceFilter dictionary, ignoring unknown members.
+   *
+   * @param {*} value
+   * @returns {object}
+   */
+  function convertFilterDictionary(value) {
+    const dictionary = value == null ? null : Object(value)
+    const filter = object.create(null)
+    if (dictionary == null) return filter
+    const vendorId = dictionary.vendorId
+    if (vendorId !== undefined) filter.vendorId = convertUnsignedInteger(vendorId, 32)
+    const productId = dictionary.productId
+    if (productId !== undefined) filter.productId = convertUnsignedInteger(productId, 16)
+    const usagePage = dictionary.usagePage
+    if (usagePage !== undefined) filter.usagePage = convertUnsignedInteger(usagePage, 16)
+    const usage = dictionary.usage
+    if (usage !== undefined) filter.usage = convertUnsignedInteger(usage, 16)
+    return filter
+  }
+  /**
+   * Converts a WebIDL sequence using the source's iterator and closes it if
+   * conversion of an item fails.
+   *
+   * @param {*} value
+   * @param {string} name
+   * @param {(value: *) => *} convertItem
+   * @returns {Array}
+   */
+  function convertSequence(value, name, convertItem) {
+    if (value == null) throw new TypeError(name + ' must be a sequence')
+    const iteratorMethod = nativeSymbolIterator && value[nativeSymbolIterator]
+    if (typeof iteratorMethod !== 'function') {
+      throw new TypeError(name + ' must be a sequence')
+    }
+    const iterator = callNative(iteratorMethod, value)
+    const iterable = object.create(null)
+    object.defineProperty(iterable, nativeSymbolIterator, { value: () => iterator })
+    return types.Array.static.methods.from(types.Array.constructor, iterable, convertItem)
+  }
+
+  /**
+   * Converts requestDevice options using WebIDL dictionary and sequence order.
    *
    * @param {*} options
    * @returns {{filters: object[], exclusionFilters: object[], exclusionFiltersPresent: boolean}}
@@ -2110,37 +2378,26 @@
    */
   function normalizeRequestOptions(options) {
     const dictionary = options == null ? null : Object(options)
-    if (dictionary == null || !('filters' in dictionary)) {
+    if (dictionary == null) {
       throw new TypeError('HIDDeviceRequestOptions.filters is required')
     }
-    const toSequence = (value, name) => {
-      if (value == null) throw new TypeError(name + ' must be a sequence')
-      const values = []
-      try {
-        if (arrayIsArray(value)) {
-          for (let i = 0; i < value.length; i++) arrayOps.push(values, value[i])
-        } else {
-          const iteratorMethod = nativeSymbolIterator && value[nativeSymbolIterator]
-          if (typeof iteratorMethod !== 'function') {
-            throw new TypeError(name + ' must be a sequence')
-          }
-          const iterator = callNative(iteratorMethod, value)
-          for (;;) {
-            const step = callNative(iterator.next, iterator)
-            if (step.done) break
-            arrayOps.push(values, step.value)
-          }
-        }
-      } catch {
-        throw new TypeError(name + ' must be a sequence')
-      }
-      return values
+    const filterValues = dictionary.filters
+    if (filterValues === undefined) {
+      throw new TypeError('HIDDeviceRequestOptions.filters is required')
     }
-    const filters = toSequence(dictionary.filters, 'HIDDeviceRequestOptions.filters')
+    const filters = convertSequence(
+      filterValues,
+      'HIDDeviceRequestOptions.filters',
+      convertFilterDictionary
+    )
     const exclusionFiltersValue = dictionary.exclusionFilters
     const exclusionFiltersPresent = exclusionFiltersValue !== undefined
     const exclusionFilters = exclusionFiltersPresent
-      ? toSequence(exclusionFiltersValue, 'HIDDeviceRequestOptions.exclusionFilters')
+      ? convertSequence(
+          exclusionFiltersValue,
+          'HIDDeviceRequestOptions.exclusionFilters',
+          convertFilterDictionary
+        )
       : []
     return { filters, exclusionFilters, exclusionFiltersPresent }
   }
@@ -2178,8 +2435,15 @@
     const devices = result.devices
     if (!devices || devices.length === 0) return []
     pairedDevices = null
+    pairedDeviceGroups = null
     deviceInfoCache = null
-    return arrayOps.map(devices, (device) => getOrCreateDevice(device))
+    const granted = arrayOps.map(devices, (device) => getOrCreateDevice(device))
+    const deviceIds = arrayOps.map(devices, (device) => device.deviceId)
+    for (let i = 0; i < granted.length; i++) {
+      const state = devState.get(granted[i])
+      if (state) state.permissionDeviceIds = deviceIds
+    }
+    return granted
   }
 
   /**
@@ -2188,12 +2452,8 @@
    * @param {object[]} [options.exclusionFilters]
    * @returns {Promise<object[]>}
    */
-  async function requestDeviceImpl(options) {
-    const { filters, exclusionFilters, exclusionFiltersPresent } = normalizeRequestOptions(options)
-
-    if (isWorker) {
-      throw new NativeDOMException('Not allowed in worker context', 'NotSupportedError')
-    }
+  async function requestDeviceImpl(options, hasActivation, calledFromConsole) {
+    const { filters, exclusionFilters, exclusionFiltersPresent } = options
     await settingsReady
     const policy = await getPolicy()
     if (policy && policy.hid === 'none') {
@@ -2202,11 +2462,7 @@
         'SecurityError'
       )
     }
-    if (
-      !isCalledFromConsole() &&
-      !settings.allowActivationlessRequestDevice &&
-      !hasTransientActivation()
-    ) {
+    if (!hasActivation && !settings.allowActivationlessRequestDevice && !calledFromConsole) {
       throw new NativeDOMException(
         'Must be handling a user gesture to perform a hid.requestDevice() call.',
         'SecurityError'
@@ -2240,48 +2496,65 @@
     })
   }
 
+  async function getDevicesImpl() {
+    const policy = await getPolicy()
+    if (policy && policy.hid === 'none') {
+      throw new NativeDOMException(
+        'Access to HID is blocked by Permissions Policy',
+        'SecurityError'
+      )
+    }
+    try {
+      const pairedHashes = await getPairedDevices()
+      const deviceCache = await getDeviceCache()
+      const granted = []
+      for (let i = 0; i < pairedHashes.length; i++) {
+        const device = deviceCache.get(pairedHashes[i])
+        if (device) arrayOps.push(granted, getOrCreateDevice(device))
+      }
+      logger.debug('getDevices returned ' + granted.length + ' device(s)')
+      return granted
+    } catch (error) {
+      logger.warn('getDevices error:', error)
+      return []
+    }
+  }
+
+  function requestDevice(options) {
+    requireState(hidState, this)
+    const normalizedOptions = normalizeRequestOptions(options)
+    const hasActivation = hasTransientActivation()
+    const calledFromConsole = !hasActivation && isCalledFromConsole()
+    return requestDeviceImpl(normalizedOptions, hasActivation, calledFromConsole)
+  }
+
   object.defineProperties(HID.prototype, {
     getDevices: {
       /** @returns {Promise<object[]>} */
-      value: async function () {
-        const policy = await getPolicy()
-        if (policy && policy.hid === 'none') {
-          throw new NativeDOMException(
-            'Access to HID is blocked by Permissions Policy',
-            'SecurityError'
-          )
-        }
-        try {
-          const pairedHashes = await getPairedDevices()
-          const deviceCache = await getDeviceCache()
-          const granted = []
-          for (let i = 0; i < pairedHashes.length; i++) {
-            const device = deviceCache.get(pairedHashes[i])
-            if (device) arrayOps.push(granted, getOrCreateDevice(device))
-          }
-          logger.debug('getDevices returned ' + granted.length + ' device(s)')
-          return granted
-        } catch (error) {
-          logger.warn('getDevices error:', error)
-          return []
-        }
+      value: function () {
+        requireState(hidState, this)
+        return getDevicesImpl()
       },
       enumerable: false,
       configurable: true,
       writable: true
     },
-    requestDevice: {
-      /**
-       * @param {object} options
-       * @param {object[]} options.filters
-       * @param {object[]} [options.exclusionFilters]
-       * @returns {Promise<object[]>}
-       */
-      value: requestDeviceImpl,
-      enumerable: false,
-      configurable: true,
-      writable: true
-    },
+    ...(!isWorker
+      ? {
+          requestDevice: {
+            /**
+             * @param {object} options
+             * @param {object[]} options.filters
+             * @param {object[]} [options.exclusionFilters]
+             * @returns {Promise<object[]>}
+             */
+            value: requestDevice,
+            enumerable: false,
+            configurable: true,
+            writable: true
+          }
+        }
+      : {}),
     addEventListener: {
       /**
        * @param {string} type
@@ -2399,6 +2672,10 @@
     const target = isWorker ? object.getPrototypeOf(host.navigator) : Navigator.prototype
     object.defineProperty(target, 'hid', {
       get() {
+        if (!nativeNavigatorUserAgent) {
+          throw new NativeTypeError('Illegal invocation')
+        }
+        nativeNavigatorUserAgent(this)
         return hidInstance
       },
       ...(brokerSetterArmed

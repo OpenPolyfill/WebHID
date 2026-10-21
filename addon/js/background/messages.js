@@ -1039,17 +1039,19 @@
       try {
         const authority = scopeAuthorityForRequest(request, sender, port)
         if (!authority) {
-          sendResponse({ success: false, hashes: [] })
+          sendResponse({ success: false, hashes: [], groups: [] })
           return
         }
         const deviceIds = await getAllowedDevices(authority.persistentOrigin)
+        const groups = await getGrantGroupsForOrigin(authority.persistentOrigin)
+        const deviceGroups = groups.map((group) => ({ deviceIds: group.deviceIds }))
         sendResponse(
           scopeAuthorityIsCurrent(authority)
-            ? { success: true, hashes: deviceIds }
-            : { success: false, hashes: [] }
+            ? { success: true, hashes: deviceIds, groups: deviceGroups }
+            : { success: false, hashes: [], groups: [] }
         )
-      } catch (e) {
-        sendResponse({ success: false, error: e.message, hashes: [] })
+      } catch (error) {
+        sendResponse({ success: false, error: error.message, hashes: [], groups: [] })
       }
     })()
     return true

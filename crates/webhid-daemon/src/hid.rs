@@ -2,6 +2,8 @@
 
 use hidapi::{DeviceInfo as HidDeviceInfo, HidApi, HidDevice};
 use std::cell::RefCell;
+#[cfg(target_os = "linux")]
+use std::os::fd::AsRawFd;
 use webhid::{Collection, DeviceInfo, EnumerateFilter};
 
 thread_local! {
@@ -221,7 +223,7 @@ pub fn enumerate_with_filter(filter: Option<&EnumerateFilter>) -> anyhow::Result
             {
                 continue;
             }
-            if let Some(d) = info_from_hidapi_pub_with_desc(info, desc.clone()) {
+            if let Some(d) = info_from_hidapi_pub_with_desc(Some(&api), info, desc.clone()) {
                 if is_blocked_by_vendor_product(&d) {
                     continue;
                 }
@@ -244,20 +246,60 @@ pub fn enumerate_with_filter(filter: Option<&EnumerateFilter>) -> anyhow::Result
     Ok(devices)
 }
 
-/// Build a `DeviceInfo` from a hidapi `DeviceInfo`, fetching its report
-/// descriptor via a fresh `HidApi` instance.
+/// Build a `DeviceInfo` from a hidapi entry, resolving report-item strings
+/// with the native indexed-string API when the descriptor includes them.
 #[cfg(target_os = "linux")]
 pub fn info_from_hidapi_pub(info: &HidDeviceInfo) -> Option<DeviceInfo> {
-    info_from_hidapi_pub_with_desc(info, read_raw_report_descriptor(info))
+    let api = HidApi::new().ok();
+    info_from_hidapi_pub_with_desc(api.as_ref(), info, read_raw_report_descriptor(info))
 }
 
-fn info_from_hidapi_pub_with_desc(info: &HidDeviceInfo, desc: Vec<u8>) -> Option<DeviceInfo> {
+fn info_from_hidapi_pub_with_desc(
+    api: Option<&HidApi>,
+    info: &HidDeviceInfo,
+    desc: Vec<u8>,
+) -> Option<DeviceInfo> {
     let collections = if !desc.is_empty() {
-        match crate::descriptor::parse_report_descriptor(&desc) {
-            Ok(c) => c,
-            Err(e) => {
+        let mut device = None;
+        let mut device_open_attempted = false;
+        #[cfg(target_os = "linux")]
+        let mut usb_strings = None;
+        #[cfg(target_os = "linux")]
+        let mut usb_open_attempted = false;
+        let mut strings: std::collections::HashMap<u32, String> = std::collections::HashMap::new();
+        match crate::descriptor::parse_report_descriptor_with_strings(&desc, |index| {
+            if let Some(value) = strings.get(&index) {
+                return value.clone();
+            }
+            if !device_open_attempted {
+                device = api.and_then(|api| api.open_path(info.path()).ok());
+                device_open_attempted = true;
+            }
+            let value = i32::try_from(index)
+                .ok()
+                .and_then(|index| device.as_ref()?.get_indexed_string(index).ok().flatten())
+                .or_else(|| {
+                    #[cfg(target_os = "linux")]
+                    {
+                        if !usb_open_attempted {
+                            usb_strings = LinuxUsbStringReader::open(info);
+                            usb_open_attempted = true;
+                        }
+                        usb_strings.as_mut().and_then(|reader| reader.read(index))
+                    }
+                    #[cfg(not(target_os = "linux"))]
+                    {
+                        None
+                    }
+                })
+                .unwrap_or_default();
+            strings.insert(index, value.clone());
+            value
+        }) {
+            Ok(collections) => collections,
+            Err(error) => {
                 log::warn!(
-                    "device {:04x}:{:04x} report descriptor parse failed ({} bytes): {e}",
+                    "device {:04x}:{:04x} report descriptor parse failed ({} bytes): {error}",
                     info.vendor_id(),
                     info.product_id(),
                     desc.len()
@@ -269,6 +311,138 @@ fn info_from_hidapi_pub_with_desc(info: &HidDeviceInfo, desc: Vec<u8>) -> Option
         vec![]
     };
     Some(build_device_info(info, collections, desc))
+}
+#[cfg(target_os = "linux")]
+struct LinuxUsbStringReader {
+    device: std::fs::File,
+    language_id: Option<u16>,
+    language_id_attempted: bool,
+}
+
+#[cfg(target_os = "linux")]
+impl LinuxUsbStringReader {
+    fn open(info: &HidDeviceInfo) -> Option<Self> {
+        let devnode = info.path().to_string_lossy();
+        let mut sysfs_path = std::path::PathBuf::from(resolve_linux_syspath(&devnode)?);
+        loop {
+            let bus_path = sysfs_path.join("busnum");
+            let device_path = sysfs_path.join("devnum");
+            if bus_path.is_file() && device_path.is_file() {
+                let bus = std::fs::read_to_string(bus_path)
+                    .ok()?
+                    .trim()
+                    .parse::<u16>()
+                    .ok()?;
+                let device = std::fs::read_to_string(device_path)
+                    .ok()?
+                    .trim()
+                    .parse::<u16>()
+                    .ok()?;
+                let path = format!("/dev/bus/usb/{bus:03}/{device:03}");
+                let device = std::fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(path)
+                    .ok()?;
+                return Some(Self {
+                    device,
+                    language_id: None,
+                    language_id_attempted: false,
+                });
+            }
+            if !sysfs_path.pop() {
+                return None;
+            }
+        }
+    }
+
+    fn read(&mut self, index: u32) -> Option<String> {
+        let index = u8::try_from(index).ok()?;
+        if index == 0 {
+            return None;
+        }
+        if !self.language_id_attempted {
+            self.language_id = read_usb_language_id(&self.device);
+            self.language_id_attempted = true;
+        }
+        let language_id = self.language_id?;
+        let descriptor = read_usb_string_descriptor(&self.device, index, language_id)?;
+        decode_usb_string_descriptor(&descriptor)
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[repr(C)]
+struct UsbControlTransfer {
+    request_type: u8,
+    request: u8,
+    value: u16,
+    index: u16,
+    length: u16,
+    timeout: u32,
+    data: *mut u8,
+}
+
+#[cfg(target_os = "linux")]
+fn read_usb_language_id(device: &std::fs::File) -> Option<u16> {
+    let descriptor = read_usb_string_descriptor(device, 0, 0)?;
+    let length = usize::from(*descriptor.first()?);
+    if descriptor.get(1) != Some(&3) || length < 4 || length > descriptor.len() || length % 2 != 0 {
+        return None;
+    }
+    Some(u16::from_le_bytes([descriptor[2], descriptor[3]]))
+}
+
+#[cfg(target_os = "linux")]
+fn read_usb_string_descriptor(
+    device: &std::fs::File,
+    index: u8,
+    language_id: u16,
+) -> Option<Vec<u8>> {
+    let mut data = [0u8; 255];
+    let mut transfer = UsbControlTransfer {
+        request_type: 0x80,
+        request: 0x06,
+        value: 0x0300 | u16::from(index),
+        index: language_id,
+        length: data.len() as u16,
+        timeout: 1000,
+        data: data.as_mut_ptr(),
+    };
+    let request = ((3u64 << 30)
+        | ((std::mem::size_of::<UsbControlTransfer>() as u64) << 16)
+        | (u64::from(b'U') << 8)) as libc::c_ulong;
+    let transferred = unsafe {
+        libc::ioctl(
+            device.as_raw_fd(),
+            request,
+            &mut transfer as *mut UsbControlTransfer,
+        )
+    };
+    let transferred = usize::try_from(transferred).ok()?;
+    let length = usize::from(*data.first()?);
+    if transferred < length
+        || length < 2
+        || length > data.len()
+        || data.get(1) != Some(&3)
+        || length % 2 != 0
+    {
+        return None;
+    }
+    Some(data[..length].to_vec())
+}
+
+#[cfg(target_os = "linux")]
+fn decode_usb_string_descriptor(descriptor: &[u8]) -> Option<String> {
+    let length = usize::from(*descriptor.first()?);
+    if descriptor.get(1) != Some(&3) || length < 2 || length > descriptor.len() || length % 2 != 0 {
+        return None;
+    }
+    let characters: Vec<u16> = descriptor[2..length]
+        .chunks_exact(2)
+        .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]))
+        .collect();
+    Some(String::from_utf16_lossy(&characters))
 }
 
 /// Assemble a `DeviceInfo` from a hidapi entry and its parsed collections.
@@ -435,7 +609,7 @@ pub fn open_by_device_id(device_id: u32) -> anyhow::Result<(DeviceInfo, bool, Hi
         ));
     }
     for (info, desc) in matches {
-        let device_info = info_from_hidapi_pub_with_desc(info, desc.clone())
+        let device_info = info_from_hidapi_pub_with_desc(Some(&api), info, desc.clone())
             .ok_or_else(|| anyhow::anyhow!("failed to build DeviceInfo"))?;
         if is_blocked_by_vendor_product(&device_info) {
             continue;

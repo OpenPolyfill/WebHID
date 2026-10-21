@@ -3495,13 +3495,22 @@
    * @returns {Promise<void>}
    */
   async function reconcileFrameDevice(context, deviceId, messageEvent) {
-    const clients = sessionsForContext(context).filter(({ sessions }) => sessions.has(deviceId))
-    if (clients.length === 0) return
+    const clients = sessionsForContext(context)
+    let pagePortNotified = false
     for (const { port, sessions, clientKey } of clients) {
+      if (!sessions.has(deviceId)) continue
       sessions.delete(deviceId)
       await despawnDataPlane(context, deviceId, { clientKey })
       try {
         port.postMessage({ type: 'event', event: messageEvent })
+        if (port === context.port) pagePortNotified = true
+      } catch (e) {
+        logger.debug('frame device reconciliation failed', e)
+      }
+    }
+    if (!pagePortNotified && messageEvent.eventType === 'revoked') {
+      try {
+        context.port.postMessage({ type: 'event', event: messageEvent })
       } catch (e) {
         logger.debug('frame device reconciliation failed', e)
       }

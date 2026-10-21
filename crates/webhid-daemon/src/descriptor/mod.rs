@@ -1,9 +1,11 @@
 //! HID report descriptor parser -> Chromium-shaped collections tree.
 
 mod fields;
+mod local_strings;
 mod tree;
 
 use hidreport::ReportDescriptor;
+
 use webhid::types::{Collection, Report};
 
 use tree::CollectionTreeBuilder;
@@ -12,9 +14,27 @@ use tree::CollectionTreeBuilder;
 /// The error is surfaced so callers (daemon log, `dump` subcommand) can tell
 /// users *why* a device's descriptor was rejected.
 pub fn parse_report_descriptor(bytes: &[u8]) -> Result<Vec<Collection>, hidreport::ParserError> {
-    let rdesc = ReportDescriptor::try_from(bytes)?;
+    parse_report_descriptor_with_strings(bytes, |_| String::new())
+}
 
-    let mut tree = CollectionTreeBuilder::new();
+/// Parse a raw HID report descriptor, resolving each referenced string index.
+pub fn parse_report_descriptor_with_strings<F>(
+    bytes: &[u8],
+    mut read_string: F,
+) -> Result<Vec<Collection>, hidreport::ParserError>
+where
+    F: FnMut(u32) -> String,
+{
+    let rdesc = ReportDescriptor::try_from(bytes)?;
+    let mut main_item_strings = local_strings::scan(bytes)?;
+    for main_item in &mut main_item_strings {
+        main_item.strings = std::mem::take(&mut main_item.string_indices)
+            .into_iter()
+            .map(&mut read_string)
+            .collect();
+    }
+
+    let mut tree = CollectionTreeBuilder::new(&main_item_strings);
     for report in rdesc.input_reports() {
         tree.add_report(report, "input");
     }

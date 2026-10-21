@@ -57,9 +57,10 @@ struct VarSig {
     has_null: bool,
     has_preferred_state: bool,
     wrap: bool,
+    strings: Vec<String>,
 }
 
-fn var_signature(v: &VariableField) -> VarSig {
+fn var_signature(v: &VariableField, strings: &[String]) -> VarSig {
     let (sys, len, mass, time, temp, cur, lum) = decode_unit_safe(v.unit.as_ref());
     VarSig {
         report_size: (v.bits.end - v.bits.start) as u32,
@@ -82,11 +83,17 @@ fn var_signature(v: &VariableField) -> VarSig {
         has_null: v.has_null_state(),
         has_preferred_state: v.has_preferred_state(),
         wrap: v.wraps(),
+        strings: strings.to_vec(),
     }
 }
 
-fn make_aggregated_variable(first: &VariableField, usages: Vec<u32>, count: u32) -> WebHidField {
-    let sig = var_signature(first);
+fn make_aggregated_variable(
+    first: &VariableField,
+    usages: Vec<u32>,
+    count: u32,
+    strings: Vec<String>,
+) -> WebHidField {
+    let sig = var_signature(first, &strings);
     let (final_usages, is_range, usage_min, usage_max) = detect_contiguous_range(usages);
 
     WebHidField {
@@ -117,7 +124,7 @@ fn make_aggregated_variable(first: &VariableField, usages: Vec<u32>, count: u32)
         has_null: sig.has_null,
         has_preferred_state: sig.has_preferred_state,
         wrap: sig.wrap,
-        strings: vec![],
+        strings: sig.strings,
     }
 }
 
@@ -144,16 +151,24 @@ fn detect_contiguous_range(usages: Vec<u32>) -> (Vec<u32>, bool, Option<u32>, Op
 /// usage_maximum): a declared usage range compresses to a range pair, an
 /// explicit usage list stays explicit.
 fn array_usage_range(a: &hidreport::ArrayField) -> (Vec<u32>, bool, Option<u32>, Option<u32>) {
-    if a.is_usage_range() {
-        if let Some(r) = a.usage_range() {
-            let lo_page: u16 = r.minimum().usage_page().into();
-            let lo_id: u16 = r.minimum().usage_id().into();
-            let hi_id: u16 = r.maximum().usage_id().into();
-            let lo_packed = ((lo_page as u32) << 16) | (lo_id as u32);
-            let hi_packed = ((lo_page as u32) << 16) | (hi_id as u32);
+    if a.is_usage_range()
+        && let Some(r) = a.usage_range()
+    {
+        let lo_page: u16 = r.minimum().usage_page().into();
+        let lo_id: u16 = r.minimum().usage_id().into();
+        let hi_page: u16 = r.maximum().usage_page().into();
+        let hi_id: u16 = r.maximum().usage_id().into();
+        let lo_packed = ((lo_page as u32) << 16) | (lo_id as u32);
+        let hi_packed = ((hi_page as u32) << 16) | (hi_id as u32);
+        if lo_packed < hi_packed {
             (vec![], true, Some(lo_packed), Some(hi_packed))
         } else {
-            (vec![], true, None, None)
+            (
+                a.usages().iter().map(pack_usage).collect(),
+                false,
+                None,
+                None,
+            )
         }
     } else {
         let usages: Vec<u32> = a.usages().iter().map(pack_usage).collect();
@@ -161,7 +176,7 @@ fn array_usage_range(a: &hidreport::ArrayField) -> (Vec<u32>, bool, Option<u32>,
     }
 }
 
-fn make_array_field(a: &hidreport::ArrayField) -> WebHidField {
+fn make_array_field(a: &hidreport::ArrayField, strings: Vec<String>) -> WebHidField {
     let (usages, is_range, usage_min, usage_max) = array_usage_range(a);
 
     let (sys, len, mass, time, temp, cur, lum) = decode_unit_safe(a.unit.as_ref());
@@ -199,39 +214,44 @@ fn make_array_field(a: &hidreport::ArrayField) -> WebHidField {
         has_null: a.has_null_state(),
         has_preferred_state: a.has_preferred_state(),
         wrap: a.wraps(),
-        strings: vec![],
+        strings,
     }
 }
 
-pub(super) fn convert_fields_aggregate(fields: &[Field]) -> Vec<WebHidField> {
+pub(super) fn convert_fields_aggregate(fields: &[(Field, Vec<String>)]) -> Vec<WebHidField> {
     let mut out: Vec<WebHidField> = Vec::new();
     let mut i = 0;
     while i < fields.len() {
-        match &fields[i] {
+        match &fields[i].0 {
             Field::Variable(v) => {
-                let sig = var_signature(v);
+                let signature = var_signature(v, &fields[i].1);
                 let mut usages = vec![pack_usage(&v.usage)];
                 let mut count: u32 = 1;
                 let mut prev_end = v.bits.end;
                 let mut j = i + 1;
                 while j < fields.len() {
-                    if let Field::Variable(v2) = &fields[j]
-                        && v2.bits.start == prev_end
-                        && var_signature(v2) == sig
+                    if let Field::Variable(next) = &fields[j].0
+                        && next.bits.start == prev_end
+                        && var_signature(next, &fields[j].1) == signature
                     {
-                        usages.push(pack_usage(&v2.usage));
+                        usages.push(pack_usage(&next.usage));
                         count += 1;
-                        prev_end = v2.bits.end;
+                        prev_end = next.bits.end;
                         j += 1;
                         continue;
                     }
                     break;
                 }
-                out.push(make_aggregated_variable(v, usages, count));
+                out.push(make_aggregated_variable(
+                    v,
+                    usages,
+                    count,
+                    fields[i].1.clone(),
+                ));
                 i = j;
             }
             Field::Array(a) => {
-                out.push(make_array_field(a));
+                out.push(make_array_field(a, fields[i].1.clone()));
                 i += 1;
             }
             Field::Constant(c) => {
@@ -240,6 +260,7 @@ pub(super) fn convert_fields_aggregate(fields: &[Field]) -> Vec<WebHidField> {
                     report_size: total_bits.max(1),
                     report_count: 1,
                     is_constant: true,
+                    strings: fields[i].1.clone(),
                     ..Default::default()
                 });
                 i += 1;

@@ -116,7 +116,8 @@
           hasOwn(methods, key) ||
           hasOwn(getters, key) ||
           hasOwn(setters, key)
-        ) continue
+        )
+          continue
         const descriptor = nativeGet(descriptors, key)
         const hasValue = hasOwn(descriptor, 'value')
         const descriptorValue = descriptor.value
@@ -295,13 +296,9 @@
   }
   nativeFreeze(types)
 
-  const activationObject = root.navigator
-    ? nativeGet(root.navigator, 'userActivation')
-    : null
+  const activationObject = root.navigator ? nativeGet(root.navigator, 'userActivation') : null
   let activationGetter = null
-  let activationProto = activationObject
-    ? nativeGetPrototypeOf(activationObject)
-    : null
+  let activationProto = activationObject ? nativeGetPrototypeOf(activationObject) : null
   const nativeWindow = root.window
   const nativeWindowTop = nativeWindow ? nativeGet(nativeWindow, 'top') : null
   const nativeWindowFrames = nativeWindow ? nativeGet(nativeWindow, 'frames') : null
@@ -358,6 +355,15 @@
     activationProto = nativeGetPrototypeOf(activationProto)
   }
   const nativeNavigator = root.navigator
+  let nativeNavigatorUserAgentGetter = null
+  let navigatorPrototype = nativeNavigator ? nativeGetPrototypeOf(nativeNavigator) : null
+  while (navigatorPrototype !== null && !nativeNavigatorUserAgentGetter) {
+    const descriptor = own(navigatorPrototype, 'userAgent')
+    if (descriptor && typeof descriptor.get === 'function') {
+      nativeNavigatorUserAgentGetter = descriptor.get
+    }
+    navigatorPrototype = nativeGetPrototypeOf(navigatorPrototype)
+  }
   const nativePermissions = nativeNavigator ? nativeGet(nativeNavigator, 'permissions') : null
   const permissionsQuery =
     nativePermissions && typeof nativePermissions.query === 'function'
@@ -386,6 +392,9 @@
     window: nativeWindow,
     self: root.self,
     navigator: root.navigator,
+    navigatorUserAgent: nativeNavigatorUserAgentGetter
+      ? (receiver) => call(nativeNavigatorUserAgentGetter, receiver, [])
+      : null,
     crypto: root.crypto,
     trustedTypes: root.trustedTypes,
     windowTop: nativeWindowTop,

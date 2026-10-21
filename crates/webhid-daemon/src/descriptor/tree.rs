@@ -8,6 +8,7 @@ use hidreport::{Collection as HidCollection, Field};
 use webhid::types::{Collection, Report};
 
 use super::fields::convert_fields_aggregate;
+use super::local_strings::{MainItemStrings, ReportKind};
 
 struct ColNode {
     collection_type: u8,
@@ -19,16 +20,18 @@ struct ColNode {
     feature_reports: Vec<Report>,
 }
 
-pub(super) struct CollectionTreeBuilder {
+pub(super) struct CollectionTreeBuilder<'a> {
     nodes: HashMap<String, ColNode>,
     root_ids: Vec<String>,
+    main_item_strings: &'a [MainItemStrings],
 }
 
-impl CollectionTreeBuilder {
-    pub(super) fn new() -> Self {
+impl<'a> CollectionTreeBuilder<'a> {
+    pub(super) fn new(main_item_strings: &'a [MainItemStrings]) -> Self {
         Self {
             nodes: HashMap::new(),
             root_ids: Vec::new(),
+            main_item_strings,
         }
     }
 
@@ -71,12 +74,30 @@ impl CollectionTreeBuilder {
     }
 
     pub(super) fn add_report(&mut self, report: &impl hidreport::Report, rtype: &str) {
-        let rid: u8 = report
-            .report_id()
-            .as_ref()
-            .map(|id| (*id).into())
-            .unwrap_or(0);
+        let report_id: Option<u8> = report.report_id().as_ref().map(|id| (*id).into());
+        let rid = report_id.unwrap_or(0);
+        let report_kind = match rtype {
+            "input" => ReportKind::Input,
+            "output" => ReportKind::Output,
+            "feature" => ReportKind::Feature,
+            _ => return,
+        };
         let fields = report.fields();
+        let mut field_strings = vec![Vec::new(); fields.len()];
+        let mut field_offset = 0usize;
+        for main_item in self
+            .main_item_strings
+            .iter()
+            .filter(|item| item.report_kind == report_kind && item.report_id == report_id)
+        {
+            let next_offset = field_offset
+                .saturating_add(main_item.field_count)
+                .min(fields.len());
+            for strings in &mut field_strings[field_offset..next_offset] {
+                *strings = main_item.strings.clone();
+            }
+            field_offset = next_offset;
+        }
 
         let chains: Vec<&[HidCollection]> = {
             let mut chains = Vec::with_capacity(fields.len());
@@ -87,16 +108,16 @@ impl CollectionTreeBuilder {
                     continue;
                 }
                 let mut resolved: Option<&[HidCollection]> = None;
-                for field in fields[..i].iter().rev() {
-                    if !field.collections().is_empty() {
-                        resolved = Some(field.collections());
+                for previous in fields[..i].iter().rev() {
+                    if !previous.collections().is_empty() {
+                        resolved = Some(previous.collections());
                         break;
                     }
                 }
                 if resolved.is_none() {
-                    for field in &fields[i + 1..] {
-                        if !field.collections().is_empty() {
-                            resolved = Some(field.collections());
+                    for next in &fields[i + 1..] {
+                        if !next.collections().is_empty() {
+                            resolved = Some(next.collections());
                             break;
                         }
                     }
@@ -106,9 +127,10 @@ impl CollectionTreeBuilder {
             chains
         };
 
-        let mut buckets: Vec<(String, Vec<Field>)> = Vec::new();
+        let mut buckets: Vec<(String, Vec<(Field, Vec<String>)>)> = Vec::new();
         let mut bucket_index: HashMap<String, usize> = HashMap::new();
-        for (field, chain) in fields.iter().zip(chains.iter()) {
+        for ((field, chain), strings) in fields.iter().zip(chains.iter()).zip(field_strings.iter())
+        {
             let Some(last) = chain.last() else {
                 continue;
             };
@@ -122,7 +144,7 @@ impl CollectionTreeBuilder {
                     buckets.len() - 1
                 }
             };
-            buckets[idx].1.push(field.clone());
+            buckets[idx].1.push((field.clone(), strings.clone()));
         }
 
         for (key, bucket) in buckets {
@@ -134,11 +156,11 @@ impl CollectionTreeBuilder {
                 report_id: rid,
                 items,
             };
-            if let Some(n) = self.nodes.get_mut(&key) {
+            if let Some(node) = self.nodes.get_mut(&key) {
                 match rtype {
-                    "input" => n.input_reports.push(web_report),
-                    "output" => n.output_reports.push(web_report),
-                    "feature" => n.feature_reports.push(web_report),
+                    "input" => node.input_reports.push(web_report),
+                    "output" => node.output_reports.push(web_report),
+                    "feature" => node.feature_reports.push(web_report),
                     _ => {}
                 }
             }
