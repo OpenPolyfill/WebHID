@@ -85,7 +85,14 @@ test.describe.serial('WebHID conformance', () => {
       } catch (error) {
         missingDevice = error instanceof Error ? error.name : String(error)
       }
-      return { events, missingDevice }
+      const fakeDevice = Object.setPrototypeOf({}, HIDDevice.prototype) as unknown as HIDDevice
+      let invalidDevice: string | null = null
+      try {
+        new HIDConnectionEvent('connect', { device: fakeDevice })
+      } catch (error) {
+        invalidDevice = error instanceof Error ? error.name : String(error)
+      }
+      return { events, missingDevice, invalidDevice }
     }, VENDOR)
 
     expect(result.events).toEqual([
@@ -107,6 +114,7 @@ test.describe.serial('WebHID conformance', () => {
       }
     ])
     expect(result.missingDevice).toBe('TypeError')
+    expect(result.invalidDevice).toBe('TypeError')
   })
 
   test('HIDInputReportEvent validates members and converts octet values', async ({
@@ -139,7 +147,120 @@ test.describe.serial('WebHID conformance', () => {
           return error instanceof Error ? error.name : String(error)
         }
       })
+      const fakeDevice = Object.setPrototypeOf({}, HIDDevice.prototype) as unknown as HIDDevice
+      const fakeData = Object.setPrototypeOf({}, DataView.prototype) as unknown as DataView
+      const invalidTypes = [
+        { device: {}, reportId: 1, data },
+        { device: fakeDevice, reportId: 1, data },
+        { device, reportId: undefined, data },
+        { device, reportId: 1, data: {} },
+        { device, reportId: 1, data: fakeData }
+      ]
+      const typeErrors = invalidTypes.map((init) => {
+        try {
+          new HIDInputReportEvent('inputreport', init as HIDInputReportEventInit)
+          return 'accepted'
+        } catch (error) {
+          return error instanceof Error ? error.name : String(error)
+        }
+      })
+      const getterErrors = [
+        () => {
+          Object.getOwnPropertyDescriptor(HIDConnectionEvent.prototype, 'device')!.get!.call({})
+        },
+        () => {
+          Object.getOwnPropertyDescriptor(HIDInputReportEvent.prototype, 'device')!.get!.call({})
+        },
+        () => {
+          Object.getOwnPropertyDescriptor(HIDInputReportEvent.prototype, 'reportId')!.get!.call({})
+        },
+        () => {
+          Object.getOwnPropertyDescriptor(HIDInputReportEvent.prototype, 'data')!.get!.call({})
+        },
+        () => {
+          Object.getOwnPropertyDescriptor(HIDDevice.prototype, 'opened')!.get!.call({})
+        },
+        () => {
+          Object.getOwnPropertyDescriptor(HIDDevice.prototype, 'vendorId')!.get!.call({})
+        },
+        () => {
+          Object.getOwnPropertyDescriptor(HIDDevice.prototype, 'productId')!.get!.call({})
+        },
+        () => {
+          Object.getOwnPropertyDescriptor(HIDDevice.prototype, 'productName')!.get!.call({})
+        },
+        () => {
+          Object.getOwnPropertyDescriptor(HIDDevice.prototype, 'collections')!.get!.call({})
+        },
+        () => {
+          Object.getOwnPropertyDescriptor(HIDDevice.prototype, 'oninputreport')!.get!.call({})
+        },
+        () => {
+          Object.getOwnPropertyDescriptor(HID.prototype, 'onconnect')!.get!.call({})
+        },
+        () => {
+          Object.getOwnPropertyDescriptor(HID.prototype, 'ondisconnect')!.get!.call({})
+        }
+      ].map((read) => {
+        try {
+          read()
+          return 'accepted'
+        } catch (error) {
+          return error instanceof Error ? error.name : String(error)
+        }
+      })
+      const setterErrors = [
+        () =>
+          Object.getOwnPropertyDescriptor(HIDDevice.prototype, 'oninputreport')!.set!.call(
+            {},
+            null
+          ),
+        () => Object.getOwnPropertyDescriptor(HID.prototype, 'onconnect')!.set!.call({}, null),
+        () => Object.getOwnPropertyDescriptor(HID.prototype, 'ondisconnect')!.set!.call({}, null)
+      ].map((write) => {
+        try {
+          write()
+          return 'accepted'
+        } catch (error) {
+          return error instanceof Error ? error.name : String(error)
+        }
+      })
       const event = makeEvent(255)
+      const connectionEvent = new HIDConnectionEvent('connect', { device })
+      const crossBrandErrors = [
+        () => {
+          Object.getOwnPropertyDescriptor(HIDConnectionEvent.prototype, 'device')!.get!.call(event)
+        },
+        () => {
+          Object.getOwnPropertyDescriptor(HIDInputReportEvent.prototype, 'device')!.get!.call(
+            connectionEvent
+          )
+        },
+        () => {
+          Object.getOwnPropertyDescriptor(HIDInputReportEvent.prototype, 'reportId')!.get!.call(
+            connectionEvent
+          )
+        },
+        () => {
+          Object.getOwnPropertyDescriptor(HIDInputReportEvent.prototype, 'data')!.get!.call(
+            connectionEvent
+          )
+        }
+      ].map((read) => {
+        try {
+          read()
+          return 'accepted'
+        } catch (error) {
+          return error instanceof Error ? error.name : String(error)
+        }
+      })
+      const stateSymbol = Object.getOwnPropertySymbols(event).find(
+        (symbol) => String(symbol) === 'Symbol(webhid_ir)'
+      )
+      if (stateSymbol) {
+        const state = Reflect.get(event, stateSymbol) as unknown
+        if (state && typeof state === 'object') Reflect.set(state, 'reportId', 42)
+      }
       return {
         type: event.type,
         isEvent: event instanceof Event,
@@ -148,8 +269,14 @@ test.describe.serial('WebHID conformance', () => {
         sameData: event.data === data,
         dataIsDataView: event.data instanceof DataView,
         reportId: event.reportId,
+        reportIdAfterSymbolMutation: event.reportId,
+        stateSymbolExposed: stateSymbol !== undefined,
         convertedIds,
-        missingErrors
+        missingErrors,
+        typeErrors,
+        getterErrors,
+        setterErrors,
+        crossBrandErrors
       }
     }, VENDOR)
 
@@ -163,6 +290,56 @@ test.describe.serial('WebHID conformance', () => {
       reportId: 255,
       convertedIds: [0, 0, 255, 0, 1, 1, 1],
       missingErrors: ['TypeError', 'TypeError', 'TypeError']
+    })
+    expect(result.typeErrors).toEqual(Array(5).fill('TypeError'))
+    expect(result.getterErrors).toEqual(Array(12).fill('TypeError'))
+    expect(result.crossBrandErrors).toEqual(Array(4).fill('TypeError'))
+    expect(result.setterErrors).toEqual(Array(3).fill('TypeError'))
+    expect(result.stateSymbolExposed).toBe(false)
+    expect(result.reportIdAfterSymbolMutation).toBe(255)
+  })
+
+  test('HID event dispatch uses the WebHID objects as EventTargets', async ({ sharedPage }) => {
+    const result = await sharedPage.evaluate(async (filter: DeviceFilter) => {
+      const device = (await navigator.hid.getDevices()).find(
+        (entry) => entry.vendorId === filter.vendorId && entry.productId === filter.productId
+      )
+      if (!device) throw new Error('vendor device is not paired')
+      const hid = navigator.hid
+      const inputEvent = new HIDInputReportEvent('inputreport', {
+        device,
+        reportId: 1,
+        data: new DataView(new ArrayBuffer(1))
+      })
+      const connectionEvent = new HIDConnectionEvent('connect', { device })
+      let deviceTargetMatches = false
+      let hidTargetMatches = false
+      const inputListener = function (this: HIDDevice, event: Event) {
+        deviceTargetMatches =
+          event.target === device && event.currentTarget === device && this === device
+      }
+      const connectionListener = function (this: HID, event: Event) {
+        hidTargetMatches = event.target === hid && event.currentTarget === hid && this === hid
+      }
+      device.addEventListener('inputreport', inputListener)
+      hid.addEventListener('connect', connectionListener)
+      device.dispatchEvent(inputEvent)
+      hid.dispatchEvent(connectionEvent)
+      device.removeEventListener('inputreport', inputListener)
+      hid.removeEventListener('connect', connectionListener)
+      return {
+        deviceTargetMatches,
+        hidTargetMatches,
+        deviceIsEventTarget: device instanceof EventTarget,
+        hidIsEventTarget: hid instanceof EventTarget
+      }
+    }, VENDOR)
+
+    expect(result).toEqual({
+      deviceTargetMatches: true,
+      hidTargetMatches: true,
+      deviceIsEventTarget: true,
+      hidIsEventTarget: true
     })
   })
 
