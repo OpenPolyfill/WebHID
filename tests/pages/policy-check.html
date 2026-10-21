@@ -7,6 +7,57 @@
   <body>
     <script>
       window.tests = window.tests || { helper: {}, results: {} }
+      window.tests.helper.requestDeviceDictionaryConversion = async () => {
+        const requestDevice = navigator.hid.requestDevice
+        const invalidOptions = [
+          undefined,
+          {},
+          { filters: null },
+          { filters: {} },
+          { filters: [], exclusionFilters: {} },
+          { filters: [], exclusionFilters: null },
+          { filters: [{ vendorId: Symbol('vendor') }] },
+          { filters: [{ productId: BigInt(1) }] }
+        ]
+        const immediateErrors = invalidOptions.map((options) => {
+          try {
+            void requestDevice.call(navigator.hid, options).catch(() => {})
+            return 'returned-promise'
+          } catch (error) {
+            return error instanceof Error ? error.name : String(error)
+          }
+        })
+        const converted = []
+        const numericValue = (name, value) => ({
+          valueOf() {
+            converted.push(name)
+            return value
+          }
+        })
+        const filter = Object.create({
+          vendorId: numericValue('vendorId', 0x16c0)
+        })
+        Object.defineProperties(filter, {
+          productId: { value: numericValue('productId', 1), enumerable: true },
+          usagePage: { value: numericValue('usagePage', 1), enumerable: true },
+          usage: { value: numericValue('usage', 1), enumerable: true }
+        })
+        let convertedAtReturn = []
+        let promiseError = null
+        try {
+          const promise = requestDevice.call(navigator.hid, { filters: new Set([filter]) })
+          convertedAtReturn = [...converted]
+          promiseError = await promise.then(
+            () => 'resolved',
+            (error) => (error instanceof Error ? error.name : String(error))
+          )
+        } catch (error) {
+          convertedAtReturn = [...converted]
+          promiseError = `sync:${error instanceof Error ? error.name : String(error)}`
+        }
+        return { immediateErrors, convertedAtReturn, promiseError }
+      }
+
       if (new URLSearchParams(window.location.search).has('no-activation')) {
         const trigger = document.createElement('button')
         trigger.id = 'no-activation-probe'
@@ -23,6 +74,16 @@
                 document.documentElement.dataset.requestDeviceProbeActive = String(
                   navigator.userActivation.isActive
                 )
+                if (
+                  new URLSearchParams(window.location.search).has(
+                    'request-device-dictionary-conversion'
+                  )
+                ) {
+                  window.tests.results.requestDeviceDictionaryConversion =
+                    await window.tests.helper.requestDeviceDictionaryConversion()
+                  document.documentElement.dataset.requestDeviceProbeResult = 'done'
+                  return
+                }
                 try {
                   await navigator.hid.requestDevice({ filters: [{ vendorId: 0x16c0 }] })
                   document.documentElement.dataset.requestDeviceProbeResult = 'resolved'

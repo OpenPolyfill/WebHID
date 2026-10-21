@@ -61,3 +61,26 @@ test.describe('HID WebIDL', () => {
     })
   })
 })
+test('Navigator.hid getter and HID methods enforce WebIDL brands', async ({ sharedPage }) => {
+  const results = await sharedPage.evaluate(() => {
+    const invoke = (callback: () => unknown) => {
+      try {
+        const result = callback()
+        if (result && typeof (result as Promise<unknown>).then === 'function') {
+          void Promise.resolve(result).catch(() => {})
+        }
+        return 'accepted'
+      } catch (error) {
+        return error instanceof Error ? error.name : String(error)
+      }
+    }
+    const getter = Object.getOwnPropertyDescriptor(Navigator.prototype, 'hid')?.get
+    return [
+      invoke(() => getter?.call({})),
+      invoke(() => Reflect.apply(HID.prototype.getDevices, {}, [])),
+      invoke(() => Reflect.apply(HID.prototype.requestDevice, {}, [{ filters: [] }]))
+    ]
+  })
+
+  expect(results).toEqual(['TypeError', 'TypeError', 'TypeError'])
+})

@@ -11,22 +11,21 @@
         'use strict'
         window.tests = window.tests || { helper: {}, results: {} }
 
-        // Test-only request entrypoint. WebHID activation is covered by the browser conformance suite.
         window.tests.helper.requestDevice = (filters) => {
           const btn = document.getElementById('request-device-btn')
-          btn.style.display = 'none'
-          window.tests.results.requestDevice = new Promise((resolve, reject) => {
-            btn.onclick = async () => {
-              try {
-                const devices = await navigator.hid.requestDevice({ filters: filters || [] })
-                window.tests.results.requestDeviceDevices = devices
-                resolve(devices.length)
-              } catch (e) {
-                reject(e)
-              }
+          btn.style.display = 'block'
+          const { promise, resolve, reject } = Promise.withResolvers()
+          window.tests.results.requestDevice = promise
+          btn.onclick = async () => {
+            btn.style.display = 'none'
+            try {
+              const devices = await navigator.hid.requestDevice({ filters: filters || [] })
+              window.tests.results.requestDeviceDevices = devices
+              resolve(devices.length)
+            } catch (e) {
+              reject(e)
             }
-          })
-          btn.click()
+          }
         }
         window.tests.helper.requestDeviceResult = () => window.tests.results.requestDevice
       })()

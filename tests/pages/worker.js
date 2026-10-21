@@ -8,6 +8,14 @@ async function tryCatch(fn) {
 }
 
 ;(async function () {
+  var workerNavigatorHidGetterError
+  try {
+    var getter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(navigator), 'hid').get
+    getter.call({})
+    workerNavigatorHidGetterError = 'accepted'
+  } catch (e) {
+    workerNavigatorHidGetterError = e.name
+  }
   var result = {
     hasNavigatorHid: typeof navigator !== 'undefined' && 'hid' in navigator,
     hasHID: typeof self.HID === 'function',
@@ -15,9 +23,8 @@ async function tryCatch(fn) {
     hasHIDInputReportEvent: typeof self.HIDInputReportEvent === 'function',
     hasHIDConnectionEvent: typeof self.HIDConnectionEvent === 'function',
     getDevicesResult: await tryCatch(() => navigator.hid.getDevices()),
-    requestDeviceError: await tryCatch(function () {
-      return navigator.hid.requestDevice({ filters: [] })
-    })
+    hasRequestDevice: 'requestDevice' in navigator.hid,
+    workerNavigatorHidGetterError: workerNavigatorHidGetterError
   }
 
   try {

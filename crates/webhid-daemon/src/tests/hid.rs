@@ -132,3 +132,23 @@ fn numbered_report_detection_handles_descriptor_boundaries() {
         );
     }
 }
+
+#[cfg(target_os = "linux")]
+mod indexed_string {
+    use super::super::decode_usb_string_descriptor;
+
+    #[test]
+    fn decodes_usb_string_descriptor_as_utf16le() {
+        let descriptor = [8, 3, 0x48, 0, 0x49, 0, 0x44, 0];
+        assert_eq!(
+            decode_usb_string_descriptor(&descriptor),
+            Some("HID".to_string())
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_usb_string_descriptors() {
+        assert_eq!(decode_usb_string_descriptor(&[4, 2, 0, 0]), None);
+        assert_eq!(decode_usb_string_descriptor(&[5, 3, 0x41, 0, 0]), None);
+    }
+}

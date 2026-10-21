@@ -473,3 +473,54 @@ fn test_constant_padding_stays_in_its_collection() {
     assert_eq!(keyboard_items.len(), 1);
     assert!(!keyboard_items[0].is_constant);
 }
+#[test]
+fn test_report_item_string_indices_resolve_per_item() {
+    let desc = vec![
+        0x05, 0x01, 0x09, 0x04, 0xA1, 0x01, 0x15, 0x00, 0x25, 0x01, 0x75, 0x08, 0x95, 0x01, 0x09,
+        0x30, 0x79, 0x01, 0x81, 0x02, 0x09, 0x31, 0x89, 0x02, 0x99, 0x03, 0x81, 0x02, 0xC0,
+    ];
+    let collections =
+        parse_report_descriptor_with_strings(&desc, |index| format!("string-{index}"))
+            .expect("descriptor with string indices parses");
+    let items = &collections[0].input_reports[0].items;
+
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0].strings, vec!["string-1".to_string()]);
+    assert_eq!(
+        items[1].strings,
+        vec!["string-2".to_string(), "string-3".to_string()]
+    );
+}
+
+#[test]
+fn test_single_usage_range_is_not_a_range() {
+    let desc = vec![
+        0x05, 0x01, 0x09, 0x04, 0xA1, 0x01, 0x15, 0x00, 0x25, 0x01, 0x75, 0x08, 0x95, 0x01, 0x19,
+        0x30, 0x29, 0x30, 0x81, 0x00, 0xC0,
+    ];
+    let collections = parse_report_descriptor(&desc).expect("descriptor parses");
+    let field = &collections[0].input_reports[0].items[0];
+
+    assert!(!field.is_range);
+    assert_eq!(field.usages.as_deref(), Some(&[0x0001_0030][..]));
+    assert_eq!(field.usage_minimum, None);
+    assert_eq!(field.usage_maximum, None);
+}
+
+#[test]
+fn test_string_indices_follow_variable_field_counts() {
+    let desc = vec![
+        0x05, 0x01, 0x09, 0x04, 0xA1, 0x01, 0x15, 0x00, 0x25, 0x01, 0x75, 0x08, 0x95, 0x02, 0x09,
+        0x30, 0x09, 0x31, 0x79, 0x01, 0x81, 0x02, 0x95, 0x01, 0x09, 0x32, 0x79, 0x02, 0x81, 0x02,
+        0xC0,
+    ];
+    let collections =
+        parse_report_descriptor_with_strings(&desc, |index| format!("string-{index}"))
+            .expect("descriptor with variable string indices parses");
+    let items = &collections[0].input_reports[0].items;
+
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0].report_count, 2);
+    assert_eq!(items[0].strings, vec!["string-1".to_string()]);
+    assert_eq!(items[1].strings, vec!["string-2".to_string()]);
+}

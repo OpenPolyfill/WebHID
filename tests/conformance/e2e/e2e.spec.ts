@@ -23,7 +23,12 @@ test.describe.serial('WebHID conformance', () => {
       VENDOR
     )
     expect(beforeGrant).toBe(0)
-    expect(await grantDevicePermission(sharedPage, [VENDOR])).toBe(1)
+    const overflowFilter = {
+      ...VENDOR,
+      vendorId: VENDOR.vendorId + 0x1_0000_0000,
+      productId: VENDOR.productId + 0x1_0000
+    }
+    expect(await grantDevicePermission(sharedPage, [overflowFilter])).toBe(1)
     const device = await sharedPage.evaluate(async (filter: DeviceFilter) => {
       const found = (await navigator.hid.getDevices()).find(
         (entry) => entry.vendorId === filter.vendorId && entry.productId === filter.productId
@@ -92,7 +97,22 @@ test.describe.serial('WebHID conformance', () => {
       } catch (error) {
         invalidDevice = error instanceof Error ? error.name : String(error)
       }
-      return { events, missingDevice, invalidDevice }
+      const constructorCallErrors = [
+        () => Reflect.apply(HIDConnectionEvent, undefined, ['connect', { device }]),
+        () =>
+          Reflect.apply(HIDInputReportEvent, undefined, [
+            'inputreport',
+            { device, reportId: 1, data: new DataView(new ArrayBuffer(1)) }
+          ])
+      ].map((call) => {
+        try {
+          call()
+          return 'accepted'
+        } catch (error) {
+          return error instanceof Error ? error.name : String(error)
+        }
+      })
+      return { events, missingDevice, invalidDevice, constructorCallErrors }
     }, VENDOR)
 
     expect(result.events).toEqual([
@@ -115,6 +135,7 @@ test.describe.serial('WebHID conformance', () => {
     ])
     expect(result.missingDevice).toBe('TypeError')
     expect(result.invalidDevice).toBe('TypeError')
+    expect(result.constructorCallErrors).toEqual(['TypeError', 'TypeError'])
   })
 
   test('HIDInputReportEvent validates members and converts octet values', async ({
@@ -368,8 +389,10 @@ test.describe.serial('WebHID conformance', () => {
 
     expect(errors).toEqual(['InvalidStateError', 'InvalidStateError', 'InvalidStateError'])
   })
-  test('report methods enforce their WebIDL octet range', async ({ sharedPage }) => {
-    const errors = await sharedPage.evaluate(async (ctx) => {
+  test('report methods enforce octet conversion before returning a Promise', async ({
+    sharedPage
+  }) => {
+    const results = await sharedPage.evaluate(async (ctx) => {
       const device = (await navigator.hid.getDevices()).find(
         (entry) => entry.vendorId === ctx.f.vendorId && entry.productId === ctx.f.productId
       )
@@ -379,19 +402,50 @@ test.describe.serial('WebHID conformance', () => {
         () => device.sendFeatureReport(-1, new Uint8Array(4)),
         () => device.receiveFeatureReport(257)
       ]
-      const results: string[] = []
-      for (const operation of operations) {
+      return operations.map((operation) => {
         try {
-          await operation()
-          results.push('resolved')
+          void operation().catch(() => {})
+          return { synchronous: false, error: null }
         } catch (error) {
-          results.push(error instanceof Error ? error.name : String(error))
+          return {
+            synchronous: true,
+            error: error instanceof Error ? error.name : String(error)
+          }
         }
-      }
-      return results
+      })
     }, VENDOR_CTX)
 
-    expect(errors).toEqual(['TypeError', 'TypeError', 'TypeError'])
+    expect(results).toEqual(Array(3).fill({ synchronous: true, error: 'TypeError' }))
+  })
+  test('report methods reject non-BufferSource objects synchronously', async ({ sharedPage }) => {
+    const results = await sharedPage.evaluate(async (ctx) => {
+      const device = (await navigator.hid.getDevices()).find(
+        (entry) => entry.vendorId === ctx.f.vendorId && entry.productId === ctx.f.productId
+      )
+      if (!device) throw new Error('vendor device is not paired')
+      const source = {
+        buffer: new ArrayBuffer(ctx.size),
+        byteOffset: 0,
+        byteLength: ctx.size
+      } as unknown as BufferSource
+      const operations = [
+        () => device.sendReport(ctx.outputId, source),
+        () => device.sendFeatureReport(ctx.featureId, source)
+      ]
+      return operations.map((operation) => {
+        try {
+          void operation().catch(() => {})
+          return { synchronous: false, error: null }
+        } catch (error) {
+          return {
+            synchronous: true,
+            error: error instanceof Error ? error.name : String(error)
+          }
+        }
+      })
+    }, VENDOR_CTX)
+
+    expect(results).toEqual(Array(2).fill({ synchronous: true, error: 'TypeError' }))
   })
 
   test('open and close update opened while concurrent requests keep their results', async ({
@@ -420,6 +474,95 @@ test.describe.serial('WebHID conformance', () => {
       closeResult: undefined,
       closed: true
     })
+  })
+  test('closing immediately aborts pending reports and blocks new operations', async ({
+    sharedPage
+  }) => {
+    const state = await sharedPage.evaluate(async (ctx) => {
+      const device = (await navigator.hid.getDevices()).find(
+        (entry) => entry.vendorId === ctx.f.vendorId && entry.productId === ctx.f.productId
+      )
+      if (!device) throw new Error('vendor device is not paired')
+      await device.open()
+      const pending = [
+        device.sendReport(ctx.outputId, new Uint8Array(ctx.size)),
+        device.sendFeatureReport(ctx.featureId, new Uint8Array(4)),
+        device.receiveFeatureReport(ctx.featureId)
+      ]
+      const closePromise = device.close()
+      const openedDuringClose = device.opened
+      const newReportErrors = [
+        device.sendReport(ctx.outputId, new Uint8Array(ctx.size)),
+        device.sendFeatureReport(ctx.featureId, new Uint8Array(4)),
+        device.receiveFeatureReport(ctx.featureId)
+      ].map((promise) =>
+        promise.then(
+          () => 'resolved',
+          (error) => (error instanceof Error ? error.name : String(error))
+        )
+      )
+      const openDuringClose = device.open().then(
+        () => 'resolved',
+        (error) => (error instanceof Error ? error.name : String(error))
+      )
+      const pendingAtCloseStart = await Promise.all(
+        pending.map((promise) =>
+          promise.then(
+            () => 'resolved',
+            (error) => (error instanceof Error ? error.name : String(error))
+          )
+        )
+      )
+      await closePromise
+      return {
+        openedDuringClose,
+        pendingAtCloseStart,
+        newReportErrors: await Promise.all(newReportErrors),
+        openDuringClose: await openDuringClose
+      }
+    }, VENDOR_CTX)
+
+    expect(state).toEqual({
+      openedDuringClose: false,
+      pendingAtCloseStart: ['AbortError', 'AbortError', 'AbortError'],
+      newReportErrors: ['InvalidStateError', 'InvalidStateError', 'InvalidStateError'],
+      openDuringClose: 'InvalidStateError'
+    })
+  })
+
+  test('close during open waits for and closes the opening session', async ({ sharedPage }) => {
+    const state = await sharedPage.evaluate(async (ctx) => {
+      const device = (await navigator.hid.getDevices()).find(
+        (entry) => entry.vendorId === ctx.f.vendorId && entry.productId === ctx.f.productId
+      )
+      if (!device) throw new Error('vendor device is not paired')
+      const openResult = device.open().then(
+        () => 'resolved',
+        (error) => (error instanceof Error ? error.name : String(error))
+      )
+      const duplicateOpenResult = device.open().then(
+        () => 'resolved',
+        (error) => (error instanceof Error ? error.name : String(error))
+      )
+      const closeResult = device.close().then(
+        () => 'resolved',
+        (error) => (error instanceof Error ? error.name : String(error))
+      )
+      const openedWhileOpening = device.opened
+      const [openStatus, duplicateOpenStatus, closeStatus] = await Promise.all([
+        openResult,
+        duplicateOpenResult,
+        closeResult
+      ])
+      const openedAfterClose = device.opened
+      if (device.opened) await device.close()
+      return { openStatus, duplicateOpenStatus, closeStatus, openedWhileOpening, openedAfterClose }
+    }, VENDOR_CTX)
+
+    expect(state.duplicateOpenStatus).toBe('InvalidStateError')
+    expect(state.closeStatus).toBe('resolved')
+    expect(state.openedWhileOpening).toBe(false)
+    expect(state.openedAfterClose).toBe(false)
   })
 
   test('sendReport writes the selected report ID and payload', async ({
@@ -554,23 +697,58 @@ test.describe.serial('WebHID conformance', () => {
     expect(isPaired).toBe(true)
   })
 
-  test('forget removes an opened device from getDevices', async ({ sharedPage }) => {
+  test('forgetting blocks operations and aborts pending reports', async ({ sharedPage }) => {
     const state = await sharedPage.evaluate(async (ctx) => {
       const device = (await navigator.hid.getDevices()).find(
         (entry) => entry.vendorId === ctx.f.vendorId && entry.productId === ctx.f.productId
       )
       if (!device) throw new Error('vendor device is not paired')
       await device.open()
-      await device.forget()
+      const pendingReportOutcome = device.sendReport(ctx.outputId, new Uint8Array(ctx.size)).then(
+        () => 'resolved',
+        (error) => (error instanceof Error ? error.name : String(error))
+      )
+      const forgetPromise = device.forget()
+      const openDuringForget = device.open().then(
+        () => 'resolved',
+        (error) => (error instanceof Error ? error.name : String(error))
+      )
+      const closeDuringForget = device.close().then(
+        () => 'resolved',
+        (error) => (error instanceof Error ? error.name : String(error))
+      )
+      const reportDuringForget = device.sendReport(ctx.outputId, new Uint8Array(ctx.size)).then(
+        () => 'resolved',
+        (error) => (error instanceof Error ? error.name : String(error))
+      )
+      const pendingReportAtForgetStart = await pendingReportOutcome
+      await forgetPromise
       const devices = await navigator.hid.getDevices()
+      const closeAfterForget = await device.close().then(
+        () => 'resolved',
+        (error) => (error instanceof Error ? error.name : String(error))
+      )
       return {
         opened: device.opened,
         stillEnumerated: devices.some(
           (entry) => entry.vendorId === ctx.f.vendorId && entry.productId === ctx.f.productId
-        )
+        ),
+        pendingReportAtForgetStart,
+        openDuringForget: await openDuringForget,
+        closeDuringForget: await closeDuringForget,
+        reportDuringForget: await reportDuringForget,
+        closeAfterForget
       }
     }, VENDOR_CTX)
 
-    expect(state).toEqual({ opened: false, stillEnumerated: false })
+    expect(state).toEqual({
+      opened: false,
+      stillEnumerated: false,
+      pendingReportAtForgetStart: 'AbortError',
+      openDuringForget: 'InvalidStateError',
+      closeDuringForget: 'InvalidStateError',
+      reportDuringForget: 'InvalidStateError',
+      closeAfterForget: 'InvalidStateError'
+    })
   })
 })

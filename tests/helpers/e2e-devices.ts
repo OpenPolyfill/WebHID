@@ -46,6 +46,7 @@ export async function grantDevicePermission(page: Page, filters: DeviceFilter[])
     })
   })
   await page.evaluate((flt: DeviceFilter[]) => window.tests!.helper!.requestDevice!(flt), filters)
+  await page.locator('#request-device-btn').click()
   const pickerStart = await page.evaluate(() => {
     const started = window.tests!.results!.pickerStarted as Promise<void>
     const request = window.tests!.helper!.requestDeviceResult!()

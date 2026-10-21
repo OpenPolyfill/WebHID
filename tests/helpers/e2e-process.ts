@@ -70,7 +70,12 @@ export interface WebhidMockProcess {
   ready: Promise<void>
 }
 
-export function startWebhidMock(descriptor: string, vid: number, pid: number): WebhidMockProcess {
+export function startWebhidMock(
+  descriptor: string,
+  vid: number,
+  pid: number,
+  productName?: string
+): WebhidMockProcess {
   const bin = join(projectRoot, 'crates', 'target', 'debug', 'webhid-mock')
   if (!existsSync(bin)) {
     throw new Error(`webhid-mock binary not found at ${bin}. Build with 'cargo build' first.`)
@@ -84,7 +89,8 @@ export function startWebhidMock(descriptor: string, vid: number, pid: number): W
       '--pid',
       `0x${pid.toString(16)}`,
       '--descriptor',
-      join(projectRoot, 'tests', 'fixtures', 'descriptors', descriptor)
+      join(projectRoot, 'tests', 'fixtures', 'descriptors', descriptor),
+      ...(productName ? ['--name', productName] : [])
     ],
     {
       stdio: ['pipe', 'pipe', 'pipe']
