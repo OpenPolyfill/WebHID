@@ -27,6 +27,23 @@
             return error instanceof Error ? error.name : String(error)
           }
         })
+        const coercionError = new Error('coercion sentinel')
+        let coercionErrorPreserved = false
+        try {
+          requestDevice.call(navigator.hid, {
+            filters: [
+              {
+                vendorId: {
+                  [Symbol.toPrimitive]() {
+                    throw coercionError
+                  }
+                }
+              }
+            ]
+          })
+        } catch (error) {
+          coercionErrorPreserved = error === coercionError
+        }
         const converted = []
         const numericValue = (name, value) => ({
           valueOf() {
@@ -55,7 +72,7 @@
           convertedAtReturn = [...converted]
           promiseError = `sync:${error instanceof Error ? error.name : String(error)}`
         }
-        return { immediateErrors, convertedAtReturn, promiseError }
+        return { immediateErrors, convertedAtReturn, promiseError, coercionErrorPreserved }
       }
 
       if (new URLSearchParams(window.location.search).has('no-activation')) {

@@ -135,7 +135,7 @@ fn numbered_report_detection_handles_descriptor_boundaries() {
 
 #[cfg(target_os = "linux")]
 mod indexed_string {
-    use super::super::decode_usb_string_descriptor;
+    use super::super::{decode_usb_string_descriptor, usb_string_request_timeout_ms};
 
     #[test]
     fn decodes_usb_string_descriptor_as_utf16le() {
@@ -150,5 +150,23 @@ mod indexed_string {
     fn rejects_malformed_usb_string_descriptors() {
         assert_eq!(decode_usb_string_descriptor(&[4, 2, 0, 0]), None);
         assert_eq!(decode_usb_string_descriptor(&[5, 3, 0x41, 0, 0]), None);
+    }
+    #[test]
+    fn usb_string_request_timeout_respects_the_remaining_budget() {
+        use std::time::Duration;
+
+        assert_eq!(
+            usb_string_request_timeout_ms(Duration::from_secs(5)),
+            Some(100)
+        );
+        assert_eq!(
+            usb_string_request_timeout_ms(Duration::from_millis(7)),
+            Some(7)
+        );
+        assert_eq!(
+            usb_string_request_timeout_ms(Duration::from_nanos(1)),
+            Some(1)
+        );
+        assert_eq!(usb_string_request_timeout_ms(Duration::ZERO), None);
     }
 }

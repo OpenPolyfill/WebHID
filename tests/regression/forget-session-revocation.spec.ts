@@ -74,6 +74,7 @@ test('forget revokes every device in a grant group across same-origin documents'
     }, VENDOR_CTX)
 
     expect(localState.productIds).toEqual([VENDOR.productId, VENDOR.productId + 1])
+    expect(localState.openedDuringForget).toEqual([false, false])
     expect(localState.pendingReportErrors).toEqual(['AbortError', 'AbortError'])
     expect(localState.openDuringForget).toEqual(['InvalidStateError', 'InvalidStateError'])
     expect(localState.reportDuringForget).toEqual(['InvalidStateError', 'InvalidStateError'])

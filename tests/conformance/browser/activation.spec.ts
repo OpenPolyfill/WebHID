@@ -83,7 +83,9 @@ test.describe('requestDevice conformance', () => {
       { waitUntil: 'domcontentloaded' }
     )
     await sharedPage.waitForFunction(
-      () => document.documentElement.dataset.requestDeviceProbeReady === 'true',
+      () =>
+        document.documentElement.dataset.requestDeviceProbeReady === 'true' &&
+        typeof navigator.hid !== 'undefined',
       undefined,
       { timeout: 10000 }
     )
@@ -98,12 +100,14 @@ test.describe('requestDevice conformance', () => {
         immediateErrors: string[]
         convertedAtReturn: string[]
         promiseError: string | null
+        coercionErrorPreserved: boolean
       }
     })
 
     expect(result.immediateErrors).toEqual(Array(8).fill('TypeError'))
     expect(result.convertedAtReturn).toEqual(['vendorId', 'productId', 'usagePage', 'usage'])
     expect(result.promiseError).toBe('SecurityError')
+    expect(result.coercionErrorPreserved).toBe(true)
   })
 
   test('requestDevice rejects filters with only unknown dictionary members', async ({

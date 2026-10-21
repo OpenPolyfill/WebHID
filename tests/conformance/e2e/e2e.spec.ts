@@ -246,6 +246,17 @@ test.describe.serial('WebHID conformance', () => {
           return error instanceof Error ? error.name : String(error)
         }
       })
+      const coercionError = new Error('event conversion sentinel')
+      let coercionErrorPreserved = false
+      try {
+        makeEvent({
+          [Symbol.toPrimitive]() {
+            throw coercionError
+          }
+        }).reportId
+      } catch (error) {
+        coercionErrorPreserved = error === coercionError
+      }
       const event = makeEvent(255)
       const connectionEvent = new HIDConnectionEvent('connect', { device })
       const crossBrandErrors = [
@@ -297,7 +308,8 @@ test.describe.serial('WebHID conformance', () => {
         typeErrors,
         getterErrors,
         setterErrors,
-        crossBrandErrors
+        crossBrandErrors,
+        coercionErrorPreserved
       }
     }, VENDOR)
 
@@ -313,6 +325,7 @@ test.describe.serial('WebHID conformance', () => {
       missingErrors: ['TypeError', 'TypeError', 'TypeError']
     })
     expect(result.typeErrors).toEqual(Array(5).fill('TypeError'))
+    expect(result.coercionErrorPreserved).toBe(true)
     expect(result.getterErrors).toEqual(Array(12).fill('TypeError'))
     expect(result.crossBrandErrors).toEqual(Array(4).fill('TypeError'))
     expect(result.setterErrors).toEqual(Array(3).fill('TypeError'))
@@ -402,7 +415,21 @@ test.describe.serial('WebHID conformance', () => {
         () => device.sendFeatureReport(-1, new Uint8Array(4)),
         () => device.receiveFeatureReport(257)
       ]
-      return operations.map((operation) => {
+      const conversionError = new Error('conversion sentinel')
+      let conversionErrorPreserved = false
+      try {
+        device.sendReport(
+          {
+            [Symbol.toPrimitive]() {
+              throw conversionError
+            }
+          } as unknown as number,
+          new Uint8Array(ctx.size)
+        )
+      } catch (error) {
+        conversionErrorPreserved = error === conversionError
+      }
+      const outcomes = operations.map((operation) => {
         try {
           void operation().catch(() => {})
           return { synchronous: false, error: null }
@@ -413,11 +440,15 @@ test.describe.serial('WebHID conformance', () => {
           }
         }
       })
+      return { outcomes, conversionErrorPreserved }
     }, VENDOR_CTX)
 
-    expect(results).toEqual(Array(3).fill({ synchronous: true, error: 'TypeError' }))
+    expect(results.outcomes).toEqual(Array(3).fill({ synchronous: true, error: 'TypeError' }))
+    expect(results.conversionErrorPreserved).toBe(true)
   })
-  test('report methods reject non-BufferSource objects synchronously', async ({ sharedPage }) => {
+  test('report methods reject non-BufferSource and shared-backed views synchronously', async ({
+    sharedPage
+  }) => {
     const results = await sharedPage.evaluate(async (ctx) => {
       const device = (await navigator.hid.getDevices()).find(
         (entry) => entry.vendorId === ctx.f.vendorId && entry.productId === ctx.f.productId
@@ -432,7 +463,12 @@ test.describe.serial('WebHID conformance', () => {
         () => device.sendReport(ctx.outputId, source),
         () => device.sendFeatureReport(ctx.featureId, source)
       ]
-      return operations.map((operation) => {
+      const sharedBufferAvailable = typeof SharedArrayBuffer === 'function'
+      if (sharedBufferAvailable) {
+        const sharedView = new Uint8Array(new SharedArrayBuffer(ctx.size))
+        operations.push(() => device.sendReport(ctx.outputId, sharedView))
+      }
+      const outcomes = operations.map((operation) => {
         try {
           void operation().catch(() => {})
           return { synchronous: false, error: null }
@@ -443,9 +479,15 @@ test.describe.serial('WebHID conformance', () => {
           }
         }
       })
+      return { outcomes, sharedBufferAvailable }
     }, VENDOR_CTX)
 
-    expect(results).toEqual(Array(2).fill({ synchronous: true, error: 'TypeError' }))
+    expect(results.outcomes.slice(0, 2)).toEqual(
+      Array(2).fill({ synchronous: true, error: 'TypeError' })
+    )
+    if (results.sharedBufferAvailable) {
+      expect(results.outcomes[2]).toEqual({ synchronous: true, error: 'TypeError' })
+    }
   })
 
   test('open and close update opened while concurrent requests keep their results', async ({
@@ -636,65 +678,98 @@ test.describe.serial('WebHID conformance', () => {
     expect(errors).toEqual(['NetworkError', 'NetworkError'])
   })
 
-  test('disconnect closes the device and reconnect restores its paired entry', async ({
+  test('disconnect reaches closed paired devices and reconnect restores its paired entry', async ({
     sharedPage,
     vendorDevice
   }) => {
-    await sharedPage.evaluate(async (filter: DeviceFilter) => {
-      const device = (await navigator.hid.getDevices()).find(
-        (entry) => entry.vendorId === filter.vendorId && entry.productId === filter.productId
-      )
-      if (!device) throw new Error('vendor device is not paired')
-      window.tests!.results!.disconnect = null
-      const onDisconnect = (event: HIDConnectionEvent) => {
-        if (event.device !== device) return
-        navigator.hid.removeEventListener('disconnect', onDisconnect)
-        window.tests!.results!.disconnect = { closed: !device.opened }
-      }
-      navigator.hid.addEventListener('disconnect', onDisconnect)
-      if (!device.opened) await device.open()
-      window.tests!.results!.disconnectReady = true
-    }, VENDOR)
-    await sharedPage.waitForFunction(() => window.tests!.results!.disconnectReady === true)
-    const mockExited = new Promise<number | null>((resolve) =>
-      vendorDevice.process.once('exit', resolve)
-    )
-    vendorDevice.process.stdin!.write('{"cmd":"destroy"}\n')
-    expect(await mockExited).toBe(0)
-    await expect
-      .poll(() => sharedPage.evaluate(() => window.tests!.results!.disconnect))
-      .toEqual({ closed: true })
-
-    await sharedPage.evaluate((filter: DeviceFilter) => {
-      window.tests!.results!.connect = false
-      const onConnect = (event: HIDConnectionEvent) => {
-        if (
-          event.device.vendorId !== filter.vendorId ||
-          event.device.productId !== filter.productId
-        ) {
-          return
-        }
-        navigator.hid.removeEventListener('connect', onConnect)
-        window.tests!.results!.connect = true
-      }
-      navigator.hid.addEventListener('connect', onConnect)
-    }, VENDOR)
-    const replacement = startWebhidMock('vendor.bin', vendorDevice.vid, vendorDevice.pid)
-    await replacement.ready
-    vendorDevice.process = replacement.process
-    vendorDevice.ready = replacement.ready
-
-    await sharedPage.waitForFunction(() => window.tests!.results!.connect === true, {
-      timeout: 10000
-    })
-    const isPaired = await sharedPage.evaluate(
-      async (filter: DeviceFilter) =>
-        (await navigator.hid.getDevices()).some(
+    const siblingPage = await sharedPage.context().newPage()
+    try {
+      await siblingPage.goto(new URL('/tests/test-page.html', sharedPage.url()).toString(), {
+        waitUntil: 'domcontentloaded'
+      })
+      await siblingPage.waitForFunction(() => typeof navigator.hid !== 'undefined', undefined, {
+        timeout: 15000
+      })
+      const siblingClosedDevice = await siblingPage.evaluate(async (filter: DeviceFilter) => {
+        const device = (await navigator.hid.getDevices()).find(
           (entry) => entry.vendorId === filter.vendorId && entry.productId === filter.productId
-        ),
-      VENDOR
-    )
-    expect(isPaired).toBe(true)
+        )
+        if (!device) throw new Error('vendor device is not paired in sibling page')
+        window.tests!.results!.closedDisconnect = null
+        const onDisconnect = (event: HIDConnectionEvent) => {
+          if (event.device !== device) return
+          navigator.hid.removeEventListener('disconnect', onDisconnect)
+          window.tests!.results!.closedDisconnect = {
+            closed: !device.opened,
+            sameDevice: event.device === device
+          }
+        }
+        navigator.hid.addEventListener('disconnect', onDisconnect)
+        return !device.opened
+      }, VENDOR)
+      expect(siblingClosedDevice).toBe(true)
+
+      await sharedPage.evaluate(async (filter: DeviceFilter) => {
+        const device = (await navigator.hid.getDevices()).find(
+          (entry) => entry.vendorId === filter.vendorId && entry.productId === filter.productId
+        )
+        if (!device) throw new Error('vendor device is not paired')
+        window.tests!.results!.disconnect = null
+        const onDisconnect = (event: HIDConnectionEvent) => {
+          if (event.device !== device) return
+          navigator.hid.removeEventListener('disconnect', onDisconnect)
+          window.tests!.results!.disconnect = { closed: !device.opened }
+        }
+        navigator.hid.addEventListener('disconnect', onDisconnect)
+        if (!device.opened) await device.open()
+        window.tests!.results!.disconnectReady = true
+      }, VENDOR)
+      await sharedPage.waitForFunction(() => window.tests!.results!.disconnectReady === true)
+      const mockExited = new Promise<number | null>((resolve) =>
+        vendorDevice.process.once('exit', resolve)
+      )
+      vendorDevice.process.stdin!.write('{"cmd":"destroy"}\n')
+      expect(await mockExited).toBe(0)
+      await expect
+        .poll(() => sharedPage.evaluate(() => window.tests!.results!.disconnect))
+        .toEqual({ closed: true })
+      await expect
+        .poll(() => siblingPage.evaluate(() => window.tests!.results!.closedDisconnect))
+        .toEqual({ closed: true, sameDevice: true })
+
+      await sharedPage.evaluate((filter: DeviceFilter) => {
+        window.tests!.results!.connect = false
+        const onConnect = (event: HIDConnectionEvent) => {
+          if (
+            event.device.vendorId !== filter.vendorId ||
+            event.device.productId !== filter.productId
+          ) {
+            return
+          }
+          navigator.hid.removeEventListener('connect', onConnect)
+          window.tests!.results!.connect = true
+        }
+        navigator.hid.addEventListener('connect', onConnect)
+      }, VENDOR)
+      const replacement = startWebhidMock('vendor.bin', vendorDevice.vid, vendorDevice.pid)
+      await replacement.ready
+      vendorDevice.process = replacement.process
+      vendorDevice.ready = replacement.ready
+
+      await sharedPage.waitForFunction(() => window.tests!.results!.connect === true, {
+        timeout: 10000
+      })
+      const isPaired = await sharedPage.evaluate(
+        async (filter: DeviceFilter) =>
+          (await navigator.hid.getDevices()).some(
+            (entry) => entry.vendorId === filter.vendorId && entry.productId === filter.productId
+          ),
+        VENDOR
+      )
+      expect(isPaired).toBe(true)
+    } finally {
+      await siblingPage.close().catch(() => {})
+    }
   })
 
   test('forgetting blocks operations and aborts pending reports', async ({ sharedPage }) => {
