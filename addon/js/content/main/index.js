@@ -24,6 +24,7 @@
   const NativeMap = types.Map.constructor
   const NativeWeakMap = types.WeakMap.constructor
   const NativeArrayBuffer = types.ArrayBuffer.constructor
+  const NativeArray = types.Array.constructor
   const NativeDataView = types.DataView.constructor
   const NativeUint8Array = types.Uint8Array.constructor
   const NativeEventTarget = types.EventTarget.constructor
@@ -34,6 +35,12 @@
   const NativeEvent = types.Event ? types.Event.constructor : null
   const nativeEventStopImmediatePropagation = types.Event
     ? types.Event.getDescriptor('stopImmediatePropagation').value
+    : null
+  const nativeEventCurrentTarget = types.Event
+    ? types.Event.getDescriptor('currentTarget').get
+    : null
+  const nativeEventPreventDefault = types.Event
+    ? types.Event.getDescriptor('preventDefault').value
     : null
   const nativeSymbolIterator = types.Symbol.getStaticDescriptor('iterator').value
   const nativeSymbolToStringTag = types.Symbol.getStaticDescriptor('toStringTag').value
@@ -102,6 +109,22 @@
   const uint8ArrayGetters = types.Uint8Array.proto.getters
   const nativeArrayBufferIsView = types.ArrayBuffer.getStaticDescriptor('isView').value
   const callNative = (fn, receiver, ...args) => reflect.apply(fn, receiver, args)
+  const rejectWebIDLPromise = (error) => callNative(nativePromiseReject, NativePromise, error)
+  /**
+   * Defines the required non-enumerable interface prototype constructor.
+   *
+   * @param {object} prototype
+   * @param {Function} constructor
+   * @returns {void}
+   */
+  function defineInterfacePrototypeConstructor(prototype, constructor) {
+    object.defineProperty(prototype, 'constructor', {
+      value: constructor,
+      writable: true,
+      enumerable: false,
+      configurable: true
+    })
+  }
   const readMessageEventData = (event) =>
     nativeMessageEventData ? callNative(nativeMessageEventData, event) : undefined
   const readMessageEventSource = (event) =>
@@ -1264,7 +1287,7 @@
     throw new TypeError('Illegal constructor')
   }
   HIDDevice.prototype = object.create(EventTarget.prototype)
-  HIDDevice.prototype.constructor = HIDDevice
+  defineInterfacePrototypeConstructor(HIDDevice.prototype, HIDDevice)
   object.defineProperty(HIDDevice.prototype, nativeSymbolToStringTag, {
     value: 'HIDDevice',
     configurable: true
@@ -1275,35 +1298,35 @@
       get() {
         return requireState(devState, this).connectionState === 'opened'
       },
-      enumerable: false,
+      enumerable: true,
       configurable: true
     },
     vendorId: {
       get() {
         return requireState(devState, this).vendorId
       },
-      enumerable: false,
+      enumerable: true,
       configurable: true
     },
     productId: {
       get() {
         return requireState(devState, this).productId
       },
-      enumerable: false,
+      enumerable: true,
       configurable: true
     },
     productName: {
       get() {
         return requireState(devState, this).productName
       },
-      enumerable: false,
+      enumerable: true,
       configurable: true
     },
     collections: {
       get() {
         return requireState(devState, this).collections
       },
-      enumerable: false,
+      enumerable: true,
       configurable: true
     },
     oninputreport: {
@@ -1314,29 +1337,34 @@
       /** @param {Function|null} v */
       set(v) {
         const state = requireState(devState, this)
-        if (state.oninputreport)
-          eventTargetOps.removeEventListener(state.eventTarget, 'inputreport', state.oninputreport)
-        state.oninputreport = v
-        if (v) eventTargetOps.addEventListener(state.eventTarget, 'inputreport', v)
+        setEventHandler(state, 'oninputreport', 'inputReportListener', 'inputreport', v)
       },
-      enumerable: false,
+      enumerable: true,
       configurable: true
     },
     open: {
       /** @returns {Promise<void>} */
       value: function () {
-        return openDevice(requireState(devState, this))
+        try {
+          return openDevice(requireState(devState, this))
+        } catch (error) {
+          return rejectWebIDLPromise(error)
+        }
       },
-      enumerable: false,
+      enumerable: true,
       configurable: true,
       writable: true
     },
     close: {
       /** @returns {Promise<void>} */
       value: function () {
-        return closeDevice(requireState(devState, this))
+        try {
+          return closeDevice(requireState(devState, this))
+        } catch (error) {
+          return rejectWebIDLPromise(error)
+        }
       },
-      enumerable: false,
+      enumerable: true,
       configurable: true,
       writable: true
     },
@@ -1347,12 +1375,16 @@
        * @returns {Promise<void>}
        */
       value: function (reportId, data) {
-        const state = requireState(devState, this)
-        const convertedReportId = convertEnforcedOctet(reportId)
-        const buffer = copyBufferSource(data)
-        return sendReportDevice(state, convertedReportId, buffer)
+        try {
+          const state = requireState(devState, this)
+          const convertedReportId = convertEnforcedOctet(reportId)
+          const buffer = copyBufferSource(data)
+          return sendReportDevice(state, convertedReportId, buffer)
+        } catch (error) {
+          return rejectWebIDLPromise(error)
+        }
       },
-      enumerable: false,
+      enumerable: true,
       configurable: true,
       writable: true
     },
@@ -1362,11 +1394,15 @@
        * @returns {Promise<DataView>}
        */
       value: function (reportId) {
-        const state = requireState(devState, this)
-        const convertedReportId = convertEnforcedOctet(reportId)
-        return receiveFeatureReportDevice(state, convertedReportId)
+        try {
+          const state = requireState(devState, this)
+          const convertedReportId = convertEnforcedOctet(reportId)
+          return receiveFeatureReportDevice(state, convertedReportId)
+        } catch (error) {
+          return rejectWebIDLPromise(error)
+        }
       },
-      enumerable: false,
+      enumerable: true,
       configurable: true,
       writable: true
     },
@@ -1377,21 +1413,29 @@
        * @returns {Promise<void>}
        */
       value: function (reportId, data) {
-        const state = requireState(devState, this)
-        const convertedReportId = convertEnforcedOctet(reportId)
-        const buffer = copyBufferSource(data)
-        return sendFeatureReportDevice(state, convertedReportId, buffer)
+        try {
+          const state = requireState(devState, this)
+          const convertedReportId = convertEnforcedOctet(reportId)
+          const buffer = copyBufferSource(data)
+          return sendFeatureReportDevice(state, convertedReportId, buffer)
+        } catch (error) {
+          return rejectWebIDLPromise(error)
+        }
       },
-      enumerable: false,
+      enumerable: true,
       configurable: true,
       writable: true
     },
     forget: {
       /** @returns {Promise<void>} */
       value: function () {
-        return forgetDevice(requireState(devState, this))
+        try {
+          return forgetDevice(requireState(devState, this))
+        } catch (error) {
+          return rejectWebIDLPromise(error)
+        }
       },
-      enumerable: false,
+      enumerable: true,
       configurable: true,
       writable: true
     },
@@ -1406,7 +1450,7 @@
         const state = requireState(devState, this)
         eventTargetOps.addEventListener(state.eventTarget, type, listener, options)
       },
-      enumerable: false,
+      enumerable: true,
       configurable: true,
       writable: true
     },
@@ -1421,7 +1465,7 @@
         const state = requireState(devState, this)
         eventTargetOps.removeEventListener(state.eventTarget, type, listener, options)
       },
-      enumerable: false,
+      enumerable: true,
       configurable: true,
       writable: true
     },
@@ -1434,7 +1478,7 @@
         const state = requireState(devState, this)
         return eventTargetOps.dispatchEvent(state.eventTarget, event)
       },
-      enumerable: false,
+      enumerable: true,
       configurable: true,
       writable: true
     }
@@ -2100,23 +2144,181 @@
     if (handler) handler(state, data)
   }
 
+  const COLLECTION_INFO_MEMBERS = [
+    'usagePage',
+    'usage',
+    'type',
+    'children',
+    'inputReports',
+    'outputReports',
+    'featureReports'
+  ]
+  const REPORT_INFO_MEMBERS = ['reportId', 'items']
+  const REPORT_ITEM_MEMBERS = [
+    'isAbsolute',
+    'isArray',
+    'isBufferedBytes',
+    'isConstant',
+    'isLinear',
+    'isRange',
+    'isVolatile',
+    'hasNull',
+    'hasPreferredState',
+    'wrap',
+    'usages',
+    'usageMinimum',
+    'usageMaximum',
+    'reportSize',
+    'reportCount',
+    'unitExponent',
+    'unitSystem',
+    'unitFactorLengthExponent',
+    'unitFactorMassExponent',
+    'unitFactorTimeExponent',
+    'unitFactorTemperatureExponent',
+    'unitFactorCurrentExponent',
+    'unitFactorLuminousIntensityExponent',
+    'logicalMinimum',
+    'logicalMaximum',
+    'physicalMinimum',
+    'physicalMaximum',
+    'strings'
+  ]
+
   /**
-   * @param {object} target
+   * Copies an IDL dictionary into an ordinary mutable JavaScript object.
+   *
+   * @param {object} source
+   * @param {string[]} members
    * @returns {object}
    */
-  function deepFreeze(target) {
-    const propNames = reflect.ownKeys(target)
+  function copyIDLDictionary(source, members) {
+    const result = object.create(NativeObject.prototype)
+    for (let i = 0; i < members.length; i++) {
+      const member = members[i]
+      const value = source[member]
+      if (value === undefined) continue
+      object.defineProperty(result, member, {
+        value,
+        writable: true,
+        enumerable: true,
+        configurable: true
+      })
+    }
+    return result
+  }
 
-    for (let i = 0; i < propNames.length; i++) {
-      const name = propNames[i]
-      const value = target[name]
+  /**
+   * Copies an IDL sequence into an ordinary mutable JavaScript array.
+   *
+   * @param {Array} source
+   * @param {(value: *) => *} [convertItem]
+   * @returns {Array}
+   */
+  function copyIDLSequence(source, convertItem) {
+    const result = new NativeArray(source.length)
+    for (let i = 0; i < source.length; i++) {
+      const value = source[i]
+      object.defineProperty(result, stringConstructor(i), {
+        value: convertItem ? convertItem(value) : value,
+        writable: true,
+        enumerable: true,
+        configurable: true
+      })
+    }
+    return result
+  }
 
-      if ((value && typeof value === 'object') || typeof value === 'function') {
-        deepFreeze(value)
+  /**
+   * @param {object} source
+   * @returns {object}
+   */
+  function copyReportItem(source) {
+    const result = copyIDLDictionary(source, REPORT_ITEM_MEMBERS)
+    if (result.usages !== undefined) result.usages = copyIDLSequence(result.usages)
+    if (result.strings !== undefined) result.strings = copyIDLSequence(result.strings)
+    return result
+  }
+
+  /**
+   * @param {object} source
+   * @returns {object}
+   */
+  function copyReportInfo(source) {
+    const result = copyIDLDictionary(source, REPORT_INFO_MEMBERS)
+    if (result.items !== undefined) result.items = copyIDLSequence(result.items, copyReportItem)
+    return result
+  }
+
+  /**
+   * @param {object} source
+   * @returns {object}
+   */
+  function copyCollectionInfo(source) {
+    const result = copyIDLDictionary(source, COLLECTION_INFO_MEMBERS)
+    if (result.children !== undefined) {
+      result.children = copyIDLSequence(result.children, copyCollectionInfo)
+    }
+    if (result.inputReports !== undefined) {
+      result.inputReports = copyIDLSequence(result.inputReports, copyReportInfo)
+    }
+    if (result.outputReports !== undefined) {
+      result.outputReports = copyIDLSequence(result.outputReports, copyReportInfo)
+    }
+    if (result.featureReports !== undefined) {
+      result.featureReports = copyIDLSequence(result.featureReports, copyReportInfo)
+    }
+    return result
+  }
+
+  /**
+   * Converts the IDL sequence to a frozen outer FrozenArray.
+   *
+   * @param {object[]} collections
+   * @returns {object[]}
+   */
+  function createFrozenCollections(collections) {
+    return object.freeze(copyIDLSequence(collections, copyCollectionInfo))
+  }
+
+  /**
+   * Implements the HTML EventHandler callback slot and stable listener.
+   *
+   * @param {object} state
+   * @param {string} callbackKey
+   * @param {string} listenerKey
+   * @param {string} eventType
+   * @param {*} value
+   * @returns {void}
+   */
+  function setEventHandler(state, callbackKey, listenerKey, eventType, value) {
+    const callback =
+      value !== null && (typeof value === 'object' || typeof value === 'function') ? value : null
+    state[callbackKey] = callback
+    const listener = state[listenerKey]
+    if (callback === null) {
+      if (listener !== null) {
+        eventTargetOps.removeEventListener(state.eventTarget, eventType, listener)
+        state[listenerKey] = null
+      }
+      return
+    }
+    if (listener !== null) return
+    const callbackArgs = [null]
+    const eventHandlerListener = function (event) {
+      const currentCallback = state[callbackKey]
+      if (typeof currentCallback !== 'function') return
+      const currentTarget = nativeEventCurrentTarget
+        ? callNative(nativeEventCurrentTarget, event)
+        : state.eventTarget
+      callbackArgs[0] = event
+      const returnValue = reflect.apply(currentCallback, currentTarget, callbackArgs)
+      if (returnValue === false && nativeEventPreventDefault) {
+        callNative(nativeEventPreventDefault, event)
       }
     }
-
-    return object.freeze(target)
+    state[listenerKey] = eventHandlerListener
+    eventTargetOps.addEventListener(state.eventTarget, eventType, eventHandlerListener)
   }
 
   /**
@@ -2134,7 +2336,7 @@
       vendorId: deviceInfo.vendorId,
       productId: deviceInfo.productId,
       productName: deviceInfo.productName,
-      collections: deepFreeze(deviceInfo.collections || []),
+      collections: createFrozenCollections(deviceInfo.collections || []),
       connectionState: 'closed',
       openPromise: null,
       closePromise: null,
@@ -2149,7 +2351,8 @@
       dataPortGeneration: null,
       dataPending: null,
       maxInputReportSize: deviceInfo.maxInputReportSize || 64,
-      oninputreport: null
+      oninputreport: null,
+      inputReportListener: null
     }
     devState.set(obj, state)
     return obj
@@ -2222,7 +2425,7 @@
     return obj
   }
   HIDInputReportEvent.prototype = object.create(Event.prototype)
-  HIDInputReportEvent.prototype.constructor = HIDInputReportEvent
+  defineInterfacePrototypeConstructor(HIDInputReportEvent.prototype, HIDInputReportEvent)
   object.defineProperty(HIDInputReportEvent.prototype, nativeSymbolToStringTag, {
     value: 'HIDInputReportEvent',
     configurable: true
@@ -2232,21 +2435,21 @@
       get() {
         return requireState(inputReportEventState, this).device
       },
-      enumerable: false,
+      enumerable: true,
       configurable: true
     },
     reportId: {
       get() {
         return requireState(inputReportEventState, this).reportId
       },
-      enumerable: false,
+      enumerable: true,
       configurable: true
     },
     data: {
       get() {
         return requireState(inputReportEventState, this).data
       },
-      enumerable: false,
+      enumerable: true,
       configurable: true
     }
   })
@@ -2272,7 +2475,7 @@
     return obj
   }
   HIDConnectionEvent.prototype = object.create(Event.prototype)
-  HIDConnectionEvent.prototype.constructor = HIDConnectionEvent
+  defineInterfacePrototypeConstructor(HIDConnectionEvent.prototype, HIDConnectionEvent)
   object.defineProperty(HIDConnectionEvent.prototype, nativeSymbolToStringTag, {
     value: 'HIDConnectionEvent',
     configurable: true
@@ -2281,7 +2484,7 @@
     get() {
       return requireState(evtState, this).device
     },
-    enumerable: false,
+    enumerable: true,
     configurable: true
   })
 
@@ -2293,7 +2496,7 @@
     throw new TypeError('Illegal constructor')
   }
   HID.prototype = object.create(EventTarget.prototype)
-  HID.prototype.constructor = HID
+  defineInterfacePrototypeConstructor(HID.prototype, HID)
   object.defineProperty(HID.prototype, nativeSymbolToStringTag, {
     value: 'HID',
     configurable: true
@@ -2507,21 +2710,29 @@
   }
 
   function requestDevice(options) {
-    requireState(hidState, this)
-    const normalizedOptions = normalizeRequestOptions(options)
-    const hasActivation = hasTransientActivation()
-    const calledFromConsole = !hasActivation && isCalledFromConsole()
-    return requestDeviceImpl(normalizedOptions, hasActivation, calledFromConsole)
+    try {
+      requireState(hidState, this)
+      const normalizedOptions = normalizeRequestOptions(options)
+      const hasActivation = hasTransientActivation()
+      const calledFromConsole = !hasActivation && isCalledFromConsole()
+      return requestDeviceImpl(normalizedOptions, hasActivation, calledFromConsole)
+    } catch (error) {
+      return rejectWebIDLPromise(error)
+    }
   }
 
   object.defineProperties(HID.prototype, {
     getDevices: {
       /** @returns {Promise<object[]>} */
       value: function () {
-        requireState(hidState, this)
-        return getDevicesImpl()
+        try {
+          requireState(hidState, this)
+          return getDevicesImpl()
+        } catch (error) {
+          return rejectWebIDLPromise(error)
+        }
       },
-      enumerable: false,
+      enumerable: true,
       configurable: true,
       writable: true
     },
@@ -2535,7 +2746,7 @@
              * @returns {Promise<object[]>}
              */
             value: requestDevice,
-            enumerable: false,
+            enumerable: true,
             configurable: true,
             writable: true
           }
@@ -2552,7 +2763,7 @@
         const state = requireState(hidState, this)
         eventTargetOps.addEventListener(state.eventTarget, type, listener, options)
       },
-      enumerable: false,
+      enumerable: true,
       configurable: true,
       writable: true
     },
@@ -2567,7 +2778,7 @@
         const state = requireState(hidState, this)
         eventTargetOps.removeEventListener(state.eventTarget, type, listener, options)
       },
-      enumerable: false,
+      enumerable: true,
       configurable: true,
       writable: true
     },
@@ -2580,7 +2791,7 @@
         const state = requireState(hidState, this)
         return eventTargetOps.dispatchEvent(state.eventTarget, event)
       },
-      enumerable: false,
+      enumerable: true,
       configurable: true,
       writable: true
     },
@@ -2592,12 +2803,9 @@
       /** @param {Function|null} v */
       set(v) {
         const state = requireState(hidState, this)
-        if (state.onconnect)
-          eventTargetOps.removeEventListener(state.eventTarget, 'connect', state.onconnect)
-        state.onconnect = v
-        if (v) eventTargetOps.addEventListener(state.eventTarget, 'connect', v)
+        setEventHandler(state, 'onconnect', 'connectListener', 'connect', v)
       },
-      enumerable: false,
+      enumerable: true,
       configurable: true
     },
     ondisconnect: {
@@ -2608,12 +2816,9 @@
       /** @param {Function|null} v */
       set(v) {
         const state = requireState(hidState, this)
-        if (state.ondisconnect)
-          eventTargetOps.removeEventListener(state.eventTarget, 'disconnect', state.ondisconnect)
-        state.ondisconnect = v
-        if (v) eventTargetOps.addEventListener(state.eventTarget, 'disconnect', v)
+        setEventHandler(state, 'ondisconnect', 'disconnectListener', 'disconnect', v)
       },
-      enumerable: false,
+      enumerable: true,
       configurable: true
     }
   })
@@ -2626,7 +2831,9 @@
     hidState.set(obj, {
       eventTarget: eventTarget,
       onconnect: null,
-      ondisconnect: null
+      ondisconnect: null,
+      connectListener: null,
+      disconnectListener: null
     })
     return obj
   }
