@@ -1,7 +1,6 @@
 import { test, expect } from '../../helpers/browser.js'
 import type { Page } from '@playwright/test'
 
-const WPT_ORIGIN = 'https://wpt.live'
 const WORKER_SETTING = 'settings :: workerPolyfillEnabled'
 
 interface WptTestResult {
@@ -50,7 +49,7 @@ test.afterAll(async ({ backgroundPage }) => {
   )
 })
 
-async function runWptPage(page: Page, path: string): Promise<void> {
+async function runWptPage(page: Page, url: string): Promise<void> {
   await page.addInitScript(() => {
     const currentWindow = window as WptWindow
     const installCompletionCallback = () => {
@@ -73,7 +72,7 @@ async function runWptPage(page: Page, path: string): Promise<void> {
     installCompletionCallback()
   })
 
-  await page.goto(`${WPT_ORIGIN}${path}`, { waitUntil: 'load', timeout: 30000 })
+  await page.goto(url, { waitUntil: 'load', timeout: 30000 })
   await page.waitForFunction(
     () => (window as WptWindow).__webhidWptResult !== undefined,
     null,
@@ -89,17 +88,17 @@ async function runWptPage(page: Page, path: string): Promise<void> {
   ).toEqual([])
 }
 
-test('WPT WebHID Permissions Policy header', async ({ page }) => {
-  await runWptPage(page, '/webhid/hid-allowed-by-permissions-policy.https.sub.html')
+test('WPT WebHID Permissions Policy header', async ({ page, wptUrl }) => {
+  await runWptPage(page, wptUrl('/webhid/hid-allowed-by-permissions-policy.https.sub.html'))
 })
 
-test('WPT WebHID Permissions Policy allow attribute', async ({ page }) => {
-  await runWptPage(page, '/webhid/hid-allowed-by-permissions-policy-attribute.https.sub.html')
+test('WPT WebHID Permissions Policy allow attribute', async ({ page, wptUrl }) => {
+  await runWptPage(page, wptUrl('/webhid/hid-allowed-by-permissions-policy-attribute.https.sub.html'))
 })
 
-test('WPT WebHID Permissions Policy after redirect', async ({ page }) => {
+test('WPT WebHID Permissions Policy after redirect', async ({ page, wptUrl }) => {
   await runWptPage(
     page,
-    '/webhid/hid-allowed-by-permissions-policy-attribute-redirect-on-load.https.sub.html'
+    wptUrl('/webhid/hid-allowed-by-permissions-policy-attribute-redirect-on-load.https.sub.html')
   )
 })

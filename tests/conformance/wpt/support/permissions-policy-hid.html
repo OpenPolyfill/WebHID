@@ -1,0 +1,8 @@
+<script>
+Promise.resolve()
+  .then(() => navigator.hid.getDevices())
+  .then(
+    () => window.parent.postMessage({ type: 'availability-result', enabled: true }, '*'),
+    () => window.parent.postMessage({ type: 'availability-result', enabled: false }, '*')
+  )
+</script>

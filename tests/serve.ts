@@ -1,6 +1,6 @@
 import http from 'node:http'
 import { readFileSync } from 'node:fs'
-import { resolve, dirname, join, extname } from 'node:path'
+import { resolve, dirname, join, extname, relative, isAbsolute, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { once } from 'node:events'
 import { readFile } from 'node:fs'
@@ -116,4 +116,105 @@ export async function startStaticServer(port = 0): Promise<ServerHandle> {
     })
   })
   return listen(server, port)
+}
+const wptSiteRoot = resolve(__dirname, 'conformance/wpt/site')
+const wptSupportRoot = resolve(__dirname, 'conformance/wpt/support')
+
+const wptSupportFiles: Record<string, string> = {
+  '/resources/testharness.js': 'testharness.js',
+  '/permissions-policy/resources/permissions-policy.js': 'permissions-policy.js',
+  '/permissions-policy/resources/permissions-policy-hid.html': 'permissions-policy-hid.html',
+  '/permissions-policy/resources/permissions-policy-hid-worker.html':
+    'permissions-policy-hid-worker.html',
+  '/permissions-policy/resources/permissions-policy-hid-worker.js':
+    'permissions-policy-hid-worker.js',
+  '/permissions-policy/resources/redirect-on-load.html': 'redirect-on-load.html'
+}
+
+const wptMime: Record<string, string> = {
+  '.html': 'text/html',
+  '.js': 'application/javascript',
+  '.idl': 'text/plain'
+}
+
+export async function startWptServer(port = 0): Promise<ServerHandle> {
+  let serverPort = 0
+  const server = http.createServer((req, res) => {
+    let pathname: string
+    try {
+      pathname = decodeURIComponent(new URL(req.url ?? '/', 'http://localhost').pathname)
+    } catch {
+      res.writeHead(400)
+      res.end('Bad request')
+      return
+    }
+
+    if (pathname === '/resources/testharnessreport.js') {
+      res.writeHead(200, { 'Content-Type': 'application/javascript' })
+      res.end()
+      return
+    }
+
+    const supportFile = wptSupportFiles[pathname]
+    const root = supportFile ? wptSupportRoot : wptSiteRoot
+    const filePath = resolve(root, supportFile ?? pathname.slice(1))
+    const relativePath = relative(root, filePath)
+    if (
+      relativePath === '' ||
+      relativePath === '..' ||
+      relativePath.startsWith(`..${sep}`) ||
+      isAbsolute(relativePath)
+    ) {
+      res.writeHead(403)
+      res.end('Forbidden')
+      return
+    }
+
+    readFile(filePath, (err, data) => {
+      if (err) {
+        res.writeHead(404)
+        res.end('Not found')
+        return
+      }
+
+      readFile(`${filePath}.headers`, 'utf8', (headerError, headerText) => {
+        if (headerError && headerError.code !== 'ENOENT') {
+          res.writeHead(500)
+          res.end('Unable to read response headers')
+          return
+        }
+
+        const headers: Record<string, string> = {
+          'Cache-Control': 'no-store',
+          'Content-Type': wptMime[extname(filePath)] ?? 'application/octet-stream'
+        }
+        if (!headerError) {
+          for (const line of headerText.split(/\r?\n/)) {
+            const separator = line.indexOf(':')
+            if (separator > 0) {
+              headers[line.slice(0, separator).trim()] = line.slice(separator + 1).trim()
+            }
+          }
+        }
+
+        let body = data
+        if (pathname.endsWith('.sub.html')) {
+          body = Buffer.from(
+            data
+              .toString('utf8')
+              .replaceAll(
+                'https://{{domains[www]}}:{{ports[https][0]}}',
+                `http://127.0.0.1:${serverPort}`
+              )
+          )
+        }
+        res.writeHead(200, headers)
+        res.end(body)
+      })
+    })
+  })
+
+  const handle = await listen(server, port)
+  serverPort = handle.port
+  return handle
 }

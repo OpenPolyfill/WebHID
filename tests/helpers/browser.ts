@@ -5,7 +5,7 @@ import type {
   PlaywrightWorkerArgs,
   PlaywrightWorkerOptions
 } from '@playwright/test'
-import { startPolicyServer } from '../serve.js'
+import { startPolicyServer, startWptServer } from '../serve.js'
 import type { Server } from 'http'
 import {
   backgroundPageFixture,
@@ -18,6 +18,7 @@ import {
 } from './harness.js'
 
 type Servers = { main: { port: number; server: Server }; cross: { port: number; server: Server } }
+type WptServer = { port: number; server: Server }
 
 export const test = base.extend<
   PlaywrightTestArgs & PlaywrightTestOptions & { workerHidPage: Page },
@@ -26,6 +27,8 @@ export const test = base.extend<
       servers: Servers
       pageUrl: (path: string) => string
       crossUrl: (path: string) => string
+      wptServer: WptServer
+      wptUrl: (path: string) => string
       harnessCtx: HarnessContext
       rdpPort: number
       backgroundPage: FirefoxBgPage
@@ -41,6 +44,21 @@ export const test = base.extend<
       cross.server.close()
     },
     { scope: 'worker', auto: true }
+  ],
+  wptServer: [
+    async ({}, use) => {
+      const server = await startWptServer()
+      await use(server)
+      server.server.close()
+    },
+    { scope: 'worker' }
+  ],
+
+  wptUrl: [
+    async ({ wptServer }, use) => {
+      await use((path: string) => `http://localhost:${wptServer.port}${path}`)
+    },
+    { scope: 'worker' }
   ],
 
   rdpPort: rdpPortFixture(),
