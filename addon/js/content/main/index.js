@@ -35,7 +35,6 @@
   const nativeEventStopImmediatePropagation = types.Event
     ? types.Event.getDescriptor('stopImmediatePropagation').value
     : null
-  const NativeSymbol = types.Symbol.constructor
   const nativeSymbolIterator = types.Symbol.getStaticDescriptor('iterator').value
   const nativeSymbolToStringTag = types.Symbol.getStaticDescriptor('toStringTag').value
   const NativeDOMException = types.DOMException ? types.DOMException.constructor : null
@@ -172,25 +171,17 @@
     return value
   }
   /**
-   * Replaces EventTarget methods with captured intrinsic operations.
-   * @param {EventTarget} value
-   * @returns {EventTarget}
+   * Returns the internal state for a branded interface receiver.
+   *
+   * @param {WeakMap<object, object>} stateMap
+   * @param {*} receiver
+   * @returns {object}
+   * @throws {TypeError}
    */
-  function hardenEventTarget(value) {
-    object.defineProperties(value, {
-      addEventListener: {
-        value: (type, listener, options) =>
-          eventTargetOps.addEventListener(value, type, listener, options)
-      },
-      removeEventListener: {
-        value: (type, listener, options) =>
-          eventTargetOps.removeEventListener(value, type, listener, options)
-      },
-      dispatchEvent: {
-        value: (event) => eventTargetOps.dispatchEvent(value, event)
-      }
-    })
-    return value
+  function requireState(stateMap, receiver) {
+    const state = stateMap.get(receiver)
+    if (state == null) throw new TypeError('Illegal invocation')
+    return state
   }
 
   reflect.deleteProperty(globalThis, 'webhid')
@@ -1174,8 +1165,8 @@
   const hidState = hardenWeakMap(new NativeWeakMap())
   /** @type {WeakMap<object, object>} */
   const evtState = hardenWeakMap(new NativeWeakMap())
-  /** @type {symbol} */
-  const irState = NativeSymbol('webhid_ir')
+  /** @type {WeakMap<object, object>} */
+  const inputReportEventState = hardenWeakMap(new NativeWeakMap())
   /** @type {Map<string, object>} */
   const deviceRegistry = hardenMap(new NativeMap())
 
@@ -1259,63 +1250,52 @@
   object.defineProperties(HIDDevice.prototype, {
     opened: {
       get() {
-        return devState.get(this) == null
-          ? void 0
-          : devState.get(this).opened != null
-            ? devState.get(this).opened
-            : false
+        const state = requireState(devState, this)
+        return state.opened != null ? state.opened : false
       },
       enumerable: false,
       configurable: true
     },
     vendorId: {
       get() {
-        var dev = devState.get(this)
-        return dev != null ? dev.vendorId : undefined
+        return requireState(devState, this).vendorId
       },
       enumerable: false,
       configurable: true
     },
     productId: {
       get() {
-        var dev = devState.get(this)
-        return dev != null ? dev.productId : undefined
+        return requireState(devState, this).productId
       },
       enumerable: false,
       configurable: true
     },
     productName: {
       get() {
-        var dev = devState.get(this)
-        return dev != null ? dev.productName : undefined
+        return requireState(devState, this).productName
       },
       enumerable: false,
       configurable: true
     },
     collections: {
       get() {
-        var dev = devState.get(this)
-        return dev != null ? dev.collections : undefined
+        return requireState(devState, this).collections
       },
       enumerable: false,
       configurable: true
     },
     oninputreport: {
       get() {
-        return devState.get(this) == null
-          ? void 0
-          : devState.get(this).oninputreport != null
-            ? devState.get(this).oninputreport
-            : null
+        const state = requireState(devState, this)
+        return state.oninputreport != null ? state.oninputreport : null
       },
       /** @param {Function|null} v */
       set(v) {
-        const state = devState.get(this)
-        if (!state) return
+        const state = requireState(devState, this)
         if (state.oninputreport)
-          state.eventTarget.removeEventListener('inputreport', state.oninputreport)
+          eventTargetOps.removeEventListener(state.eventTarget, 'inputreport', state.oninputreport)
         state.oninputreport = v
-        if (v) this.addEventListener('inputreport', v)
+        if (v) eventTargetOps.addEventListener(state.eventTarget, 'inputreport', v)
       },
       enumerable: false,
       configurable: true
@@ -1563,11 +1543,12 @@
       /**
        * @param {string} type
        * @param {EventListenerOrEventListenerObject} listener
+       * @param {boolean|object} [options]
        * @returns {void}
        */
-      value: function (type, listener) {
-        const state = devState.get(this)
-        if (state) state.eventTarget.addEventListener(type, listener)
+      value: function (type, listener, options) {
+        const state = requireState(devState, this)
+        eventTargetOps.addEventListener(state.eventTarget, type, listener, options)
       },
       enumerable: false,
       configurable: true,
@@ -1577,11 +1558,25 @@
       /**
        * @param {string} type
        * @param {EventListenerOrEventListenerObject} listener
+       * @param {boolean|object} [options]
        * @returns {void}
        */
-      value: function (type, listener) {
-        const state = devState.get(this)
-        if (state) state.eventTarget.removeEventListener(type, listener)
+      value: function (type, listener, options) {
+        const state = requireState(devState, this)
+        eventTargetOps.removeEventListener(state.eventTarget, type, listener, options)
+      },
+      enumerable: false,
+      configurable: true,
+      writable: true
+    },
+    dispatchEvent: {
+      /**
+       * @param {Event} event
+       * @returns {boolean}
+       */
+      value: function (event) {
+        const state = requireState(devState, this)
+        return eventTargetOps.dispatchEvent(state.eventTarget, event)
       },
       enumerable: false,
       configurable: true,
@@ -1958,9 +1953,9 @@
    * @returns {object}
    */
   function createHIDDevice(deviceInfo) {
-    const obj = object.create(HIDDevice.prototype)
-    const eventTarget = hardenEventTarget(new NativeEventTarget())
-    obj.dispatchEvent = (event) => eventTarget.dispatchEvent(event)
+    const obj = new NativeEventTarget()
+    reflect.setPrototypeOf(obj, HIDDevice.prototype)
+    const eventTarget = obj
     const state = {
       eventTarget: eventTarget,
       self: obj,
@@ -2015,15 +2010,18 @@
       throw new TypeError('HIDInputReportEventInit.data is required')
     }
     const device = dictionary.device
-    const data = dictionary.data
-    if (device == null) throw new TypeError('HIDInputReportEventInit.device is required')
-    if (data == null) throw new TypeError('HIDInputReportEventInit.data is required')
-    const obj = types.Event.construct([type, dictionary], new.target || HIDInputReportEvent)
-    obj[irState] = {
-      device,
-      reportId: convertOctet(dictionary.reportId),
-      data
+    if (!devState.has(device)) {
+      throw new TypeError('HIDInputReportEventInit.device must be a HIDDevice')
     }
+    const reportIdValue = dictionary.reportId
+    if (reportIdValue === undefined) {
+      throw new TypeError('HIDInputReportEventInit.reportId is required')
+    }
+    const reportId = convertOctet(reportIdValue)
+    const data = dictionary.data
+    types.DataView.proto.getters.buffer(data)
+    const obj = types.Event.construct([type, dictionary], new.target || HIDInputReportEvent)
+    inputReportEventState.set(obj, { device, reportId, data })
     return obj
   }
   HIDInputReportEvent.prototype = object.create(Event.prototype)
@@ -2035,24 +2033,21 @@
   object.defineProperties(HIDInputReportEvent.prototype, {
     device: {
       get() {
-        var st = this[irState]
-        return st != null ? st.device : undefined
+        return requireState(inputReportEventState, this).device
       },
       enumerable: false,
       configurable: true
     },
     reportId: {
       get() {
-        var st = this[irState]
-        return st != null ? st.reportId : undefined
+        return requireState(inputReportEventState, this).reportId
       },
       enumerable: false,
       configurable: true
     },
     data: {
       get() {
-        var st = this[irState]
-        return st != null ? st.data : undefined
+        return requireState(inputReportEventState, this).data
       },
       enumerable: false,
       configurable: true
@@ -2071,7 +2066,9 @@
       throw new TypeError('HIDConnectionEventInit.device is required')
     }
     const device = dictionary.device
-    if (device == null) throw new TypeError('HIDConnectionEventInit.device is required')
+    if (!devState.has(device)) {
+      throw new TypeError('HIDConnectionEventInit.device must be a HIDDevice')
+    }
     const obj = types.Event.construct([type, dictionary], new.target || HIDConnectionEvent)
     evtState.set(obj, { device })
     return obj
@@ -2084,8 +2081,7 @@
   })
   object.defineProperty(HIDConnectionEvent.prototype, 'device', {
     get() {
-      var st = evtState.get(this)
-      return st != null ? st.device : undefined
+      return requireState(evtState, this).device
     },
     enumerable: false,
     configurable: true
@@ -2290,11 +2286,12 @@
       /**
        * @param {string} type
        * @param {EventListenerOrEventListenerObject} listener
+       * @param {boolean|object} [options]
        * @returns {void}
        */
-      value: function (type, listener) {
-        const state = hidState.get(this)
-        if (state) state.eventTarget.addEventListener(type, listener)
+      value: function (type, listener, options) {
+        const state = requireState(hidState, this)
+        eventTargetOps.addEventListener(state.eventTarget, type, listener, options)
       },
       enumerable: false,
       configurable: true,
@@ -2304,11 +2301,25 @@
       /**
        * @param {string} type
        * @param {EventListenerOrEventListenerObject} listener
+       * @param {boolean|object} [options]
        * @returns {void}
        */
-      value: function (type, listener) {
-        const state = hidState.get(this)
-        if (state) state.eventTarget.removeEventListener(type, listener)
+      value: function (type, listener, options) {
+        const state = requireState(hidState, this)
+        eventTargetOps.removeEventListener(state.eventTarget, type, listener, options)
+      },
+      enumerable: false,
+      configurable: true,
+      writable: true
+    },
+    dispatchEvent: {
+      /**
+       * @param {Event} event
+       * @returns {boolean}
+       */
+      value: function (event) {
+        const state = requireState(hidState, this)
+        return eventTargetOps.dispatchEvent(state.eventTarget, event)
       },
       enumerable: false,
       configurable: true,
@@ -2316,39 +2327,32 @@
     },
     onconnect: {
       get() {
-        return hidState.get(this) == null
-          ? void 0
-          : hidState.get(this).onconnect != null
-            ? hidState.get(this).onconnect
-            : null
+        const state = requireState(hidState, this)
+        return state.onconnect != null ? state.onconnect : null
       },
       /** @param {Function|null} v */
       set(v) {
-        const state = hidState.get(this)
-        if (!state) return
-        if (state.onconnect) state.eventTarget.removeEventListener('connect', state.onconnect)
+        const state = requireState(hidState, this)
+        if (state.onconnect)
+          eventTargetOps.removeEventListener(state.eventTarget, 'connect', state.onconnect)
         state.onconnect = v
-        if (v) state.eventTarget.addEventListener('connect', v)
+        if (v) eventTargetOps.addEventListener(state.eventTarget, 'connect', v)
       },
       enumerable: false,
       configurable: true
     },
     ondisconnect: {
       get() {
-        return hidState.get(this) == null
-          ? void 0
-          : hidState.get(this).ondisconnect != null
-            ? hidState.get(this).ondisconnect
-            : null
+        const state = requireState(hidState, this)
+        return state.ondisconnect != null ? state.ondisconnect : null
       },
       /** @param {Function|null} v */
       set(v) {
-        const state = hidState.get(this)
-        if (!state) return
+        const state = requireState(hidState, this)
         if (state.ondisconnect)
-          state.eventTarget.removeEventListener('disconnect', state.ondisconnect)
+          eventTargetOps.removeEventListener(state.eventTarget, 'disconnect', state.ondisconnect)
         state.ondisconnect = v
-        if (v) state.eventTarget.addEventListener('disconnect', v)
+        if (v) eventTargetOps.addEventListener(state.eventTarget, 'disconnect', v)
       },
       enumerable: false,
       configurable: true
@@ -2357,9 +2361,9 @@
 
   /** @returns {object} */
   function createHID() {
-    const obj = object.create(HID.prototype)
-    const eventTarget = hardenEventTarget(new NativeEventTarget())
-    obj.dispatchEvent = (event) => eventTarget.dispatchEvent(event)
+    const obj = new NativeEventTarget()
+    reflect.setPrototypeOf(obj, HID.prototype)
+    const eventTarget = obj
     hidState.set(obj, {
       eventTarget: eventTarget,
       onconnect: null,
