@@ -89,7 +89,6 @@
   const nativeCryptoRandomUUID = host.cryptoRandomUUID
   const nativeSetTimeout = host.timers.setTimeout
   const nativeSelfPostMessage = host.postMessage
-  const ArrayBuffer = NativeArrayBuffer
   const DataView = NativeDataView
   const Uint8Array = NativeUint8Array
   const EventTarget = NativeEventTarget
@@ -167,7 +166,6 @@
       : null)
   const promiseOps = types.Promise.proto.methods
   const stringConstructor = types.String.constructor
-  const uint8Ops = types.Uint8Array.proto.methods
   const nativeNumberIsFinite = host.numberIsFinite
   const nativeNumberIsInteger = host.numberIsInteger
   const nativeMathTrunc = host.mathTrunc
@@ -2889,7 +2887,9 @@
         state.terminated = true
         destroyWorkerClient(state)
         callNative(nativeWorkerTerminate, instance)
-      }
+      },
+      writable: true,
+      configurable: true
     })
     if (nativeWorkerAddEventListener) {
       callNative(nativeWorkerAddEventListener, instance, 'message', (e) => {
