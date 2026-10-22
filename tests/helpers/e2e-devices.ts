@@ -1,8 +1,10 @@
 import { type Page } from '@playwright/test'
 import type { DeviceFilter } from './e2e-types.js'
 
+export const mockDeviceName = 'webhid-mock 16c0:0001'
+
 export const DEVICES = {
-  vendor: { vid: 0x16c0, pid: 0x0001, descriptor: 'vendor.bin' }
+  vendor: { vid: 0x16c0, pid: 0x0001, name: mockDeviceName, descriptor: 'vendor.bin' }
 } as const
 
 export type DeviceKey = keyof typeof DEVICES
@@ -71,8 +73,32 @@ export async function grantDevicePermission(page: Page, filters: DeviceFilter[])
     undefined,
     { timeout: 15000 }
   )
-  await page.keyboard.press('Enter')
-  await page.keyboard.press('Enter')
+
+  const picker = page.locator('#webhid-shadow-host')
+  const emptyStatus = picker.getByRole('status')
+  if ((await emptyStatus.count()) > 0) {
+    const message = (await emptyStatus.first().innerText()).trim()
+    await picker.locator('#webhidCancelBtn').click()
+    await page.evaluate(() => window.tests!.helper!.requestDeviceResult!())
+    throw new Error(
+      `grantDevicePermission: picker has no selectable devices: ${message || '(empty status)'}`
+    )
+  }
+
+  const mockDevice = picker.getByRole('option', { name: mockDeviceName })
+  const mockDeviceCount = await mockDevice.count()
+  if (mockDeviceCount !== 1) {
+    const deviceNames = await picker.locator('.webhid-device-name').allTextContents()
+    await picker.locator('#webhidCancelBtn').click()
+    await page.evaluate(() => window.tests!.helper!.requestDeviceResult!())
+    throw new Error(
+      `grantDevicePermission: expected one mock device named "${mockDeviceName}", found ${mockDeviceCount}; ` +
+        `picker listed: ${deviceNames.join(', ') || '(none)'}`
+    )
+  }
+
+  await mockDevice.click()
+  await picker.locator('#webhidConnectBtn').evaluate((button: HTMLButtonElement) => button.click())
 
   const count = await page.evaluate(() => window.tests!.helper!.requestDeviceResult!())
   if (count === 0) {

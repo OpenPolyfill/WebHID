@@ -1,5 +1,5 @@
 import { expect, test } from '../../helpers/e2e.js'
-import { grantDevicePermission } from '../../helpers/e2e-devices.js'
+import { grantDevicePermission, mockDeviceName } from '../../helpers/e2e-devices.js'
 import type { DeviceFilter } from '../../helpers/e2e-types.js'
 import { armInputReport } from '../../helpers/e2e-reports.js'
 import {
@@ -69,7 +69,7 @@ async function cancelDevicePermission(page: Page, filters: DeviceFilter[]): Prom
     { timeout: 15000 }
   )
   const requestResult = page.evaluate(() => window.tests!.helper!.requestDeviceResult!())
-  await page.keyboard.press('Escape')
+  await page.locator('#webhid-shadow-host').locator('#webhidCancelBtn').click()
   return requestResult
 }
 
@@ -108,11 +108,11 @@ function waitForMockEvent(device: WebhidMockProcess, eventName: string): Promise
 
 test.describe.serial('Chromium internal WebHID tests on Firefox addon', () => {
   test.beforeAll(async () => {
-    mock = startWebhidMock('chromium-internal.bin', deviceVendorId, deviceProductId)
+    mock = startWebhidMock('chromium-internal.bin', deviceVendorId, deviceProductId, mockDeviceName)
     await mock.ready
   })
 
-  test.afterAll(async () => {
+  test.afterAll(() => {
     if (mock) stopWebhidMock(mock)
     mock = null
   })
@@ -164,6 +164,11 @@ test.describe.serial('Chromium internal WebHID tests on Firefox addon', () => {
     )
     expect(errors).toEqual(new Array(8).fill('TypeError'))
 
+    await expect(
+      grantDevicePermission(sharedPage, [
+        { vendorId: deviceVendorId, productId: deviceProductId + 1 }
+      ])
+    ).rejects.toThrow('picker has no selectable devices')
     expect(await cancelDevicePermission(sharedPage, [deviceFilter])).toBe(0)
     expect(await sharedPage.evaluate(async () => (await navigator.hid.getDevices()).length)).toBe(0)
   })
@@ -397,7 +402,12 @@ test.describe.serial('Chromium internal WebHID tests on Firefox addon', () => {
       }
       navigator.hid.addEventListener('connect', onConnect)
     }, deviceFilter)
-    const replacement = startWebhidMock('chromium-internal.bin', deviceVendorId, deviceProductId)
+    const replacement = startWebhidMock(
+      'chromium-internal.bin',
+      deviceVendorId,
+      deviceProductId,
+      mockDeviceName
+    )
     mock = replacement
     await replacement.ready
     await sharedPage.waitForFunction(() => window.tests!.results!.connect === true, undefined, {

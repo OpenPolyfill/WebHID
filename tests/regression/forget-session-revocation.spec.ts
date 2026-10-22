@@ -1,5 +1,5 @@
 import { test, expect } from '../helpers/e2e.js'
-import { grantDevicePermission } from '../helpers/e2e-devices.js'
+import { grantDevicePermission, mockDeviceName } from '../helpers/e2e-devices.js'
 import { startWebhidMock, stopWebhidMock } from '../helpers/e2e-process.js'
 import { VENDOR, VENDOR_CTX } from '../helpers/e2e-reports.js'
 
@@ -13,7 +13,7 @@ test('forget revokes every device in a grant group across same-origin documents'
     'vendor.bin',
     VENDOR.vendorId,
     VENDOR.productId + 1,
-    'webhid-mock 16c0:0001'
+    mockDeviceName
   )
   const siblingPage = await sharedPage.context().newPage()
   try {

@@ -1,5 +1,5 @@
 import { test, expect } from '../../helpers/e2e.js'
-import { grantDevicePermission } from '../../helpers/e2e-devices.js'
+import { DEVICES, grantDevicePermission } from '../../helpers/e2e-devices.js'
 import type { DeviceFilter } from '../../helpers/e2e-types.js'
 import {
   armInputReport,
@@ -860,7 +860,12 @@ test.describe.serial('WebHID conformance', () => {
         }
         navigator.hid.addEventListener('connect', onConnect)
       }, VENDOR)
-      const replacement = startWebhidMock('vendor.bin', vendorDevice.vid, vendorDevice.pid)
+      const replacement = startWebhidMock(
+        'vendor.bin',
+        vendorDevice.vid,
+        vendorDevice.pid,
+        DEVICES.vendor.name
+      )
       await replacement.ready
       vendorDevice.process = replacement.process
       vendorDevice.ready = replacement.ready

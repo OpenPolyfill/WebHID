@@ -69,7 +69,7 @@ function deviceFixture(
   return {
     [`${key}Device`]: [
       async ({}, use) => {
-        const m = startWebhidMock(def.descriptor, def.vid, def.pid)
+        const m = startWebhidMock(def.descriptor, def.vid, def.pid, def.name)
         await m.ready
         const live: MockDeviceFixture = {
           process: m.process,
