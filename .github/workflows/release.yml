@@ -458,7 +458,11 @@ jobs:
                   continue
               if in_ver and in_sec and ln.strip():
                   out.append(ln)
-          print('\n'.join(out).strip())
+          notes = '\n'.join(out).strip()
+          if len(notes) > 3000:
+              suffix = '\n\nContinue reading on GitHub: https://github.com/OpenPolyfill/WebHID/releases/tag/${{ github.event.inputs.tag || github.ref_name }}'
+              notes = notes[:3000 - len(suffix)].rsplit('\n', 1)[0].rstrip() + suffix
+          print(notes)
           EOF
           cat notes.md
 
