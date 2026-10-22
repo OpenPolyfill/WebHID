@@ -1,4 +1,5 @@
 import { test, expect } from '../../helpers/browser.js'
+import { getFirefoxBackgroundPage } from '../../helpers/harness.js'
 import type { Page } from '@playwright/test'
 
 const WORKER_SETTING = 'settings :: workerPolyfillEnabled'
@@ -22,64 +23,15 @@ interface WptWindow extends Window {
       status: { status: number; message: string | null }
     ) => void
   ) => void
-  __webhidWptResult?: WptRunResult
 }
-
-let previousWorkerSetting: { exists: boolean; value: boolean | undefined } | undefined
-
-test.beforeAll(async ({ backgroundPage, sharedPage }) => {
-  previousWorkerSetting = await backgroundPage.evaluate(async (key) => {
-    const values = (await browser.storage.local.get(key)) as Record<string, boolean | undefined>
-    return {
-      exists: Object.prototype.hasOwnProperty.call(values, key),
-      value: values[key]
-    }
-  }, WORKER_SETTING)
-  await backgroundPage.evaluate((key) => browser.storage.local.set({ [key]: true }), WORKER_SETTING)
-  await sharedPage.context().addInitScript(() => {
-    if (window !== window.top) return
-    const currentWindow = window as WptWindow
-    const installCompletionCallback = () => {
-      if (typeof currentWindow.add_completion_callback === 'function') {
-        currentWindow.add_completion_callback((tests, status) => {
-          currentWindow.__webhidWptResult = {
-            harnessStatus: status.status,
-            harnessMessage: status.message,
-            tests: tests.map((result) => ({
-              name: result.name,
-              status: result.status,
-              message: result.message
-            }))
-          }
-        })
-        return
-      }
-      window.setTimeout(installCompletionCallback, 0)
-    }
-    installCompletionCallback()
-  })
-})
-
-test.afterAll(async ({ backgroundPage }) => {
-  if (!previousWorkerSetting) return
-  await backgroundPage.evaluate(
-    ({ key, previous }) =>
-      previous.exists
-        ? browser.storage.local.set({ [key]: previous.value })
-        : browser.storage.local.remove(key),
-    { key: WORKER_SETTING, previous: previousWorkerSetting }
-  )
-})
 
 async function runWptPage(page: Page, url: string): Promise<void> {
   await page.goto(url, { waitUntil: 'load', timeout: 30000 })
-  await page.waitForFunction(
-    () => (window as WptWindow).__webhidWptResult !== undefined,
-    null,
-    { timeout: 90000 }
-  )
+  await page.waitForFunction(() => window.tests?.results.wpt !== undefined, null, {
+    timeout: 90000
+  })
 
-  const result = await page.evaluate(() => (window as WptWindow).__webhidWptResult!)
+  const result = await page.evaluate(() => window.tests!.results.wpt as WptRunResult)
   expect(result.tests.length, 'WPT page should report at least one test').toBeGreaterThan(0)
   expect(result.harnessStatus, result.harnessMessage ?? 'WPT harness failed').toBe(0)
   expect(
@@ -103,22 +55,69 @@ const wptCases = [
   }
 ] as const
 
-test('WPT WebHID Permissions Policy cases', async ({ sharedPage, wptUrl }) => {
-  const context = sharedPage.context()
-  const results = await Promise.allSettled(
-    wptCases.map(({ name, path }) =>
-      test.step(name, async () => {
-        const page = await context.newPage()
-        try {
-          await runWptPage(page, wptUrl(path))
-        } finally {
-          await page.close()
-        }
-      })
+test('WPT WebHID Permissions Policy cases', async ({ extension, page, wptUrl }) => {
+  const backgroundPage = getFirefoxBackgroundPage(extension)
+  const previousWorkerSetting = await backgroundPage.evaluate(async (key) => {
+    const values = (await browser.storage.local.get(key)) as Record<string, boolean | undefined>
+    return {
+      exists: Object.prototype.hasOwnProperty.call(values, key),
+      value: values[key]
+    }
+  }, WORKER_SETTING)
+
+  try {
+    await backgroundPage.evaluate(
+      (key) => browser.storage.local.set({ [key]: true }),
+      WORKER_SETTING
     )
-  )
-  const failures = results.flatMap((result, index) =>
-    result.status === 'rejected' ? [`${wptCases[index].name}: ${String(result.reason)}`] : []
-  )
-  expect(failures).toEqual([])
+    await page.context().addInitScript(() => {
+      if (window !== window.top) return
+      const currentWindow = window as WptWindow
+      currentWindow.tests = currentWindow.tests || { helper: {}, results: {} }
+      const installCompletionCallback = () => {
+        if (typeof currentWindow.add_completion_callback === 'function') {
+          currentWindow.add_completion_callback((tests, status) => {
+            currentWindow.tests!.results.wpt = {
+              harnessStatus: status.status,
+              harnessMessage: status.message,
+              tests: tests.map((result) => ({
+                name: result.name,
+                status: result.status,
+                message: result.message
+              }))
+            }
+          })
+          return
+        }
+        window.setTimeout(installCompletionCallback, 0)
+      }
+      installCompletionCallback()
+    })
+
+    const context = page.context()
+    const results = await Promise.allSettled(
+      wptCases.map(({ name, path }) =>
+        test.step(name, async () => {
+          const page = await context.newPage()
+          try {
+            await runWptPage(page, wptUrl(path))
+          } finally {
+            await page.close()
+          }
+        })
+      )
+    )
+    const failures = results.flatMap((result, index) =>
+      result.status === 'rejected' ? [`${wptCases[index].name}: ${String(result.reason)}`] : []
+    )
+    expect(failures).toEqual([])
+  } finally {
+    await backgroundPage.evaluate(
+      ({ key, previous }) =>
+        previous.exists
+          ? browser.storage.local.set({ [key]: previous.value })
+          : browser.storage.local.remove(key),
+      { key: WORKER_SETTING, previous: previousWorkerSetting }
+    )
+  }
 })

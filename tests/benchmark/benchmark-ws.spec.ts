@@ -2,15 +2,15 @@ import { test, expect } from '../helpers/e2e.js'
 import { benchmarkMode, printResults, skipOnFallback } from './benchmark-utils.js'
 
 test('image pipeline benchmark ws', async ({
-  harnessCtx,
-  backgroundPage,
+  page,
+  extension,
   vendorDevice,
   httpPort,
   daemonMode,
-  rdpPort
+  rdp
 }) => {
   const result = await benchmarkMode(
-    { harnessCtx, backgroundPage, vendorDevice, httpPort, daemonMode, rdpPort },
+    { page, extension, vendorDevice, httpPort, daemonMode, rdp },
     'ws'
   )
   expect(result.runs.length).toBeGreaterThan(0)

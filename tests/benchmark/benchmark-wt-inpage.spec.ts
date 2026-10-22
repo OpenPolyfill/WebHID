@@ -2,15 +2,15 @@ import { test, expect } from '../helpers/e2e.js'
 import { benchmarkMode, printResults } from './benchmark-utils.js'
 
 test('image pipeline benchmark wt in-page (useWorker off)', async ({
-  harnessCtx,
-  backgroundPage,
+  page,
+  extension,
   vendorDevice,
   httpPort,
   daemonMode,
-  rdpPort
+  rdp
 }) => {
   const result = await benchmarkMode(
-    { harnessCtx, backgroundPage, vendorDevice, httpPort, daemonMode, rdpPort },
+    { page, extension, vendorDevice, httpPort, daemonMode, rdp },
     'wt',
     { inPage: true }
   )

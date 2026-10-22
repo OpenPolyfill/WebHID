@@ -1,17 +1,36 @@
 import { test, expect } from '../helpers/e2e.js'
 import { grantDevicePermission, mockIdFor } from '../helpers/e2e-devices.js'
 import { sendInput } from '../helpers/e2e-process.js'
+import { getFirefoxBackgroundPage } from '../helpers/harness.js'
 
 const VENDOR = mockIdFor('vendor')
 const PACKET = [0x10, 0x20, 0x30, 0x40, 0x50].concat(new Array(59).fill(0))
+interface NativeMessagingApi {
+  openDevice: (deviceId: number) => Promise<object>
+  closeDevice: (deviceId: number, token: string) => Promise<object>
+}
+
+interface BackgroundTestState {
+  helper: {
+    originalOpenDevice?: NativeMessagingApi['openDevice']
+    originalCloseDevice?: NativeMessagingApi['closeDevice']
+    releaseOpen?: () => void
+  }
+  results: { openEntered?: boolean }
+}
+
+interface BackgroundWebhid {
+  import(name: string): NativeMessagingApi
+}
 
 test.describe.serial('Exact frame endpoint fanout', () => {
   test('background fanout survives one frame teardown', async ({
-    sharedPage,
-    backgroundPage,
+    page,
+    extension,
     vendorDevice
   }) => {
-    const origin = new URL(sharedPage.url()).origin
+    const backgroundPage = getFirefoxBackgroundPage(extension)
+    const origin = new URL(page.url()).origin
     const settingKeys = [
       `settings :: ${origin} :: dataPlane`,
       `settings :: ${origin} :: workerPolyfillEnabled`
@@ -26,21 +45,21 @@ test.describe.serial('Exact frame endpoint fanout', () => {
       settingKeys
     )
     try {
-      await sharedPage.goto(`${origin}/tests/test-page.html`, { waitUntil: 'domcontentloaded' })
-      await sharedPage.waitForFunction(() => typeof navigator.hid !== 'undefined', {
+      await page.goto(`${origin}/tests/test-page.html`, { waitUntil: 'domcontentloaded' })
+      await page.waitForFunction(() => typeof navigator.hid !== 'undefined', {
         timeout: 15000
       })
-      expect(await grantDevicePermission(sharedPage, [VENDOR])).toBe(1)
-      await sharedPage.goto(`${origin}/tests/pages/input-report-fanout.html`, {
+      expect(await grantDevicePermission(page, [VENDOR])).toBe(1)
+      await page.goto(`${origin}/tests/pages/input-report-fanout.html`, {
         waitUntil: 'domcontentloaded'
       })
-      await sharedPage.evaluate(() => {
+      await page.evaluate(() => {
         window.postMessage(
           { type: 'startFanout', iframeCount: 1, includeWorker: false },
           location.origin
         )
       })
-      await sharedPage.waitForFunction(
+      await page.waitForFunction(
         () => {
           const results = window.tests?.results
           const error = results?.fanoutError
@@ -50,7 +69,7 @@ test.describe.serial('Exact frame endpoint fanout', () => {
         { timeout: 15000 }
       )
       sendInput(vendorDevice, 1, PACKET)
-      await sharedPage.waitForFunction(
+      await page.waitForFunction(
         () => {
           const testResults = window.tests!.results as unknown as {
             fanoutCounts?: Record<string, number>
@@ -60,7 +79,7 @@ test.describe.serial('Exact frame endpoint fanout', () => {
         },
         { timeout: 15000 }
       )
-      await sharedPage.evaluate(() => document.querySelector('iframe')?.remove())
+      await page.evaluate(() => document.querySelector('iframe')?.remove())
       await expect
         .poll(
           () =>
@@ -77,7 +96,7 @@ test.describe.serial('Exact frame endpoint fanout', () => {
         )
         .toBe(1)
       sendInput(vendorDevice, 1, PACKET)
-      await sharedPage.waitForFunction(
+      await page.waitForFunction(
         () => {
           const testResults = window.tests!.results as unknown as {
             fanoutCounts?: Record<string, number>
@@ -86,23 +105,20 @@ test.describe.serial('Exact frame endpoint fanout', () => {
         },
         { timeout: 15000 }
       )
-      await expect(sharedPage.evaluate(() => window.tests?.results?.fanoutCounts)).resolves.toEqual(
-        {
-          page: 2,
-          'iframe-0': 1
-        }
-      )
+      await expect(page.evaluate(() => window.tests?.results?.fanoutCounts)).resolves.toEqual({
+        page: 2,
+        'iframe-0': 1
+      })
     } finally {
-      await sharedPage.evaluate(async () => {
+      await page.evaluate(async () => {
         for (const device of await navigator.hid.getDevices()) {
           if (device.opened) await device.close()
           await device.forget()
         }
       })
-      await sharedPage.waitForFunction(
-        async () => (await navigator.hid.getDevices()).length === 0,
-        { timeout: 15000 }
-      )
+      await page.waitForFunction(async () => (await navigator.hid.getDevices()).length === 0, {
+        timeout: 15000
+      })
       await backgroundPage.evaluate(
         ({ keys, values }) => {
           const missing = keys.filter((key) => !(key in values))
@@ -110,16 +126,17 @@ test.describe.serial('Exact frame endpoint fanout', () => {
         },
         { keys: settingKeys, values: previous }
       )
-      await sharedPage.goto(`${origin}/tests/test-page.html`, { waitUntil: 'domcontentloaded' })
+      await page.goto(`${origin}/tests/test-page.html`, { waitUntil: 'domcontentloaded' })
     }
   })
 
   test('pending open cannot publish after top document replacement', async ({
-    sharedPage,
-    backgroundPage,
+    page,
+    extension,
     vendorDevice
   }) => {
-    const origin = new URL(sharedPage.url()).origin
+    const backgroundPage = getFirefoxBackgroundPage(extension)
+    const origin = new URL(page.url()).origin
     const settingKey = `settings :: ${origin} :: dataPlane`
     await vendorDevice.ready
     const previous = await backgroundPage.evaluate(
@@ -131,40 +148,33 @@ test.describe.serial('Exact frame endpoint fanout', () => {
       settingKey
     )
     try {
-      await sharedPage.goto(`${origin}/tests/test-page.html`, { waitUntil: 'domcontentloaded' })
-      await sharedPage.waitForFunction(() => typeof navigator.hid !== 'undefined', {
+      await page.goto(`${origin}/tests/test-page.html`, { waitUntil: 'domcontentloaded' })
+      await page.waitForFunction(() => typeof navigator.hid !== 'undefined', {
         timeout: 15000
       })
-      await grantDevicePermission(sharedPage, [VENDOR])
+      await grantDevicePermission(page, [VENDOR])
       await backgroundPage.evaluate(() => {
         const state = globalThis as unknown as {
-          webhid: {
-            import(name: string): {
-              openDevice: (deviceId: number) => Promise<object>
-              closeDevice: (deviceId: number, token: string) => Promise<object>
-            }
-          }
-          __originalOpenDevice?: (deviceId: number) => Promise<object>
-          __originalCloseDevice?: (deviceId: number, token: string) => Promise<object>
-          __openEntered?: boolean
-          __releaseOpen?: () => void
+          webhid: BackgroundWebhid
+          tests: BackgroundTestState
         }
+        state.tests = state.tests || { helper: {}, results: {} }
+        const { helper, results } = state.tests
         const nm = state.webhid.import('NativeMessaging')
-        state.__originalOpenDevice = nm.openDevice.bind(nm)
-        state.__originalCloseDevice = nm.closeDevice.bind(nm)
-        state.__openEntered = false
+        helper.originalOpenDevice = nm.openDevice.bind(nm)
+        helper.originalCloseDevice = nm.closeDevice.bind(nm)
+        results.openEntered = false
         nm.openDevice = async (deviceId: number) => {
-          state.__openEntered = true
-          await new Promise<void>((resolve) => {
-            state.__releaseOpen = resolve
-          })
+          results.openEntered = true
+          const { promise, resolve } = Promise.withResolvers<void>()
+          helper.releaseOpen = () => resolve()
+          await promise
           return { s: 200, i: deviceId, t: 'stale-open' }
         }
         nm.closeDevice = () => Promise.resolve({ s: 204 })
       })
-      await sharedPage.evaluate(() => {
-        const state = window as unknown as { pendingOpen?: Promise<unknown> }
-        state.pendingOpen = (async () => {
+      await page.evaluate(() => {
+        window.tests!.results.pendingOpen = (async () => {
           const devices = await navigator.hid.getDevices()
           if (!devices[0]) throw new Error('paired device missing')
           try {
@@ -176,17 +186,19 @@ test.describe.serial('Exact frame endpoint fanout', () => {
       })
       await expect
         .poll(() =>
-          backgroundPage.evaluate(
-            () => (globalThis as unknown as { __openEntered?: boolean }).__openEntered === true
-          )
+          backgroundPage.evaluate(() => {
+            const testState = globalThis.tests as unknown as BackgroundTestState
+            return testState.results.openEntered === true
+          })
         )
         .toBe(true)
-      await sharedPage.goto(`${origin}/tests/test-page.html`, { waitUntil: 'domcontentloaded' })
-      await sharedPage.waitForFunction(() => typeof navigator.hid !== 'undefined', {
+      await page.goto(`${origin}/tests/test-page.html`, { waitUntil: 'domcontentloaded' })
+      await page.waitForFunction(() => typeof navigator.hid !== 'undefined', {
         timeout: 15000
       })
       await backgroundPage.evaluate(() => {
-        ;(globalThis as unknown as { __releaseOpen?: () => void }).__releaseOpen?.()
+        const testState = globalThis.tests as unknown as BackgroundTestState
+        testState.helper.releaseOpen?.()
       })
       await expect
         .poll(
@@ -206,18 +218,16 @@ test.describe.serial('Exact frame endpoint fanout', () => {
     } finally {
       await backgroundPage.evaluate(() => {
         const state = globalThis as unknown as {
-          webhid: {
-            import(name: string): {
-              openDevice: (deviceId: number) => Promise<object>
-              closeDevice: (deviceId: number, token: string) => Promise<object>
-            }
-          }
-          __originalOpenDevice?: (deviceId: number) => Promise<object>
-          __originalCloseDevice?: (deviceId: number, token: string) => Promise<object>
+          webhid: BackgroundWebhid
+          tests: BackgroundTestState
         }
         const nm = state.webhid.import('NativeMessaging')
-        if (state.__originalOpenDevice) nm.openDevice = state.__originalOpenDevice
-        if (state.__originalCloseDevice) nm.closeDevice = state.__originalCloseDevice
+        if (state.tests.helper.originalOpenDevice) {
+          nm.openDevice = state.tests.helper.originalOpenDevice
+        }
+        if (state.tests.helper.originalCloseDevice) {
+          nm.closeDevice = state.tests.helper.originalCloseDevice
+        }
       })
       await backgroundPage.evaluate(
         ({ key, values }) =>

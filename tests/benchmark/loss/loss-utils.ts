@@ -1,6 +1,9 @@
 import { configureDaemonMode } from '../../helpers/e2e.js'
+import { getFirefoxBackgroundPage } from '../../helpers/harness.js'
 import { sleep } from '../../helpers/test-utils.js'
 import type { Page } from '@playwright/test'
+import type { FirefoxExtension } from '@openpolyfill/firefox-addon-playwright-harness'
+import type { FirefoxRDP } from '@openpolyfill/firefox-rdp'
 import { sendInput, type WebhidMockProcess } from '../../helpers/e2e-process.js'
 import { grantDevicePermission, mockIdFor } from '../../helpers/e2e-devices.js'
 import type { DeviceFilter } from '../../helpers/e2e-types.js'
@@ -37,13 +40,12 @@ export const LOSS_COUNT = envInt('BENCHMARK_LOSS_COUNT', 6000)
 
 /** Console messages that mean the data plane silently degraded to NM. */
 export interface LossFixtures {
-  harnessCtx: { newPage(): Promise<Page> }
-  backgroundPage: { evaluate: Page['evaluate'] }
+  page: Page
+  extension: FirefoxExtension
   vendorDevice: { process: WebhidMockProcess['process']; ready: Promise<void> }
   httpPort: number
   daemonMode: string
-  /** Harness RDP port; required when BENCHMARK_PROFILE_DIR is set. */
-  rdpPort?: number
+  rdp: FirefoxRDP
 }
 
 export interface LossRun {
@@ -75,7 +77,7 @@ async function runLossOnce(
   startSeq: number
 ): Promise<LossRun> {
   await page.evaluate((s: number) => {
-    const st = window.tests!.results!.lossState as LossPageState
+    const st = window.tests!.results.lossState as LossPageState
     st.phaseStart = s
     st.last = s - 1
     st.phaseCount = 0
@@ -104,7 +106,7 @@ async function runLossOnce(
   while (Date.now() < deadline) {
     await sleep(500)
     const c = await page.evaluate(
-      () => (window.tests!.results!.lossState as LossPageState).phaseCount
+      () => (window.tests!.results.lossState as LossPageState).phaseCount
     )
     if (c === stable) stableRounds++
     else stableRounds = 0
@@ -112,7 +114,7 @@ async function runLossOnce(
     if (stableRounds >= 2) break
   }
   const st = await page.evaluate(() => {
-    const s = window.tests!.results!.lossState as LossPageState
+    const s = window.tests!.results.lossState as LossPageState
     return {
       received: s.phaseCount,
       gaps: s.phaseGaps,
@@ -157,13 +159,13 @@ export async function benchmarkLoss(
   mode: 'ws' | 'wt' | 'nm',
   opts: { inPage?: boolean } = {}
 ): Promise<LossResult> {
-  const { harnessCtx, backgroundPage, httpPort, daemonMode, rdpPort } = fixtures
-  const page = await harnessCtx.newPage()
+  const { page, extension, httpPort, daemonMode, rdp } = fixtures
+  const backgroundPage = getFirefoxBackgroundPage(extension)
   const watch = watchConsole(page)
   const profileDir = process.env.BENCHMARK_PROFILE_DIR
   let profiler: ProfilerCapture | null = null
-  if (profileDir && rdpPort) {
-    profiler = await ProfilerCapture.connect(rdpPort)
+  if (profileDir) {
+    profiler = await ProfilerCapture.create(rdp)
     await profiler.startProfiler()
   }
   const origin = `http://localhost:${httpPort}`
@@ -289,9 +291,7 @@ export async function benchmarkLoss(
       } catch (e) {
         console.warn(`[profiler] capture failed: ${e instanceof Error ? e.message : String(e)}`)
       }
-      profiler.disconnect()
     }
-    if (!page.isClosed()) page.close().catch(() => {})
   }
 }
 

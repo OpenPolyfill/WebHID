@@ -1,40 +1,24 @@
 import { test as base, expect, type Page } from '@playwright/test'
-import type {
-  PlaywrightTestArgs,
-  PlaywrightTestOptions,
-  PlaywrightWorkerArgs,
-  PlaywrightWorkerOptions
-} from '@playwright/test'
 import { startPolicyServer, startWptServer } from '../serve.js'
-import type { Server } from 'http'
-import {
-  backgroundPageFixture,
-  baseSharedPage,
-  harnessCtxBody,
-  pageFixture,
-  rdpPortFixture,
-  type FirefoxBgPage,
-  type HarnessContext
-} from './harness.js'
+import type { Server } from 'node:http'
+import { createHarnessFixtures, defaultRouteHandler, getFirefoxBackgroundPage } from './harness.js'
 
 type Servers = { main: { port: number; server: Server }; cross: { port: number; server: Server } }
 type WptServer = { port: number; server: Server }
 
-export const test = base.extend<
-  PlaywrightTestArgs & PlaywrightTestOptions & { workerHidPage: Page },
-  PlaywrightWorkerArgs &
-    PlaywrightWorkerOptions & {
-      servers: Servers
-      pageUrl: (path: string) => string
-      crossUrl: (path: string) => string
-      wptServer: WptServer
-      wptUrl: (path: string) => string
-      harnessCtx: HarnessContext
-      rdpPort: number
-      backgroundPage: FirefoxBgPage
-      sharedPage: Page
-    }
->({
+interface BrowserTestFixtures {
+  workerHidPage: Page
+}
+
+interface BrowserWorkerFixtures {
+  servers: Servers
+  pageUrl: (path: string) => string
+  crossUrl: (path: string) => string
+  wptServer: WptServer
+  wptUrl: (path: string) => string
+}
+
+export const test = createHarnessFixtures(base).extend<BrowserTestFixtures, BrowserWorkerFixtures>({
   servers: [
     async ({}, use) => {
       const main = await startPolicyServer()
@@ -53,32 +37,23 @@ export const test = base.extend<
     },
     { scope: 'worker' }
   ],
-
   wptUrl: [
     async ({ wptServer }, use) => {
       await use((path: string) => `http://localhost:${wptServer.port}${path}`)
     },
     { scope: 'worker' }
   ],
-
-  rdpPort: rdpPortFixture(),
-
-  harnessCtx: [
-    async ({ headless }, use) => {
-      await harnessCtxBody({ headless }, use, { catchAllRoute: true })
-    },
-    { scope: 'worker' }
-  ],
-
-  backgroundPage: backgroundPageFixture(),
-
-  sharedPage: [
-    async ({ harnessCtx }, use) => {
-      await use(await baseSharedPage(harnessCtx))
-    },
-    { scope: 'worker' }
-  ],
-  workerHidPage: async ({ backgroundPage, sharedPage, pageUrl }, use) => {
+  page: async ({ page, context, pageUrl }, use) => {
+    await context.route('**/*', defaultRouteHandler)
+    await page.goto(pageUrl('/policy-check'), {
+      waitUntil: 'domcontentloaded',
+      timeout: 15000
+    })
+    await page.waitForFunction(() => typeof navigator.hid !== 'undefined', { timeout: 15000 })
+    await use(page)
+  },
+  workerHidPage: async ({ extension, page, pageUrl }, use) => {
+    const backgroundPage = getFirefoxBackgroundPage(extension)
     const key = `settings :: ${new URL(pageUrl('')).origin} :: workerPolyfillEnabled`
     const previous = await backgroundPage.evaluate(async (settingKey) => {
       const values = (await browser.storage.local.get(settingKey)) as Record<string, unknown>
@@ -92,11 +67,11 @@ export const test = base.extend<
         (settingKey) => browser.storage.local.set({ [settingKey]: true }),
         key
       )
-      await sharedPage.goto(pageUrl('/policy-check'), {
+      await page.goto(pageUrl('/policy-check'), {
         waitUntil: 'domcontentloaded',
         timeout: 15000
       })
-      await use(sharedPage)
+      await use(page)
     } finally {
       await backgroundPage.evaluate(
         ({ settingKey, previous }) => {
@@ -107,16 +82,12 @@ export const test = base.extend<
       )
     }
   },
-
-  page: pageFixture(),
-
   pageUrl: [
     async ({ servers }, use) => {
       await use((path: string) => `http://localhost:${servers.main.port}${path}`)
     },
     { scope: 'worker' }
   ],
-
   crossUrl: [
     async ({ servers }, use) => {
       await use((path: string) => `http://localhost:${servers.cross.port}${path}`)

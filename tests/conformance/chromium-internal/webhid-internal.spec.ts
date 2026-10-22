@@ -1,4 +1,4 @@
-import { expect, test } from '../../helpers/e2e.js'
+import { expect, workerBase as base, withSharedPage } from '../../helpers/e2e.js'
 import { grantDevicePermission, mockDeviceName } from '../../helpers/e2e-devices.js'
 import type { DeviceFilter } from '../../helpers/e2e-types.js'
 import { armInputReport } from '../../helpers/e2e-reports.js'
@@ -10,6 +10,8 @@ import {
   type WebhidMockProcess
 } from '../../helpers/e2e-process.js'
 import type { Page } from '@playwright/test'
+const test = withSharedPage(base)
+test.describe.configure({ mode: 'serial' })
 
 const deviceVendorId = 0x16c0
 const deviceProductId = 1
@@ -24,7 +26,7 @@ let mock: WebhidMockProcess | null = null
 
 async function cancelDevicePermission(page: Page, filters: DeviceFilter[]): Promise<number> {
   await page.evaluate(() => {
-    window.tests!.results!.pickerStarted = new Promise<void>((resolve) => {
+    window.tests!.results.pickerStarted = new Promise<void>((resolve) => {
       const check = () => {
         if (document.querySelector('#webhid-shadow-host')?.getAttribute('aria-busy') !== 'true') {
           return false
@@ -44,13 +46,13 @@ async function cancelDevicePermission(page: Page, filters: DeviceFilter[]): Prom
     })
   })
   await page.evaluate((requestedFilters) => {
-    window.tests!.helper!.requestDevice!(requestedFilters)
+    window.tests!.helper.requestDevice!(requestedFilters)
   }, filters)
   await page.locator('#request-device-btn').click()
 
   const pickerState = await page.evaluate(() => {
-    const started = window.tests!.results!.pickerStarted as Promise<void>
-    const request = window.tests!.helper!.requestDeviceResult!()
+    const started = window.tests!.results.pickerStarted as Promise<void>
+    const request = window.tests!.helper.requestDeviceResult!()
     return Promise.race([
       started.then(() => 'opened' as const),
       request.then(
@@ -68,7 +70,7 @@ async function cancelDevicePermission(page: Page, filters: DeviceFilter[]): Prom
     undefined,
     { timeout: 15000 }
   )
-  const requestResult = page.evaluate(() => window.tests!.helper!.requestDeviceResult!())
+  const requestResult = page.evaluate(() => window.tests!.helper.requestDeviceResult!())
   await page.locator('#webhid-shadow-host').locator('#webhidCancelBtn').click()
   return requestResult
 }
@@ -106,7 +108,7 @@ function waitForMockEvent(device: WebhidMockProcess, eventName: string): Promise
   })
 }
 
-test.describe.serial('Chromium internal WebHID tests on Firefox addon', () => {
+test.describe('Chromium internal WebHID tests on Firefox addon', () => {
   test.beforeAll(async () => {
     mock = startWebhidMock('chromium-internal.bin', deviceVendorId, deviceProductId, mockDeviceName)
     await mock.ready
@@ -118,9 +120,9 @@ test.describe.serial('Chromium internal WebHID tests on Firefox addon', () => {
   })
 
   test('requestDevice rejects malformed filters and cancellation returns no devices', async ({
-    sharedPage
+    page
   }) => {
-    await sharedPage.evaluate(() => {
+    await page.evaluate(() => {
       const button = document.createElement('button')
       button.id = 'request-device-validation'
       button.addEventListener('click', () => {
@@ -148,43 +150,41 @@ test.describe.serial('Chromium internal WebHID tests on Firefox addon', () => {
           }
         })
         void Promise.all(requests).then((errors) => {
-          window.tests!.results!.requestDeviceValidation = errors
+          window.tests!.results.requestDeviceValidation = errors
         })
       })
       document.body.append(button)
     })
-    await sharedPage.locator('#request-device-validation').click()
-    await sharedPage.waitForFunction(
-      () => Array.isArray(window.tests!.results!.requestDeviceValidation),
+    await page.locator('#request-device-validation').click()
+    await page.waitForFunction(
+      () => Array.isArray(window.tests!.results.requestDeviceValidation),
       undefined,
       { timeout: 10000 }
     )
-    const errors = await sharedPage.evaluate(
-      () => window.tests!.results!.requestDeviceValidation as string[]
+    const errors = await page.evaluate(
+      () => window.tests!.results.requestDeviceValidation as string[]
     )
     expect(errors).toEqual(new Array(8).fill('TypeError'))
 
     await expect(
-      grantDevicePermission(sharedPage, [
-        { vendorId: deviceVendorId, productId: deviceProductId + 1 }
-      ])
+      grantDevicePermission(page, [{ vendorId: deviceVendorId, productId: deviceProductId + 1 }])
     ).rejects.toThrow('picker has no selectable devices')
-    expect(await cancelDevicePermission(sharedPage, [deviceFilter])).toBe(0)
-    expect(await sharedPage.evaluate(async () => (await navigator.hid.getDevices()).length)).toBe(0)
+    expect(await cancelDevicePermission(page, [deviceFilter])).toBe(0)
+    expect(await page.evaluate(async () => (await navigator.hid.getDevices()).length)).toBe(0)
   })
 
   test('requestDevice exposes descriptor metadata and preserves device identity', async ({
-    sharedPage
+    page
   }) => {
-    expect(await sharedPage.evaluate(async () => (await navigator.hid.getDevices()).length)).toBe(0)
-    expect(await grantDevicePermission(sharedPage, [deviceFilter])).toBe(1)
+    expect(await page.evaluate(async () => (await navigator.hid.getDevices()).length)).toBe(0)
+    expect(await grantDevicePermission(page, [deviceFilter])).toBe(1)
 
-    const details = await sharedPage.evaluate(async (filter: DeviceFilter) => {
+    const details = await page.evaluate(async (filter: DeviceFilter) => {
       const device = (await navigator.hid.getDevices()).find(
         (entry) => entry.vendorId === filter.vendorId && entry.productId === filter.productId
       )
       if (!device) throw new Error('granted mock device is missing')
-      window.tests!.results!.firstDevice = device
+      window.tests!.results.firstDevice = device
       const collection = device.collections[0]
       const unitItem = collection.inputReports.find((report) => report.reportId === 2)?.items[0]
       const rangeItem = collection.inputReports.find((report) => report.reportId === 3)?.items[0]
@@ -226,10 +226,10 @@ test.describe.serial('Chromium internal WebHID tests on Firefox addon', () => {
       range: { isRange: true, usageMinimum: 0x00090001, usageMaximum: 0x00090008 }
     })
 
-    expect(await grantDevicePermission(sharedPage, [deviceFilter])).toBe(1)
-    const identity = await sharedPage.evaluate(async () => {
-      const original = window.tests!.results!.firstDevice as HIDDevice
-      const requestedDevices = window.tests!.results!.requestDeviceDevices as HIDDevice[]
+    expect(await grantDevicePermission(page, [deviceFilter])).toBe(1)
+    const identity = await page.evaluate(async () => {
+      const original = window.tests!.results.firstDevice as HIDDevice
+      const requestedDevices = window.tests!.results.requestDeviceDevices as HIDDevice[]
       const enumerated = (await navigator.hid.getDevices())[0]
       return {
         sameRequestObject: requestedDevices[0] === original,
@@ -239,8 +239,8 @@ test.describe.serial('Chromium internal WebHID tests on Firefox addon', () => {
     expect(identity).toEqual({ sameRequestObject: true, sameEnumerationObject: true })
   })
 
-  test('open and close follow connection state', async ({ sharedPage }) => {
-    const state = await sharedPage.evaluate(async (filter: DeviceFilter) => {
+  test('open and close follow connection state', async ({ page }) => {
+    const state = await page.evaluate(async (filter: DeviceFilter) => {
       const device = (await navigator.hid.getDevices()).find(
         (entry) => entry.vendorId === filter.vendorId && entry.productId === filter.productId
       )
@@ -269,11 +269,11 @@ test.describe.serial('Chromium internal WebHID tests on Firefox addon', () => {
     })
   })
 
-  test('input, output, and feature reports use declared report IDs', async ({ sharedPage }) => {
+  test('input, output, and feature reports use declared report IDs', async ({ page }) => {
     const deviceMock = mock
     if (!deviceMock) throw new Error('webhid-mock was not started')
 
-    await sharedPage.evaluate(async (filter: DeviceFilter) => {
+    await page.evaluate(async (filter: DeviceFilter) => {
       const device = (await navigator.hid.getDevices()).find(
         (entry) => entry.vendorId === filter.vendorId && entry.productId === filter.productId
       )
@@ -283,7 +283,7 @@ test.describe.serial('Chromium internal WebHID tests on Firefox addon', () => {
 
     const payload = [0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef]
     const outputPromise = waitForOutputReport(deviceMock)
-    await sharedPage.evaluate(
+    await page.evaluate(
       async ({ filter, data, reportId }) => {
         const device = (await navigator.hid.getDevices()).find(
           (entry) => entry.vendorId === filter.vendorId && entry.productId === filter.productId
@@ -296,7 +296,7 @@ test.describe.serial('Chromium internal WebHID tests on Firefox addon', () => {
     expect((await outputPromise).data).toEqual([outputReportId, ...payload])
 
     const featurePromise = waitForMockEvent(deviceMock, 'set_report')
-    await sharedPage.evaluate(
+    await page.evaluate(
       async ({ filter, data, reportId }) => {
         const device = (await navigator.hid.getDevices()).find(
           (entry) => entry.vendorId === filter.vendorId && entry.productId === filter.productId
@@ -308,14 +308,14 @@ test.describe.serial('Chromium internal WebHID tests on Firefox addon', () => {
     )
     expect((await featurePromise).event).toBe('set_report')
 
-    const receiveReport = await armInputReport(sharedPage, deviceFilter)
+    const receiveReport = await armInputReport(page, deviceFilter)
     sendInput(deviceMock, inputReportId, payload)
     const event = await receiveReport()
     expect(event.reportId).toBe(inputReportId)
     expect(event.data).toEqual(payload)
     expect(event.listenerData).toEqual(payload)
 
-    await sharedPage.evaluate(async (filter: DeviceFilter) => {
+    await page.evaluate(async (filter: DeviceFilter) => {
       const device = (await navigator.hid.getDevices()).find(
         (entry) => entry.vendorId === filter.vendorId && entry.productId === filter.productId
       )
@@ -323,8 +323,8 @@ test.describe.serial('Chromium internal WebHID tests on Firefox addon', () => {
     }, deviceFilter)
   })
 
-  test('forget revokes access and a new chooser grant restores it', async ({ sharedPage }) => {
-    const forgotten = await sharedPage.evaluate(async (filter: DeviceFilter) => {
+  test('forget revokes access and a new chooser grant restores it', async ({ page }) => {
+    const forgotten = await page.evaluate(async (filter: DeviceFilter) => {
       const device = (await navigator.hid.getDevices()).find(
         (entry) => entry.vendorId === filter.vendorId && entry.productId === filter.productId
       )
@@ -343,8 +343,8 @@ test.describe.serial('Chromium internal WebHID tests on Firefox addon', () => {
     }, deviceFilter)
     expect(forgotten).toEqual({ opened: false, remaining: 0, openError: 'InvalidStateError' })
 
-    expect(await grantDevicePermission(sharedPage, [deviceFilter])).toBe(1)
-    const reopened = await sharedPage.evaluate(async () => {
+    expect(await grantDevicePermission(page, [deviceFilter])).toBe(1)
+    const reopened = await page.evaluate(async () => {
       const device = (await navigator.hid.getDevices())[0]
       await device.open()
       const opened = device.opened
@@ -354,28 +354,26 @@ test.describe.serial('Chromium internal WebHID tests on Firefox addon', () => {
     expect(reopened).toBe(true)
   })
 
-  test('disconnect closes the device and reconnect preserves its permission', async ({
-    sharedPage
-  }) => {
+  test('disconnect closes the device and reconnect preserves its permission', async ({ page }) => {
     const currentMock = mock
     if (!currentMock) throw new Error('webhid-mock was not started')
 
-    await sharedPage.evaluate(async (filter: DeviceFilter) => {
+    await page.evaluate(async (filter: DeviceFilter) => {
       const device = (await navigator.hid.getDevices()).find(
         (entry) => entry.vendorId === filter.vendorId && entry.productId === filter.productId
       )
       if (!device) throw new Error('mock device is not paired')
-      window.tests!.results!.disconnect = null
+      window.tests!.results.disconnect = null
       const onDisconnect = (event: HIDConnectionEvent) => {
         if (event.device !== device) return
         navigator.hid.removeEventListener('disconnect', onDisconnect)
-        window.tests!.results!.disconnect = { closed: !device.opened }
+        window.tests!.results.disconnect = { closed: !device.opened }
       }
       navigator.hid.addEventListener('disconnect', onDisconnect)
       if (!device.opened) await device.open()
-      window.tests!.results!.disconnectReady = true
+      window.tests!.results.disconnectReady = true
     }, deviceFilter)
-    await sharedPage.waitForFunction(() => window.tests!.results!.disconnectReady === true)
+    await page.waitForFunction(() => window.tests!.results.disconnectReady === true)
 
     const mockExited = new Promise<number | null>((resolve) =>
       currentMock.process.once('exit', resolve)
@@ -383,13 +381,13 @@ test.describe.serial('Chromium internal WebHID tests on Firefox addon', () => {
     currentMock.process.stdin!.write('{"cmd":"destroy"}\n')
     expect(await mockExited).toBe(0)
     await expect
-      .poll(() => sharedPage.evaluate(() => window.tests!.results!.disconnect))
+      .poll(() => page.evaluate(() => window.tests!.results.disconnect))
       .toEqual({
         closed: true
       })
 
-    await sharedPage.evaluate((filter: DeviceFilter) => {
-      window.tests!.results!.connect = false
+    await page.evaluate((filter: DeviceFilter) => {
+      window.tests!.results.connect = false
       const onConnect = (event: HIDConnectionEvent) => {
         if (
           event.device.vendorId !== filter.vendorId ||
@@ -398,7 +396,7 @@ test.describe.serial('Chromium internal WebHID tests on Firefox addon', () => {
           return
         }
         navigator.hid.removeEventListener('connect', onConnect)
-        window.tests!.results!.connect = true
+        window.tests!.results.connect = true
       }
       navigator.hid.addEventListener('connect', onConnect)
     }, deviceFilter)
@@ -410,11 +408,11 @@ test.describe.serial('Chromium internal WebHID tests on Firefox addon', () => {
     )
     mock = replacement
     await replacement.ready
-    await sharedPage.waitForFunction(() => window.tests!.results!.connect === true, undefined, {
+    await page.waitForFunction(() => window.tests!.results.connect === true, undefined, {
       timeout: 15000
     })
 
-    const remainsPaired = await sharedPage.evaluate(
+    const remainsPaired = await page.evaluate(
       async (filter: DeviceFilter) =>
         (await navigator.hid.getDevices()).some(
           (entry) => entry.vendorId === filter.vendorId && entry.productId === filter.productId

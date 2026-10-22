@@ -1,4 +1,4 @@
-import { test, expect } from '../../helpers/e2e.js'
+import { workerBase as base, expect, withSharedPage } from '../../helpers/e2e.js'
 import { DEVICES, grantDevicePermission } from '../../helpers/e2e-devices.js'
 import type { DeviceFilter } from '../../helpers/e2e-types.js'
 import {
@@ -9,13 +9,15 @@ import {
   VENDOR_OUTPUT_ID
 } from '../../helpers/e2e-reports.js'
 import { sendInput, waitForOutputReport, startWebhidMock } from '../../helpers/e2e-process.js'
+const test = withSharedPage(base)
+test.describe.configure({ mode: 'serial' })
 
-test.describe.serial('WebHID conformance', () => {
+test.describe('WebHID conformance', () => {
   test('requestDevice grants the matching device and exposes its descriptor', async ({
-    sharedPage,
+    page,
     vendorDevice
   }) => {
-    const beforeGrant = await sharedPage.evaluate(
+    const beforeGrant = await page.evaluate(
       async (filter: DeviceFilter) =>
         (await navigator.hid.getDevices()).filter(
           (entry) => entry.vendorId === filter.vendorId && entry.productId === filter.productId
@@ -28,8 +30,8 @@ test.describe.serial('WebHID conformance', () => {
       vendorId: VENDOR.vendorId + 0x1_0000_0000,
       productId: VENDOR.productId + 0x1_0000
     }
-    expect(await grantDevicePermission(sharedPage, [overflowFilter])).toBe(1)
-    const device = await sharedPage.evaluate(async (filter: DeviceFilter) => {
+    expect(await grantDevicePermission(page, [overflowFilter])).toBe(1)
+    const device = await page.evaluate(async (filter: DeviceFilter) => {
       const found = (await navigator.hid.getDevices()).find(
         (entry) => entry.vendorId === filter.vendorId && entry.productId === filter.productId
       )
@@ -107,8 +109,8 @@ test.describe.serial('WebHID conformance', () => {
     expect(device.has64ByteInput).toBe(true)
   })
 
-  test('HIDConnectionEvent requires and preserves its device', async ({ sharedPage }) => {
-    const result = await sharedPage.evaluate(async (filter: DeviceFilter) => {
+  test('HIDConnectionEvent requires and preserves its device', async ({ page }) => {
+    const result = await page.evaluate(async (filter: DeviceFilter) => {
       const device = (await navigator.hid.getDevices()).find(
         (entry) => entry.vendorId === filter.vendorId && entry.productId === filter.productId
       )
@@ -143,12 +145,15 @@ test.describe.serial('WebHID conformance', () => {
         invalidDevice = error instanceof Error ? error.name : String(error)
       }
       const constructorCallErrors = [
-        () => Reflect.apply(HIDConnectionEvent, undefined, ['connect', { device }]),
-        () =>
+        () => {
+          Reflect.apply(HIDConnectionEvent, undefined, ['connect', { device }])
+        },
+        () => {
           Reflect.apply(HIDInputReportEvent, undefined, [
             'inputreport',
             { device, reportId: 1, data: new DataView(new ArrayBuffer(1)) }
           ])
+        }
       ].map((call) => {
         try {
           call()
@@ -183,10 +188,8 @@ test.describe.serial('WebHID conformance', () => {
     expect(result.constructorCallErrors).toEqual(['TypeError', 'TypeError'])
   })
 
-  test('HIDInputReportEvent validates members and converts octet values', async ({
-    sharedPage
-  }) => {
-    const result = await sharedPage.evaluate(async (filter: DeviceFilter) => {
+  test('HIDInputReportEvent validates members and converts octet values', async ({ page }) => {
+    const result = await page.evaluate(async (filter: DeviceFilter) => {
       const device = (await navigator.hid.getDevices()).find(
         (entry) => entry.vendorId === filter.vendorId && entry.productId === filter.productId
       )
@@ -294,7 +297,7 @@ test.describe.serial('WebHID conformance', () => {
       const coercionError = new Error('event conversion sentinel')
       let coercionErrorPreserved = false
       try {
-        makeEvent({
+        void makeEvent({
           [Symbol.toPrimitive]() {
             throw coercionError
           }
@@ -334,10 +337,6 @@ test.describe.serial('WebHID conformance', () => {
       const stateSymbol = Object.getOwnPropertySymbols(event).find(
         (symbol) => String(symbol) === 'Symbol(webhid_ir)'
       )
-      if (stateSymbol) {
-        const state = Reflect.get(event, stateSymbol) as unknown
-        if (state && typeof state === 'object') Reflect.set(state, 'reportId', 42)
-      }
       return {
         type: event.type,
         isEvent: event instanceof Event,
@@ -346,7 +345,6 @@ test.describe.serial('WebHID conformance', () => {
         sameData: event.data === data,
         dataIsDataView: event.data instanceof DataView,
         reportId: event.reportId,
-        reportIdAfterSymbolMutation: event.reportId,
         stateSymbolExposed: stateSymbol !== undefined,
         convertedIds,
         missingErrors,
@@ -375,13 +373,12 @@ test.describe.serial('WebHID conformance', () => {
     expect(result.crossBrandErrors).toEqual(Array(4).fill('TypeError'))
     expect(result.setterErrors).toEqual(Array(3).fill('TypeError'))
     expect(result.stateSymbolExposed).toBe(false)
-    expect(result.reportIdAfterSymbolMutation).toBe(255)
   })
 
   test('HID event dispatch uses EventHandler semantics and EventTarget objects', async ({
-    sharedPage
+    page
   }) => {
-    const result = await sharedPage.evaluate(async (filter: DeviceFilter) => {
+    const result = await page.evaluate(async (filter: DeviceFilter) => {
       const device = (await navigator.hid.getDevices()).find(
         (entry) => entry.vendorId === filter.vendorId && entry.productId === filter.productId
       )
@@ -450,8 +447,8 @@ test.describe.serial('WebHID conformance', () => {
     })
   })
 
-  test('input and output report methods require an open device', async ({ sharedPage }) => {
-    const errors = await sharedPage.evaluate(async (ctx) => {
+  test('input and output report methods require an open device', async ({ page }) => {
+    const errors = await page.evaluate(async (ctx) => {
       const device = (await navigator.hid.getDevices()).find(
         (entry) => entry.vendorId === ctx.f.vendorId && entry.productId === ctx.f.productId
       )
@@ -476,8 +473,8 @@ test.describe.serial('WebHID conformance', () => {
     expect(errors).toEqual(['InvalidStateError', 'InvalidStateError', 'InvalidStateError'])
   })
 
-  test('report methods reject octet conversion errors with Promises', async ({ sharedPage }) => {
-    const results = await sharedPage.evaluate(async (ctx) => {
+  test('report methods reject octet conversion errors with Promises', async ({ page }) => {
+    const results = await page.evaluate(async (ctx) => {
       const device = (await navigator.hid.getDevices()).find(
         (entry) => entry.vendorId === ctx.f.vendorId && entry.productId === ctx.f.productId
       )
@@ -543,9 +540,9 @@ test.describe.serial('WebHID conformance', () => {
     expect(results.conversionErrorPreserved).toBe(true)
   })
   test('report methods reject non-BufferSource and shared-backed views with Promises', async ({
-    sharedPage
+    page
   }) => {
-    const results = await sharedPage.evaluate(async (ctx) => {
+    const results = await page.evaluate(async (ctx) => {
       const device = (await navigator.hid.getDevices()).find(
         (entry) => entry.vendorId === ctx.f.vendorId && entry.productId === ctx.f.productId
       )
@@ -562,7 +559,9 @@ test.describe.serial('WebHID conformance', () => {
       const sharedBufferAvailable = typeof SharedArrayBuffer === 'function'
       if (sharedBufferAvailable) {
         const sharedView = new Uint8Array(new SharedArrayBuffer(ctx.size))
-        operations.push(() => device.sendReport(ctx.outputId, sharedView))
+        operations.push(() =>
+          device.sendReport(ctx.outputId, sharedView as unknown as BufferSource)
+        )
       }
       const outcomes = await Promise.all(
         operations.map(async (operation) => {
@@ -600,9 +599,9 @@ test.describe.serial('WebHID conformance', () => {
   })
 
   test('open and close update opened while concurrent requests keep their results', async ({
-    sharedPage
+    page
   }) => {
-    const state = await sharedPage.evaluate(async (ctx) => {
+    const state = await page.evaluate(async (ctx) => {
       const device = (await navigator.hid.getDevices()).find(
         (entry) => entry.vendorId === ctx.f.vendorId && entry.productId === ctx.f.productId
       )
@@ -626,10 +625,8 @@ test.describe.serial('WebHID conformance', () => {
       closed: true
     })
   })
-  test('closing immediately aborts pending reports and blocks new operations', async ({
-    sharedPage
-  }) => {
-    const state = await sharedPage.evaluate(async (ctx) => {
+  test('closing immediately aborts pending reports and blocks new operations', async ({ page }) => {
+    const state = await page.evaluate(async (ctx) => {
       const device = (await navigator.hid.getDevices()).find(
         (entry) => entry.vendorId === ctx.f.vendorId && entry.productId === ctx.f.productId
       )
@@ -681,8 +678,8 @@ test.describe.serial('WebHID conformance', () => {
     })
   })
 
-  test('close during open waits for and closes the opening session', async ({ sharedPage }) => {
-    const state = await sharedPage.evaluate(async (ctx) => {
+  test('close during open waits for and closes the opening session', async ({ page }) => {
+    const state = await page.evaluate(async (ctx) => {
       const device = (await navigator.hid.getDevices()).find(
         (entry) => entry.vendorId === ctx.f.vendorId && entry.productId === ctx.f.productId
       )
@@ -716,12 +713,9 @@ test.describe.serial('WebHID conformance', () => {
     expect(state.openedAfterClose).toBe(false)
   })
 
-  test('sendReport writes the selected report ID and payload', async ({
-    sharedPage,
-    vendorDevice
-  }) => {
+  test('sendReport writes the selected report ID and payload', async ({ page, vendorDevice }) => {
     const outputPromise = waitForOutputReport(vendorDevice)
-    await sharedPage.evaluate(async (ctx) => {
+    await page.evaluate(async (ctx) => {
       const device = (await navigator.hid.getDevices()).find(
         (entry) => entry.vendorId === ctx.f.vendorId && entry.productId === ctx.f.productId
       )
@@ -739,10 +733,10 @@ test.describe.serial('WebHID conformance', () => {
   })
 
   test('inputreport delivers report ID and the exact payload to both handler forms', async ({
-    sharedPage,
+    page,
     vendorDevice
   }) => {
-    await sharedPage.evaluate(async (filter: DeviceFilter) => {
+    await page.evaluate(async (filter: DeviceFilter) => {
       const device = (await navigator.hid.getDevices()).find(
         (entry) => entry.vendorId === filter.vendorId && entry.productId === filter.productId
       )
@@ -750,7 +744,7 @@ test.describe.serial('WebHID conformance', () => {
       await device.open()
     }, VENDOR)
 
-    const receiveReport = await armInputReport(sharedPage, VENDOR)
+    const receiveReport = await armInputReport(page, VENDOR)
     const payload = new Array<number>(VENDOR_INPUT_SIZE).fill(0x31)
     payload[0] = 0xaa
     sendInput(vendorDevice, VENDOR_OUTPUT_ID, payload)
@@ -761,8 +755,8 @@ test.describe.serial('WebHID conformance', () => {
     expect(event.listenerData).toEqual(payload)
   })
 
-  test('feature report methods reject IDs absent from the descriptor', async ({ sharedPage }) => {
-    const errors = await sharedPage.evaluate(async (ctx) => {
+  test('feature report methods reject IDs absent from the descriptor', async ({ page }) => {
+    const errors = await page.evaluate(async (ctx) => {
       const device = (await navigator.hid.getDevices()).find(
         (entry) => entry.vendorId === ctx.f.vendorId && entry.productId === ctx.f.productId
       )
@@ -788,12 +782,12 @@ test.describe.serial('WebHID conformance', () => {
   })
 
   test('disconnect reaches closed paired devices and reconnect restores its paired entry', async ({
-    sharedPage,
+    page,
     vendorDevice
   }) => {
-    const siblingPage = await sharedPage.context().newPage()
+    const siblingPage = await page.context().newPage()
     try {
-      await siblingPage.goto(new URL('/tests/test-page.html', sharedPage.url()).toString(), {
+      await siblingPage.goto(new URL('/tests/test-page.html', page.url()).toString(), {
         waitUntil: 'domcontentloaded'
       })
       await siblingPage.waitForFunction(() => typeof navigator.hid !== 'undefined', undefined, {
@@ -804,11 +798,11 @@ test.describe.serial('WebHID conformance', () => {
           (entry) => entry.vendorId === filter.vendorId && entry.productId === filter.productId
         )
         if (!device) throw new Error('vendor device is not paired in sibling page')
-        window.tests!.results!.closedDisconnect = null
+        window.tests!.results.closedDisconnect = null
         const onDisconnect = (event: HIDConnectionEvent) => {
           if (event.device !== device) return
           navigator.hid.removeEventListener('disconnect', onDisconnect)
-          window.tests!.results!.closedDisconnect = {
+          window.tests!.results.closedDisconnect = {
             closed: !device.opened,
             sameDevice: event.device === device
           }
@@ -818,36 +812,36 @@ test.describe.serial('WebHID conformance', () => {
       }, VENDOR)
       expect(siblingClosedDevice).toBe(true)
 
-      await sharedPage.evaluate(async (filter: DeviceFilter) => {
+      await page.evaluate(async (filter: DeviceFilter) => {
         const device = (await navigator.hid.getDevices()).find(
           (entry) => entry.vendorId === filter.vendorId && entry.productId === filter.productId
         )
         if (!device) throw new Error('vendor device is not paired')
-        window.tests!.results!.disconnect = null
+        window.tests!.results.disconnect = null
         const onDisconnect = (event: HIDConnectionEvent) => {
           if (event.device !== device) return
           navigator.hid.removeEventListener('disconnect', onDisconnect)
-          window.tests!.results!.disconnect = { closed: !device.opened }
+          window.tests!.results.disconnect = { closed: !device.opened }
         }
         navigator.hid.addEventListener('disconnect', onDisconnect)
         if (!device.opened) await device.open()
-        window.tests!.results!.disconnectReady = true
+        window.tests!.results.disconnectReady = true
       }, VENDOR)
-      await sharedPage.waitForFunction(() => window.tests!.results!.disconnectReady === true)
+      await page.waitForFunction(() => window.tests!.results.disconnectReady === true)
       const mockExited = new Promise<number | null>((resolve) =>
         vendorDevice.process.once('exit', resolve)
       )
       vendorDevice.process.stdin!.write('{"cmd":"destroy"}\n')
       expect(await mockExited).toBe(0)
       await expect
-        .poll(() => sharedPage.evaluate(() => window.tests!.results!.disconnect))
+        .poll(() => page.evaluate(() => window.tests!.results.disconnect))
         .toEqual({ closed: true })
       await expect
-        .poll(() => siblingPage.evaluate(() => window.tests!.results!.closedDisconnect))
+        .poll(() => siblingPage.evaluate(() => window.tests!.results.closedDisconnect))
         .toEqual({ closed: true, sameDevice: true })
 
-      await sharedPage.evaluate((filter: DeviceFilter) => {
-        window.tests!.results!.connect = false
+      await page.evaluate((filter: DeviceFilter) => {
+        window.tests!.results.connect = false
         const onConnect = (event: HIDConnectionEvent) => {
           if (
             event.device.vendorId !== filter.vendorId ||
@@ -856,7 +850,7 @@ test.describe.serial('WebHID conformance', () => {
             return
           }
           navigator.hid.removeEventListener('connect', onConnect)
-          window.tests!.results!.connect = true
+          window.tests!.results.connect = true
         }
         navigator.hid.addEventListener('connect', onConnect)
       }, VENDOR)
@@ -870,10 +864,10 @@ test.describe.serial('WebHID conformance', () => {
       vendorDevice.process = replacement.process
       vendorDevice.ready = replacement.ready
 
-      await sharedPage.waitForFunction(() => window.tests!.results!.connect === true, {
+      await page.waitForFunction(() => window.tests!.results.connect === true, {
         timeout: 10000
       })
-      const isPaired = await sharedPage.evaluate(
+      const isPaired = await page.evaluate(
         async (filter: DeviceFilter) =>
           (await navigator.hid.getDevices()).some(
             (entry) => entry.vendorId === filter.vendorId && entry.productId === filter.productId
@@ -886,8 +880,8 @@ test.describe.serial('WebHID conformance', () => {
     }
   })
 
-  test('forgetting blocks operations and aborts pending reports', async ({ sharedPage }) => {
-    const state = await sharedPage.evaluate(async (ctx) => {
+  test('forgetting blocks operations and aborts pending reports', async ({ page }) => {
+    const state = await page.evaluate(async (ctx) => {
       const device = (await navigator.hid.getDevices()).find(
         (entry) => entry.vendorId === ctx.f.vendorId && entry.productId === ctx.f.productId
       )

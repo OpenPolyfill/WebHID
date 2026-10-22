@@ -1,6 +1,9 @@
 import { test, configureDaemonMode } from '../helpers/e2e.js'
+import { getFirefoxBackgroundPage } from '../helpers/harness.js'
 import { withTimeout } from '../helpers/test-utils.js'
 import { type Page } from '@playwright/test'
+import type { FirefoxExtension } from '@openpolyfill/firefox-addon-playwright-harness'
+import type { FirefoxRDP } from '@openpolyfill/firefox-rdp'
 import { readFile } from 'node:fs/promises'
 
 import { dirname, join, resolve } from 'node:path'
@@ -41,13 +44,12 @@ type BenchApi = {
 }
 
 interface BenchmarkFixtures {
-  harnessCtx: { newPage(): Promise<Page> }
-  backgroundPage: { evaluate: Page['evaluate'] }
+  page: Page
+  extension: FirefoxExtension
   vendorDevice: WebhidMockProcess
   httpPort: number
   daemonMode: string
-  /** Harness RDP port; required when BENCHMARK_PROFILE_DIR is set. */
-  rdpPort?: number
+  rdp: FirefoxRDP
 }
 
 /** Console messages that mean the data plane silently degraded to NM. */
@@ -313,8 +315,8 @@ async function resetBenchmarkSettings(
     .catch(() => {})
 }
 
-async function startProfiler(rdpPort: number): Promise<ProfilerCapture> {
-  const profiler = await ProfilerCapture.connect(rdpPort)
+async function startProfiler(rdp: FirefoxRDP): Promise<ProfilerCapture> {
+  const profiler = await ProfilerCapture.create(rdp)
   await profiler.startProfiler({
     features: splitEnv('BENCHMARK_PROFILE_FEATURES') ?? [
       'js',
@@ -348,7 +350,6 @@ async function saveProfile(
       `[profiler] capture failed after ${((Date.now() - t0) / 1000).toFixed(1)}s: ${e instanceof Error ? e.message : String(e)}`
     )
   }
-  profiler.disconnect()
 }
 
 export async function benchmarkMode(
@@ -356,8 +357,8 @@ export async function benchmarkMode(
   mode: 'ws' | 'wt' | 'nm',
   opts?: { inPage?: boolean }
 ): Promise<BenchmarkResult> {
-  const { harnessCtx, backgroundPage, vendorDevice, httpPort, daemonMode, rdpPort } = fixtures
-  const page = await harnessCtx.newPage()
+  const { page, extension, vendorDevice, httpPort, daemonMode, rdp } = fixtures
+  const backgroundPage = getFirefoxBackgroundPage(extension)
   const origin = `http://localhost:${httpPort}`
 
   await configureDaemonMode(backgroundPage, daemonMode)
@@ -366,7 +367,7 @@ export async function benchmarkMode(
   await verifyChunkCount(page)
 
   const profileDir = process.env.BENCHMARK_PROFILE_DIR
-  const profiler = profileDir && rdpPort ? await startProfiler(rdpPort) : null
+  const profiler = profileDir ? await startProfiler(rdp) : null
 
   return await runBenchmark(page, vendorDevice, { inPage: !!opts?.inPage })
     .finally(() => resetBenchmarkSettings(backgroundPage, origin))
@@ -374,7 +375,6 @@ export async function benchmarkMode(
       if (profiler) {
         await saveProfile(profiler, profileDir!, mode, !!opts?.inPage)
       }
-      if (!page.isClosed()) page.close().catch(() => {})
     })
 }
 
@@ -386,6 +386,12 @@ export async function runBenchmark(
   const watch = watchConsole(page)
   const ack = createDeviceAckGate()
   await page.exposeFunction('webhidDeviceAck', ack.wait)
+  await page.evaluate(() => {
+    const pageWindow = window as typeof window & {
+      webhidDeviceAck: () => Promise<void>
+    }
+    window.tests!.helper.webhidDeviceAck = pageWindow.webhidDeviceAck
+  })
   try {
     await page.evaluate(() =>
       (window.tests!.helper as unknown as { webhidBenchmark?: BenchApi }).webhidBenchmark!.open()

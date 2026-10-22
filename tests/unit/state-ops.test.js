@@ -24,7 +24,7 @@ function loadStateOps() {
           return { deviceTabMap, deviceSessions, frameLifetimes, orphanCleanup }
         throw new Error('unexpected import: ' + name)
       },
-      export(_name, value) {
+      export(name, value) {
         exported = value
       }
     }

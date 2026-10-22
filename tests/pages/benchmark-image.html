@@ -53,11 +53,11 @@
           return promise
         }
         async function awaitDeviceAck() {
-          if (typeof window.webhidDeviceAck === 'function') {
+          if (typeof window.tests.helper.webhidDeviceAck === 'function') {
             const timeout = new Promise((_, reject) =>
               setTimeout(() => reject(new Error('mock device ACK timeout')), 2500)
             )
-            await Promise.race([window.webhidDeviceAck(), timeout])
+            await Promise.race([window.tests.helper.webhidDeviceAck(), timeout])
           }
         }
 

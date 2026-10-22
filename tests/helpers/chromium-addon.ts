@@ -4,17 +4,10 @@ import { dirname, join, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { type BrowserContext, type Page } from '@playwright/test'
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
-const projectRoot = resolve(__dirname, '..', '..')
+const directoryPath = dirname(fileURLToPath(import.meta.url))
+const projectRoot = resolve(directoryPath, '..', '..')
 
 const NM_HOST_NAME = 'webhid.daemon_nm_host'
-
-declare global {
-  interface Window {
-    __webhidPairResult?: { ok: boolean; count?: number; name?: string; message?: string }
-    __webhidPairDevices?: unknown[]
-  }
-}
 
 /**
  * Chrome for Testing (the Playwright `channel: 'chromium'` build, strace-
@@ -111,7 +104,7 @@ export async function setExtensionSettings(
     })
     const runtimeId = await page.evaluate(() => browser.runtime.id)
     const dataPlane = mode === 'wt-inpage' ? 'wt' : mode
-    const keys: Record<string, string | boolean> = {
+    const keys: Record<string, string | boolean | number> = {
       'settings :: dataPlane': dataPlane,
       [`settings :: ${origin} :: dataPlane`]: dataPlane,
       'settings :: devicePickerMode': 'modal',
@@ -144,8 +137,9 @@ export async function setExtensionSettings(
  */
 export async function pairViaPicker(page: Page): Promise<void> {
   await page.evaluate(() => {
-    window.__webhidPairResult = undefined
-    window.__webhidPairDevices = undefined
+    window.tests = window.tests || { helper: {}, results: {} }
+    window.tests.results.pairResult = undefined
+    window.tests.results.pairDevices = undefined
     let btn = document.getElementById('webhid-pair-btn')
     if (!btn) {
       btn = document.createElement('button')
@@ -162,11 +156,11 @@ export async function pairViaPicker(page: Page): Promise<void> {
         const devices = await navigator.hid.requestDevice({
           filters: [{ vendorId: 0x16c0, productId: 0x0001 }]
         })
-        window.__webhidPairDevices = devices
-        window.__webhidPairResult = { ok: true, count: devices.length }
+        window.tests!.results.pairDevices = devices
+        window.tests!.results.pairResult = { ok: true, count: devices.length }
       } catch (e) {
         const err = e as { name?: string; message?: string }
-        window.__webhidPairResult = {
+        window.tests!.results.pairResult = {
           ok: false,
           name: err.name,
           message: err.message
@@ -179,7 +173,9 @@ export async function pairViaPicker(page: Page): Promise<void> {
   const poll = async () => {
     const deadline = Date.now() + 30000
     for (;;) {
-      const r = await page.evaluate(() => window.__webhidPairResult).catch(() => null)
+      const r = await page
+        .evaluate(() => window.tests!.results.pairResult as PairResult | undefined)
+        .catch(() => null)
       if (r) {
         resolveResult(r)
         return

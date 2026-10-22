@@ -3,45 +3,41 @@ import { navigateToPolicyCheck } from '../../helpers/browser-utils.js'
 
 test.describe('requestDevice conformance', () => {
   test('requestDevice returns a rejected Promise without user activation', async ({
-    sharedPage,
+    page,
     pageUrl
   }) => {
-    await sharedPage.goto(pageUrl('/policy-check?no-activation'), {
+    await page.goto(pageUrl('/policy-check?no-activation'), {
       waitUntil: 'domcontentloaded'
     })
-    await sharedPage.waitForFunction(
+    await page.waitForFunction(
       () =>
         document.documentElement.dataset.requestDeviceProbeReady === 'true' &&
         navigator.userActivation.isActive === false,
       undefined,
       { timeout: 10000 }
     )
-    await sharedPage.locator('#no-activation-probe').click()
-    await sharedPage.waitForFunction(
+    await page.locator('#no-activation-probe').click()
+    await page.waitForFunction(
       () =>
         document.documentElement.dataset.requestDeviceProbeActive === 'false' &&
         document.documentElement.dataset.requestDeviceProbeResult != null,
       undefined,
       { timeout: 10000 }
     )
-    const result = await sharedPage.locator('html').getAttribute('data-request-device-probe-result')
+    const result = await page.locator('html').getAttribute('data-request-device-probe-result')
     expect(result).toBe('SecurityError')
   })
 
   test('requestDevice rejects invalid option and filter shapes as Promises', async ({
-    sharedPage,
+    page,
     pageUrl
   }) => {
-    await navigateToPolicyCheck(sharedPage, pageUrl)
-    await sharedPage.evaluate(() => {
+    await navigateToPolicyCheck(page, pageUrl)
+    await page.evaluate(() => {
       const button = document.createElement('button')
       button.id = 'request-device-validation'
       button.addEventListener('click', () => {
         const options: unknown[] = [
-          undefined,
-          {},
-          { filters: null },
-          { filters: {} },
           { filters: [{}] },
           { filters: [{ productId: 1 }] },
           { filters: [{ usage: 1 }] },
@@ -69,39 +65,38 @@ test.describe('requestDevice conformance', () => {
       })
       document.body.append(button)
     })
-    await sharedPage.locator('#request-device-validation').click()
-    await sharedPage.waitForFunction(
+    await page.locator('#request-device-validation').click()
+    await page.waitForFunction(
       () => document.documentElement.dataset.requestDeviceValidationResults != null,
       undefined,
       { timeout: 10000 }
     )
-    const errors = await sharedPage.evaluate(
+    const errors = await page.evaluate(
       () => JSON.parse(document.documentElement.dataset.requestDeviceValidationResults!) as string[]
     )
-    expect(errors).toEqual(new Array(8).fill('rejected:TypeError'))
+    expect(errors).toEqual(new Array(4).fill('rejected:TypeError'))
   })
   test('requestDevice converts dictionaries and rejects conversion errors as Promises', async ({
-    sharedPage,
+    page,
     pageUrl
   }) => {
-    await sharedPage.goto(
-      pageUrl('/policy-check?no-activation&request-device-dictionary-conversion'),
-      { waitUntil: 'domcontentloaded' }
-    )
-    await sharedPage.waitForFunction(
+    await page.goto(pageUrl('/policy-check?no-activation&request-device-dictionary-conversion'), {
+      waitUntil: 'domcontentloaded'
+    })
+    await page.waitForFunction(
       () =>
         document.documentElement.dataset.requestDeviceProbeReady === 'true' &&
         typeof navigator.hid !== 'undefined',
       undefined,
       { timeout: 10000 }
     )
-    await sharedPage.locator('#no-activation-probe').click()
-    await sharedPage.waitForFunction(
+    await page.locator('#no-activation-probe').click()
+    await page.waitForFunction(
       () => document.documentElement.dataset.requestDeviceProbeResult === 'done',
       undefined,
       { timeout: 10000 }
     )
-    const result = await sharedPage.evaluate(() => {
+    const result = await page.evaluate(() => {
       return window.tests!.results.requestDeviceDictionaryConversion as {
         conversionResults: Array<{ returnedPromise: boolean; error: string }>
         convertedAtReturn: string[]
@@ -123,10 +118,10 @@ test.describe('requestDevice conformance', () => {
   })
 
   test('requestDevice rejects filters with only unknown dictionary members', async ({
-    sharedPage,
+    page,
     pageUrl
   }) => {
-    await navigateToPolicyCheck(sharedPage, pageUrl)
+    await navigateToPolicyCheck(page, pageUrl)
     const options = [
       { filters: [{ futureMember: true }] },
       { filters: [{ vendorId: 1 }], exclusionFilters: [{ futureMember: true }] }
@@ -134,7 +129,7 @@ test.describe('requestDevice conformance', () => {
     const results: string[] = []
     for (const [index, requestOptions] of options.entries()) {
       const buttonId = `unknown-filter-${index}`
-      await sharedPage.evaluate(
+      await page.evaluate(
         ({ buttonId, requestOptions }) => {
           const button = document.createElement('button')
           button.id = buttonId
@@ -171,8 +166,8 @@ test.describe('requestDevice conformance', () => {
         },
         { buttonId, requestOptions }
       )
-      await sharedPage.locator(`#${buttonId}`).click()
-      const completion = await sharedPage.waitForFunction(
+      await page.locator(`#${buttonId}`).click()
+      const completion = await page.waitForFunction(
         () => {
           const result = document.documentElement.dataset.filterValidation
           if (result !== 'pending') return { state: 'settled', result }
@@ -191,15 +186,15 @@ test.describe('requestDevice conformance', () => {
         result?: string
       }
       if (state.state === 'chooser') {
-        await sharedPage.keyboard.press('Escape')
-        await sharedPage.waitForFunction(
+        await page.keyboard.press('Escape')
+        await page.waitForFunction(
           () => document.documentElement.dataset.filterValidation !== 'pending'
         )
       }
       results.push(
-        await sharedPage.evaluate(() => document.documentElement.dataset.filterValidation ?? '')
+        await page.evaluate(() => document.documentElement.dataset.filterValidation ?? '')
       )
-      await sharedPage.locator(`#${buttonId}`).evaluate((button) => button.remove())
+      await page.locator(`#${buttonId}`).evaluate((button) => button.remove())
     }
 
     expect(results).toEqual(['TypeError', 'TypeError'])

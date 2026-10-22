@@ -1,11 +1,8 @@
-import { test as base, expect, type Page, type WorkerFixture } from '@playwright/test'
-import type {
-  PlaywrightTestArgs,
-  PlaywrightTestOptions,
-  PlaywrightWorkerArgs,
-  PlaywrightWorkerOptions
-} from '@playwright/test'
-import { rm } from 'fs/promises'
+import type { WorkerFixture } from '@playwright/test'
+import { test as base, expect } from '@playwright/test'
+import { withSharedPage } from '@openpolyfill/firefox-addon-playwright-harness/fixtures'
+import { getFirefoxBackgroundPage, type FirefoxBackgroundPage } from './harness.js'
+import { rm } from 'node:fs/promises'
 import { startStaticServer } from '../serve.js'
 import {
   startDaemon,
@@ -21,15 +18,11 @@ import {
   type WebhidMockProcess
 } from './e2e-process.js'
 import { DEVICES, type DeviceKey } from './e2e-devices.js'
-import {
-  backgroundPageFixture,
-  baseSharedPage,
-  harnessCtxBody,
-  pageFixture,
-  rdpPortFixture,
-  type FirefoxBgPage,
-  type HarnessContext
-} from './harness.js'
+import { createHarnessFixtures } from './harness.js'
+
+interface E2eTestFixtures {
+  e2eSetup: void
+}
 
 interface E2eWorkerFixtures {
   daemon: DaemonProcess | null
@@ -37,10 +30,6 @@ interface E2eWorkerFixtures {
   httpPort: number
   nmManifest: void
   daemonMode: string
-  rdpPort: number
-  harnessCtx: HarnessContext
-  backgroundPage: FirefoxBgPage
-  sharedPage: Page
 }
 
 interface MockDeviceFixture {
@@ -53,7 +42,7 @@ interface MockDeviceFixture {
 /** Configures the addon to spawn the daemon as its NM host when running in
  * daemon-nm mode (no-op in forwarder mode). */
 export async function configureDaemonMode(
-  backgroundPage: { evaluate: Page['evaluate'] },
+  backgroundPage: FirefoxBackgroundPage,
   daemonMode: string
 ): Promise<void> {
   if (daemonMode !== 'daemon-nm') return
@@ -69,11 +58,11 @@ function deviceFixture(
   return {
     [`${key}Device`]: [
       async ({}, use) => {
-        const m = startWebhidMock(def.descriptor, def.vid, def.pid, def.name)
-        await m.ready
+        const mock = startWebhidMock(def.descriptor, def.vid, def.pid, def.name)
+        await mock.ready
         const live: MockDeviceFixture = {
-          process: m.process,
-          ready: m.ready,
+          process: mock.process,
+          ready: mock.ready,
           vid: def.vid,
           pid: def.pid
         }
@@ -89,88 +78,74 @@ const deviceFixtures = {
   ...deviceFixture('vendor')
 }
 
-export const test = base.extend<
-  PlaywrightTestArgs & PlaywrightTestOptions,
-  PlaywrightWorkerArgs & PlaywrightWorkerOptions & E2eWorkerFixtures
->({
-  daemonMode: [
-    async ({}, use) => {
-      const projectUse = test.info().project?.use as { daemonMode?: string } | undefined
-      const mode = projectUse?.daemonMode || 'forwarder'
-      await use(mode)
-    },
-    { scope: 'worker', option: true }
-  ],
+const defaultHarnessTest = createHarnessFixtures(base)
 
-  daemon: [
-    async ({ daemonMode }, use, workerInfo) => {
-      if (daemonMode === 'daemon-nm') {
-        await use(null)
-        return
-      }
-      const socketPath = workerSocketPath(workerInfo.workerIndex)
-      process.env.WEBHID_SOCKET = socketPath
-      const d = await startDaemon(socketPath)
-      await use(d)
-      stopDaemon(d)
-      await rm(socketPath, { force: true })
-    },
-    { scope: 'worker', auto: true }
-  ],
-
-  ...deviceFixtures,
-
-  httpPort: [
-    async ({}, use) => {
-      const { port, server } = await startStaticServer()
-      await use(port)
-      server.close()
-    },
-    { scope: 'worker', auto: true }
-  ],
-
-  nmManifest: [
-    async ({ daemonMode }, use) => {
-      if (daemonMode === 'daemon-nm') {
-        installDaemonNmManifest()
+function extendE2eFixtures(testBase: typeof defaultHarnessTest) {
+  const e2eTest = testBase.extend<E2eTestFixtures, E2eWorkerFixtures>({
+    e2eSetup: [
+      async ({ page, extension, httpPort, daemonMode }, use) => {
+        const backgroundPage = getFirefoxBackgroundPage(extension)
+        await configureDaemonMode(backgroundPage, daemonMode)
+        const url = `http://localhost:${httpPort}/tests/test-page.html`
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 })
+        await page.waitForFunction(() => typeof navigator.hid !== 'undefined', {
+          timeout: 15000
+        })
         await use()
-        uninstallDaemonNmManifest()
-      } else {
-        installNmManifest()
-        await use()
-        uninstallNmManifest()
-      }
-    },
-    { scope: 'worker', auto: true }
-  ],
+      },
+      { auto: true }
+    ],
+    daemonMode: [
+      async ({}, use, workerInfo) => {
+        const projectUse = workerInfo.project.use as { daemonMode?: string } | undefined
+        const mode = projectUse?.daemonMode || 'forwarder'
+        await use(mode)
+      },
+      { scope: 'worker', option: true }
+    ],
+    daemon: [
+      async ({ daemonMode }, use, workerInfo) => {
+        if (daemonMode === 'daemon-nm') {
+          await use(null)
+          return
+        }
+        const socketPath = workerSocketPath(workerInfo.workerIndex)
+        process.env.WEBHID_SOCKET = socketPath
+        const daemon = await startDaemon(socketPath)
+        await use(daemon)
+        stopDaemon(daemon)
+        await rm(socketPath, { force: true })
+      },
+      { scope: 'worker', auto: true }
+    ],
+    ...deviceFixtures,
+    httpPort: [
+      async ({}, use) => {
+        const { port, server } = await startStaticServer()
+        await use(port)
+        server.close()
+      },
+      { scope: 'worker', auto: true }
+    ],
+    nmManifest: [
+      async ({ daemonMode }, use) => {
+        if (daemonMode === 'daemon-nm') {
+          installDaemonNmManifest()
+          await use()
+          uninstallDaemonNmManifest()
+        } else {
+          installNmManifest()
+          await use()
+          uninstallNmManifest()
+        }
+      },
+      { scope: 'worker', auto: true }
+    ]
+  })
 
-  rdpPort: rdpPortFixture(),
+  return e2eTest
+}
 
-  harnessCtx: [
-    async ({ headless }, use) => {
-      const projectUse = test.info().project?.use as { launchOptions?: object } | undefined
-      await harnessCtxBody({ headless }, use, {
-        launchOptions: projectUse?.launchOptions
-      })
-    },
-    { scope: 'worker' }
-  ],
-
-  backgroundPage: backgroundPageFixture(),
-
-  sharedPage: [
-    async ({ harnessCtx, httpPort, daemonMode, backgroundPage }, use) => {
-      await configureDaemonMode(backgroundPage, daemonMode)
-      const page = await baseSharedPage(harnessCtx)
-      const url = `http://localhost:${httpPort}/tests/test-page.html`
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 })
-      await page.waitForFunction(() => typeof navigator.hid !== 'undefined', { timeout: 15000 })
-      await use(page)
-    },
-    { scope: 'worker' }
-  ],
-
-  page: pageFixture()
-})
-
-export { expect }
+export const test = extendE2eFixtures(defaultHarnessTest)
+export const workerBase = extendE2eFixtures(createHarnessFixtures(base, 'worker'))
+export { expect, withSharedPage }

@@ -9,25 +9,15 @@ export const DEVICES = {
 
 export type DeviceKey = keyof typeof DEVICES
 
-export function mockIdFor(which: DeviceKey): DeviceFilter {
+export function mockIdFor(
+  which: DeviceKey
+): DeviceFilter & { vendorId: number; productId: number } {
   return { vendorId: DEVICES[which].vid, productId: DEVICES[which].pid }
-}
-
-declare global {
-  interface Window {
-    tests?: {
-      helper?: {
-        requestDevice?: (filters: DeviceFilter[]) => void
-        requestDeviceResult?: () => Promise<number>
-      }
-      results?: Record<string, unknown>
-    }
-  }
 }
 
 export async function grantDevicePermission(page: Page, filters: DeviceFilter[]): Promise<number> {
   await page.evaluate(() => {
-    const results = window.tests!.results!
+    const results = window.tests!.results
     results.pickerStarted = new Promise<void>((resolve) => {
       const check = () => {
         if (document.querySelector('#webhid-shadow-host')?.getAttribute('aria-busy') !== 'true') {
@@ -47,11 +37,11 @@ export async function grantDevicePermission(page: Page, filters: DeviceFilter[])
       check()
     })
   })
-  await page.evaluate((flt: DeviceFilter[]) => window.tests!.helper!.requestDevice!(flt), filters)
+  await page.evaluate((flt: DeviceFilter[]) => window.tests!.helper.requestDevice!(flt), filters)
   await page.locator('#request-device-btn').click()
   const pickerStart = await page.evaluate(() => {
-    const started = window.tests!.results!.pickerStarted as Promise<void>
-    const request = window.tests!.helper!.requestDeviceResult!()
+    const started = window.tests!.results.pickerStarted as Promise<void>
+    const request = window.tests!.helper.requestDeviceResult!()
     return Promise.race([
       started.then(() => ({ state: 'opened' as const })),
       request.then(
@@ -79,7 +69,7 @@ export async function grantDevicePermission(page: Page, filters: DeviceFilter[])
   if ((await emptyStatus.count()) > 0) {
     const message = (await emptyStatus.first().innerText()).trim()
     await picker.locator('#webhidCancelBtn').click()
-    await page.evaluate(() => window.tests!.helper!.requestDeviceResult!())
+    await page.evaluate(() => window.tests!.helper.requestDeviceResult!())
     throw new Error(
       `grantDevicePermission: picker has no selectable devices: ${message || '(empty status)'}`
     )
@@ -90,7 +80,7 @@ export async function grantDevicePermission(page: Page, filters: DeviceFilter[])
   if (mockDeviceCount !== 1) {
     const deviceNames = await picker.locator('.webhid-device-name').allTextContents()
     await picker.locator('#webhidCancelBtn').click()
-    await page.evaluate(() => window.tests!.helper!.requestDeviceResult!())
+    await page.evaluate(() => window.tests!.helper.requestDeviceResult!())
     throw new Error(
       `grantDevicePermission: expected one mock device named "${mockDeviceName}", found ${mockDeviceCount}; ` +
         `picker listed: ${deviceNames.join(', ') || '(none)'}`
@@ -100,7 +90,7 @@ export async function grantDevicePermission(page: Page, filters: DeviceFilter[])
   await mockDevice.click()
   await picker.locator('#webhidConnectBtn').evaluate((button: HTMLButtonElement) => button.click())
 
-  const count = await page.evaluate(() => window.tests!.helper!.requestDeviceResult!())
+  const count = await page.evaluate(() => window.tests!.helper.requestDeviceResult!())
   if (count === 0) {
     throw new Error(
       'grantDevicePermission: requestDevice resolved with no devices. ' +

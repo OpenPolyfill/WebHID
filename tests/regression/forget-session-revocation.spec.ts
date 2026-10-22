@@ -4,7 +4,7 @@ import { startWebhidMock, stopWebhidMock } from '../helpers/e2e-process.js'
 import { VENDOR, VENDOR_CTX } from '../helpers/e2e-reports.js'
 
 test('forget revokes every device in a grant group across same-origin documents', async ({
-  sharedPage,
+  page,
   httpPort,
   vendorDevice
 }) => {
@@ -15,10 +15,10 @@ test('forget revokes every device in a grant group across same-origin documents'
     VENDOR.productId + 1,
     mockDeviceName
   )
-  const siblingPage = await sharedPage.context().newPage()
+  const siblingPage = await page.context().newPage()
   try {
     await secondDevice.ready
-    expect(await grantDevicePermission(sharedPage, [{ vendorId: VENDOR.vendorId }])).toBe(2)
+    expect(await grantDevicePermission(page, [{ vendorId: VENDOR.vendorId }])).toBe(2)
     await siblingPage.goto(`http://localhost:${httpPort}/tests/test-page.html`, {
       waitUntil: 'domcontentloaded',
       timeout: 15000
@@ -32,10 +32,10 @@ test('forget revokes every device in a grant group across same-origin documents'
         .sort((left, right) => left.productId - right.productId)
       if (devices.length !== 2) throw new Error('sibling cannot see both granted interfaces')
       await devices[1].open()
-      window.tests!.results!.grantGroupDevices = devices
+      window.tests!.results.grantGroupDevices = devices
     }, VENDOR_CTX)
 
-    const localState = await sharedPage.evaluate(async (ctx) => {
+    const localState = await page.evaluate(async (ctx) => {
       const devices = (await navigator.hid.getDevices())
         .filter((device) => device.vendorId === ctx.f.vendorId)
         .sort((left, right) => left.productId - right.productId)
@@ -83,14 +83,14 @@ test('forget revokes every device in a grant group across same-origin documents'
     await expect
       .poll(() =>
         siblingPage.evaluate(() => {
-          const devices = window.tests!.results!.grantGroupDevices as HIDDevice[]
+          const devices = window.tests!.results.grantGroupDevices as HIDDevice[]
           return devices[1].opened
         })
       )
       .toBe(false)
 
     const siblingState = await siblingPage.evaluate(async () => {
-      const devices = window.tests!.results!.grantGroupDevices as HIDDevice[]
+      const devices = window.tests!.results.grantGroupDevices as HIDDevice[]
       const openErrors: (string | null)[] = []
       for (const device of devices) {
         try {

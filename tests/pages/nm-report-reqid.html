@@ -6,6 +6,11 @@
   </head>
   <body>
     <script>
+      window.tests = window.tests || {
+        helper: {},
+        results: {}
+      }
+
       ;(function () {
         let started = false
         const frames = []
@@ -51,9 +56,6 @@
           }
         }
 
-        window.tests = window.tests || { helper: {}, results: {} }
-        window.tests.helper = window.tests.helper || {}
-        window.tests.results = window.tests.results || {}
         window.addEventListener('message', (event) => {
           if (event.source !== window || !event.data || event.data.type !== 'start') return
           void start().catch((error) => {

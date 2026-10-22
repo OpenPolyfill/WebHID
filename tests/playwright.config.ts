@@ -48,11 +48,6 @@ export default defineConfig({
       }
     },
     {
-      name: 'firefox-regression-browser',
-      testDir: './regression/browser',
-      use: { browserName: 'firefox' }
-    },
-    {
       name: 'firefox-regression',
       testDir: './regression',
       testIgnore: ['**/*.browser.spec.ts'],

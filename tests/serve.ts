@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { once } from 'node:events'
 import { readFile } from 'node:fs'
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
+const directoryPath = dirname(fileURLToPath(import.meta.url))
 
 interface ServerHandle {
   port: number
@@ -27,7 +27,7 @@ async function listen(server: http.Server, port = 0): Promise<ServerHandle> {
 }
 
 function loadPage(name: string): string {
-  const pagePath = resolve(__dirname, 'pages', name)
+  const pagePath = resolve(directoryPath, 'pages', name)
   return readFileSync(pagePath, 'utf-8')
 }
 
@@ -78,7 +78,7 @@ export async function startPolicyServer(port = 0): Promise<ServerHandle> {
   return listen(server, port)
 }
 
-const projectRoot = resolve(__dirname, '..')
+const projectRoot = resolve(directoryPath, '..')
 
 const MIME: Record<string, string> = {
   '.html': 'text/html',
@@ -117,8 +117,8 @@ export async function startStaticServer(port = 0): Promise<ServerHandle> {
   })
   return listen(server, port)
 }
-const wptSiteRoot = resolve(__dirname, 'conformance/wpt/site')
-const wptSupportRoot = resolve(__dirname, 'conformance/wpt/support')
+const wptSiteRoot = resolve(directoryPath, 'conformance/wpt/site')
+const wptSupportRoot = resolve(directoryPath, 'conformance/wpt/support')
 
 const wptSupportFiles: Record<string, string> = {
   '/resources/testharness.js': 'testharness.js',

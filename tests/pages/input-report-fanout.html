@@ -6,6 +6,11 @@
   </head>
   <body>
     <script>
+      window.tests = window.tests || {
+        helper: {},
+        results: {}
+      }
+
       ;(function () {
         const origin = location.origin
         const remoteConsumers = new Map()
@@ -118,9 +123,6 @@
           })
         }
 
-        window.tests = window.tests || { helper: {}, results: {} }
-        window.tests.helper = window.tests.helper || {}
-        window.tests.results = window.tests.results || {}
         window.tests.results.fanoutReady = false
         window.tests.results.workerClosed = false
         window.tests.results.fanoutCounts = {}

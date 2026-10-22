@@ -1,10 +1,10 @@
 import type { Page } from '@playwright/test'
 
 export async function navigateToPolicyCheck(
-  sharedPage: Page,
+  page: Page,
   pageUrl: (path: string) => string
 ): Promise<void> {
-  await sharedPage.goto(pageUrl('/policy-check'), {
+  await page.goto(pageUrl('/policy-check'), {
     waitUntil: 'domcontentloaded',
     timeout: 15000
   })
@@ -17,15 +17,9 @@ export interface PermResult {
   getDevices?: { ok: boolean; count?: number; name?: string; message?: string }
 }
 
-interface WindowWithTests {
-  tests?: {
-    results: Record<string, unknown>
-  }
-}
-
 async function getPermResult(page: Page): Promise<PermResult | null> {
   return page.evaluate((): PermResult | null => {
-    const r = (window as unknown as WindowWithTests).tests?.results?.perm
+    const r = window.tests?.results.perm
     if (r && typeof r === 'object') return r
     return null
   })
@@ -34,7 +28,7 @@ async function getPermResult(page: Page): Promise<PermResult | null> {
 export async function waitForPermResult(page: Page, timeout = 10000): Promise<PermResult | null> {
   await page.waitForFunction(
     (): boolean => {
-      const r = (window as unknown as WindowWithTests).tests?.results?.perm
+      const r = window.tests?.results.perm
       return r !== null && typeof r === 'object'
     },
     { timeout }

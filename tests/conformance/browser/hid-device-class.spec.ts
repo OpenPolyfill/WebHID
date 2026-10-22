@@ -2,11 +2,11 @@ import { test, expect } from '../../helpers/browser.js'
 import { navigateToPolicyCheck } from '../../helpers/browser-utils.js'
 
 test('HIDDevice inherits EventTarget methods and exposes Web IDL descriptors', async ({
-  sharedPage,
+  page,
   pageUrl
 }) => {
-  await navigateToPolicyCheck(sharedPage, pageUrl)
-  const result = await sharedPage.evaluate(() => {
+  await navigateToPolicyCheck(page, pageUrl)
+  const result = await page.evaluate(() => {
     let constructorError: string | null = null
     try {
       new HIDDevice()
@@ -145,16 +145,20 @@ test('HIDDevice inherits EventTarget methods and exposes Web IDL descriptors', a
     })
   })
 })
-test('HIDDevice Promise methods reject WebIDL brand errors', async ({ sharedPage }) => {
-  const results = await sharedPage.evaluate(async () => {
+test('HIDDevice Promise methods reject WebIDL brand errors', async ({ page }) => {
+  const results = await page.evaluate(async () => {
     const receiver = {}
+    const invokeWithInvalidReceiver = (name: string, args: unknown[]) => {
+      const method = Reflect.get(HIDDevice.prototype, name) as (...args: unknown[]) => unknown
+      return Reflect.apply(method, receiver, args)
+    }
     const methods = [
-      () => Reflect.apply(HIDDevice.prototype.open, receiver, []),
-      () => Reflect.apply(HIDDevice.prototype.close, receiver, []),
-      () => Reflect.apply(HIDDevice.prototype.forget, receiver, []),
-      () => Reflect.apply(HIDDevice.prototype.sendReport, receiver, [1, new Uint8Array(0)]),
-      () => Reflect.apply(HIDDevice.prototype.sendFeatureReport, receiver, [1, new Uint8Array(0)]),
-      () => Reflect.apply(HIDDevice.prototype.receiveFeatureReport, receiver, [1])
+      () => invokeWithInvalidReceiver('open', []),
+      () => invokeWithInvalidReceiver('close', []),
+      () => invokeWithInvalidReceiver('forget', []),
+      () => invokeWithInvalidReceiver('sendReport', [1, new Uint8Array(0)]),
+      () => invokeWithInvalidReceiver('sendFeatureReport', [1, new Uint8Array(0)]),
+      () => invokeWithInvalidReceiver('receiveFeatureReport', [1])
     ]
     return Promise.all(
       methods.map(async (invoke) => {

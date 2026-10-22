@@ -16,8 +16,8 @@ import {
   type AddonDataPlane
 } from '../../helpers/chromium-addon.js'
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
-const CHROMIUM_DIST = resolve(__dirname, '..', '..', '..', 'dist', 'chromium')
+const directoryPath = dirname(fileURLToPath(import.meta.url))
+const CHROMIUM_DIST = resolve(directoryPath, '..', '..', '..', 'dist', 'chromium')
 
 async function setupPage(
   context: BrowserContext,

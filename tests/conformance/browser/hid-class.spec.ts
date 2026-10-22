@@ -2,14 +2,12 @@ import { test, expect } from '../../helpers/browser.js'
 import { navigateToPolicyCheck } from '../../helpers/browser-utils.js'
 
 test.describe('HID WebIDL', () => {
-  test.beforeEach(async ({ sharedPage, pageUrl }) => {
-    await navigateToPolicyCheck(sharedPage, pageUrl)
+  test.beforeEach(async ({ page, pageUrl }) => {
+    await navigateToPolicyCheck(page, pageUrl)
   })
 
-  test('navigator.hid is a SameObject HID EventTarget in a secure context', async ({
-    sharedPage
-  }) => {
-    const result = await sharedPage.evaluate(() => {
+  test('navigator.hid is a SameObject HID EventTarget in a secure context', async ({ page }) => {
+    const result = await page.evaluate(() => {
       let constructorError: string | null = null
       try {
         new HID()
@@ -36,9 +34,9 @@ test.describe('HID WebIDL', () => {
     })
   })
   test('HID interface methods inherit EventTarget methods and expose Web IDL descriptors', async ({
-    sharedPage
+    page
   }) => {
-    const result = await sharedPage.evaluate(() => {
+    const result = await page.evaluate(() => {
       const methods = ['getDevices', 'requestDevice'].map((name) => {
         const descriptor = Object.getOwnPropertyDescriptor(HID.prototype, name)
         return [
@@ -124,9 +122,9 @@ test.describe('HID WebIDL', () => {
   })
 
   test('EventHandler replacement preserves registration order and callback behavior', async ({
-    sharedPage
+    page
   }) => {
-    const result = await sharedPage.evaluate(() => {
+    const result = await page.evaluate(() => {
       const target = navigator.hid
       const calls: string[] = []
       let callbackThisMatches = false
@@ -199,20 +197,30 @@ test.describe('HID WebIDL', () => {
   })
 })
 test('Navigator.hid getter stays synchronous and Promise APIs reject WebIDL exceptions', async ({
-  sharedPage
+  page
 }) => {
-  const result = await sharedPage.evaluate(async () => {
-    const getter = Object.getOwnPropertyDescriptor(Navigator.prototype, 'hid')?.get
+  const result = await page.evaluate(async () => {
+    const getter = Reflect.get(
+      Object.getOwnPropertyDescriptor(Navigator.prototype, 'hid') ?? {},
+      'get'
+    ) as ((this: unknown) => unknown) | undefined
     let getterError: string | null = null
     try {
       getter?.call({})
     } catch (error) {
       getterError = error instanceof Error ? error.name : String(error)
     }
+    const getDevices = Reflect.get(HID.prototype, 'getDevices') as (...args: unknown[]) => unknown
+    const requestDeviceMethod = Reflect.get(HID.prototype, 'requestDevice') as (
+      ...args: unknown[]
+    ) => unknown
+    const requestDevice = navigator.hid.requestDevice.bind(navigator.hid) as unknown as (
+      options?: unknown
+    ) => Promise<unknown>
     const calls = [
-      () => Reflect.apply(HID.prototype.getDevices, {}, []),
-      () => Reflect.apply(HID.prototype.requestDevice, {}, [{ filters: [] }]),
-      () => navigator.hid.requestDevice({ filters: null })
+      () => Reflect.apply(getDevices, {}, []),
+      () => Reflect.apply(requestDeviceMethod, {}, [{ filters: [] }]),
+      () => requestDevice({ filters: null })
     ]
     const promiseResults = await Promise.all(
       calls.map(async (invoke) => {
@@ -240,7 +248,7 @@ test('Navigator.hid getter stays synchronous and Promise APIs reject WebIDL exce
     const sentinel = new Error('requestDevice dictionary getter sentinel')
     let sentinelPreserved = false
     try {
-      await navigator.hid.requestDevice({
+      await requestDevice({
         get filters() {
           throw sentinel
         }

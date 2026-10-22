@@ -4,8 +4,8 @@ import { join, resolve, dirname } from 'path'
 import { homedir } from 'os'
 import { fileURLToPath } from 'url'
 
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = dirname(__filename)
+const filePath = fileURLToPath(import.meta.url)
+const directoryPath = dirname(filePath)
 
 function findProjectRoot(dir: string): string {
   while (dir !== '/') {
@@ -15,7 +15,7 @@ function findProjectRoot(dir: string): string {
   throw new Error('Could not find project root (crates/Cargo.toml)')
 }
 
-const projectRoot = findProjectRoot(__dirname)
+const projectRoot = findProjectRoot(directoryPath)
 
 const xdgRuntime = process.env.XDG_RUNTIME_DIR || `/run/user/${process.getuid?.() ?? 1000}`
 export const DEFAULT_SOCKET = join(xdgRuntime, 'webhid', 'webhid.sock')

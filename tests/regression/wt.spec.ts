@@ -1,6 +1,7 @@
 import { test, expect } from '../helpers/e2e.js'
 import { grantDevicePermission } from '../helpers/e2e-devices.js'
 import { sendInput, waitForOutputReport } from '../helpers/e2e-process.js'
+import { getFirefoxBackgroundPage } from '../helpers/harness.js'
 import {
   armInputReport,
   VENDOR,
@@ -10,12 +11,14 @@ import {
 } from '../helpers/e2e-reports.js'
 
 test('WebHID report I/O works with the WebTransport dataPlane setting', async ({
-  sharedPage,
-  backgroundPage,
+  page,
+  extension,
   vendorDevice
 }) => {
-  const origin = new URL(sharedPage.url()).origin
+  const backgroundPage = getFirefoxBackgroundPage(extension)
+  const origin = new URL(page.url()).origin
   const settingKey = `settings :: ${origin} :: dataPlane`
+
   const previous = await backgroundPage.evaluate(async (key) => {
     const values = (await browser.storage.local.get(key)) as Record<string, unknown>
     return {
@@ -26,13 +29,13 @@ test('WebHID report I/O works with the WebTransport dataPlane setting', async ({
 
   try {
     await backgroundPage.evaluate((key) => browser.storage.local.set({ [key]: 'wt' }), settingKey)
-    await sharedPage.reload({ waitUntil: 'domcontentloaded' })
-    await sharedPage.waitForFunction(() => typeof navigator.hid !== 'undefined', {
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await page.waitForFunction(() => typeof navigator.hid !== 'undefined', {
       timeout: 15000
     })
-    expect(await grantDevicePermission(sharedPage, [VENDOR])).toBe(1)
+    expect(await grantDevicePermission(page, [VENDOR])).toBe(1)
 
-    await sharedPage.evaluate(async (filter) => {
+    await page.evaluate(async (filter) => {
       const device = (await navigator.hid.getDevices()).find(
         (entry) => entry.vendorId === filter.vendorId && entry.productId === filter.productId
       )
@@ -41,7 +44,7 @@ test('WebHID report I/O works with the WebTransport dataPlane setting', async ({
     }, VENDOR)
 
     const outputPromise = waitForOutputReport(vendorDevice)
-    await sharedPage.evaluate(async (ctx) => {
+    await page.evaluate(async (ctx) => {
       const device = (await navigator.hid.getDevices()).find(
         (entry) => entry.vendorId === ctx.f.vendorId && entry.productId === ctx.f.productId
       )
@@ -51,7 +54,7 @@ test('WebHID report I/O works with the WebTransport dataPlane setting', async ({
     const output = await outputPromise
     expect(output.data.slice(0, 2)).toEqual([VENDOR_OUTPUT_ID, 0x42])
 
-    const receiveReport = await armInputReport(sharedPage, VENDOR)
+    const receiveReport = await armInputReport(page, VENDOR)
     const payload = new Array<number>(VENDOR_INPUT_SIZE).fill(0x53)
     payload[0] = 0xab
     sendInput(vendorDevice, VENDOR_OUTPUT_ID, payload)
@@ -62,7 +65,7 @@ test('WebHID report I/O works with the WebTransport dataPlane setting', async ({
     expect(input.dataByteLength).toBe(VENDOR_INPUT_SIZE)
     expect(input.bufferByteLength).toBe(input.dataByteLength)
 
-    await sharedPage.evaluate(async (ctx) => {
+    await page.evaluate(async (ctx) => {
       const device = (await navigator.hid.getDevices()).find(
         (entry) => entry.vendorId === ctx.f.vendorId && entry.productId === ctx.f.productId
       )
@@ -77,6 +80,6 @@ test('WebHID report I/O works with the WebTransport dataPlane setting', async ({
     } else {
       await backgroundPage.evaluate((key) => browser.storage.local.remove(key), settingKey)
     }
-    await sharedPage.reload({ waitUntil: 'domcontentloaded' })
+    await page.reload({ waitUntil: 'domcontentloaded' })
   }
 })

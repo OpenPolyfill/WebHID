@@ -1,5 +1,6 @@
 import { test, expect } from '../helpers/browser.js'
 import type { Frame, Page } from '@playwright/test'
+import { getFirefoxBackgroundPage } from '../helpers/harness.js'
 
 async function frameWithId(page: Page, id: string, urlSubstring: string): Promise<Frame> {
   await expect
@@ -29,8 +30,9 @@ test.describe('OpenPolyfill permissions policy internals', () => {
     page,
     pageUrl,
     crossUrl,
-    backgroundPage
+    extension
   }) => {
+    const backgroundPage = getFirefoxBackgroundPage(extension)
     await page.goto(pageUrl('/iframe-parent'), {
       waitUntil: 'domcontentloaded',
       timeout: 15000
@@ -100,8 +102,9 @@ test.describe('OpenPolyfill permissions policy internals', () => {
     page,
     pageUrl,
     crossUrl,
-    backgroundPage
+    extension
   }) => {
+    const backgroundPage = getFirefoxBackgroundPage(extension)
     await page.goto(pageUrl('/iframe-parent'), {
       waitUntil: 'domcontentloaded',
       timeout: 15000
@@ -147,8 +150,9 @@ test.describe('OpenPolyfill permissions policy internals', () => {
     page,
     pageUrl,
     crossUrl,
-    backgroundPage
+    extension
   }) => {
+    const backgroundPage = getFirefoxBackgroundPage(extension)
     const settingKey = `settings :: ${new URL(crossUrl('')).origin} :: workerPolyfillEnabled`
     const previous = await backgroundPage.evaluate(async (key) => {
       const values = (await browser.storage.local.get(key)) as Record<string, unknown>

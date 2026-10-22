@@ -1,6 +1,7 @@
 import { test, expect } from '../helpers/e2e.js'
 import { grantDevicePermission, mockIdFor } from '../helpers/e2e-devices.js'
 import type { Page } from '@playwright/test'
+import { getFirefoxBackgroundPage } from '../helpers/harness.js'
 
 const VENDOR = mockIdFor('vendor')
 
@@ -15,32 +16,34 @@ async function closeDevice(page: Page): Promise<void> {
 
 test.describe.serial('NM report request routing', () => {
   test('routes concurrent reports from page contexts independently', async ({
-    sharedPage,
-    backgroundPage,
-    vendorDevice: _vendorDevice
+    page,
+    extension,
+    vendorDevice
   }) => {
-    const origin = new URL(sharedPage.url()).origin
+    const backgroundPage = getFirefoxBackgroundPage(extension)
+    await vendorDevice.ready
+    const origin = new URL(page.url()).origin
     await backgroundPage.evaluate((siteOrigin: string) => {
       return browser.storage.local.set({ [`settings :: ${siteOrigin} :: dataPlane`]: 'nm' })
     }, origin)
-    await sharedPage.goto(`${origin}/tests/test-page.html`, { waitUntil: 'domcontentloaded' })
-    await sharedPage.waitForFunction(() => typeof navigator.hid !== 'undefined', { timeout: 15000 })
-    await sharedPage.evaluate(async () => {
+    await page.goto(`${origin}/tests/test-page.html`, { waitUntil: 'domcontentloaded' })
+    await page.waitForFunction(() => typeof navigator.hid !== 'undefined', { timeout: 15000 })
+    await page.evaluate(async () => {
       for (const device of await navigator.hid.getDevices()) {
         if (device.opened) await device.close()
         await device.forget()
       }
     })
-    expect(await grantDevicePermission(sharedPage, [VENDOR])).toBe(1)
-    await sharedPage.goto(`${origin}/tests/pages/nm-report-reqid.html`, {
+    expect(await grantDevicePermission(page, [VENDOR])).toBe(1)
+    await page.goto(`${origin}/tests/pages/nm-report-reqid.html`, {
       waitUntil: 'domcontentloaded'
     })
-    await sharedPage.waitForFunction(() => typeof navigator.hid !== 'undefined', { timeout: 15000 })
+    await page.waitForFunction(() => typeof navigator.hid !== 'undefined', { timeout: 15000 })
 
-    await sharedPage.evaluate(() => {
+    await page.evaluate(() => {
       window.postMessage({ type: 'start' }, location.origin)
     })
-    await sharedPage.waitForFunction(
+    await page.waitForFunction(
       () => {
         const results = window.tests?.results
         if (typeof results?.reportError === 'string') throw new Error(results.reportError)
@@ -49,11 +52,11 @@ test.describe.serial('NM report request routing', () => {
       { timeout: 15000 }
     )
 
-    await expect(sharedPage.evaluate(() => window.tests?.results?.reportResults)).resolves.toEqual({
+    await expect(page.evaluate(() => window.tests?.results?.reportResults)).resolves.toEqual({
       first: 'ok',
       second: 'ok'
     })
-    await closeDevice(sharedPage)
-    await sharedPage.goto(`${origin}/tests/test-page.html`, { waitUntil: 'domcontentloaded' })
+    await closeDevice(page)
+    await page.goto(`${origin}/tests/test-page.html`, { waitUntil: 'domcontentloaded' })
   })
 })
