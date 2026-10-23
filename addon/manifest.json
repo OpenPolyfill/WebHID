@@ -15,9 +15,7 @@
     "notifications",
     "theme"
   ],
-  "host_permissions": [
-    "<all_urls>"
-  ],
+  "host_permissions": ["<all_urls>"],
   "background": {
     "scripts": [
       "js/utils/bootstrap.js",
@@ -25,6 +23,7 @@
       "js/utils/resource.js",
       "js/utils/http.js",
       "js/utils/logger.js",
+      "js/utils/device-filters.js",
       "js/utils/settings.js",
       "js/utils/base64.js",
       "js/utils/descriptor-tlv.js",
@@ -37,6 +36,7 @@
       "js/background/bundle.js",
       "js/background/nm.js",
       "js/background/csp.js",
+      "js/background/native-picker.js",
       "js/background/messages.js",
       "js/background/webrequest.js",
       "js/background/index.js"
@@ -57,9 +57,7 @@
   },
   "content_scripts": [
     {
-      "matches": [
-        "<all_urls>"
-      ],
+      "matches": ["<all_urls>"],
       "js": [
         "js/utils/bootstrap.js",
         "js/utils/http.js",
@@ -75,9 +73,7 @@
       "all_frames": true
     },
     {
-      "matches": [
-        "<all_urls>"
-      ],
+      "matches": ["<all_urls>"],
       "js": [
         "js/utils/bootstrap.js",
         "js/utils/i18n.js",
@@ -102,9 +98,7 @@
     "gecko": {
       "id": "webhid@k4zoku.dev",
       "data_collection_permissions": {
-        "required": [
-          "websiteContent"
-        ],
+        "required": ["websiteContent"],
         "optional": []
       }
     }

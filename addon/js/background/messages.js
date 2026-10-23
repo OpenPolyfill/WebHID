@@ -49,6 +49,27 @@
   } = webhid.import('bgStateOps')
   const { urlOrigin, frameKey, documentFrameKey } = webhid.import('bgCsp')
   const NativeMessaging = webhid.import('NativeMessaging')
+  const groupDevices = webhid.import('groupDevices')
+  const groupIdFor = webhid.import('groupIdFor')
+  const privilegedPickerApi = browser.webhidNativePicker
+  const privilegedPicker = privilegedPickerApi
+    ? new globalThis.WebHidNativePickerHelper({
+        api: privilegedPickerApi,
+        enumerate: async (filters, exclusionFilters) => {
+          const filtered = filters.length > 0 || exclusionFilters.length > 0
+          const response = await NativeMessaging.enumerateDevices(
+            filtered ? { filters, exclusionFilters } : undefined
+          )
+          if (!http.isOk(response.s) || !Array.isArray(response.D)) {
+            throw new Error('Unable to enumerate HID devices')
+          }
+          if (filtered) decodeDeviceCollections(response.D)
+          return { devices: response.D, filtered }
+        },
+        groupDevices,
+        groupIdFor
+      })
+    : null
   const bgPacked = webhid.import('bgPacked')
   const { ensureWorkerBundle } = webhid.import('bgBundle')
 
@@ -146,6 +167,9 @@
   function clearPendingPickerForEndpoint(endpoint) {
     for (const [tabId, request] of pendingPicker) {
       if (request.ownerEndpointId !== endpoint.id && request.uiEndpointId !== endpoint.id) continue
+      if (request.mode === 'privileged') {
+        privilegedPicker.cancel(tabId, request.requestId).catch(() => {})
+      }
       pendingPicker.delete(tabId)
     }
   }
@@ -1536,12 +1560,50 @@
     const req = tabId != null ? pendingPicker.get(tabId) : null
     if (req && req.requestId === request.requestId) {
       pendingPicker.delete(tabId)
+      if (req.mode === 'privileged') privilegedPicker.cancel(tabId, req.requestId).catch(() => {})
       if (req.mode === 'pageAction') {
         restorePageAction(tabId)
         if (browser.notifications) browser.notifications.clear('webhid-picker').catch(() => {})
       }
     }
     sendResponse({ ok: true })
+    return false
+  }
+  function finishPrivilegedPicker(req, devices) {
+    if (pendingPicker.get(req.tabId) !== req) return
+    const endpoint = frameEndpoints.get(req.port)
+    if (!endpoint || endpoint.id !== req.ownerEndpointId || !endpointDocumentIsLive(endpoint)) {
+      pendingPicker.delete(req.tabId)
+      return
+    }
+    pendingPicker.delete(req.tabId)
+    const selected = devices.length > 0
+    postToContentPort(req.port, {
+      action: 'pickerResult',
+      requestId: req.requestId,
+      selected,
+      devices: selected ? devices : null
+    })
+  }
+
+  function startPrivilegedPicker(req) {
+    privilegedPicker
+      .show(req)
+      .then(({ devices }) => finishPrivilegedPicker(req, devices))
+      .catch((error) => {
+        logger.error('privileged picker failed', error)
+        finishPrivilegedPicker(req, [])
+      })
+  }
+
+  /**
+   * @param {object} request
+   * @param {object} sender
+   * @param {function(*): void} sendResponse
+   * @returns {boolean}
+   */
+  function handleGetPickerCapabilities(request, sender, sendResponse) {
+    sendResponse({ privileged: privilegedPicker != null })
     return false
   }
 
@@ -1568,7 +1630,8 @@
       filters: request.filters || [],
       exclusionFilters: request.exclusionFilters || [],
       origin: endpoint.origin,
-      mode: request.mode || 'pageAction'
+      mode:
+        request.mode === 'privileged' && !privilegedPicker ? 'modal' : request.mode || 'pageAction'
     }
     if (req.mode === 'modal') {
       const top = [...frameEndpoints.values()].find(
@@ -1589,7 +1652,8 @@
       })
     } else {
       pendingPicker.set(tabId, req)
-      if (req.mode === 'window') openPickerWindow()
+      if (req.mode === 'privileged') startPrivilegedPicker(req)
+      else if (req.mode === 'window') openPickerWindow()
       else openPickerPageAction(tabId, endpoint.origin)
     }
     sendResponse({ ok: true })
@@ -1867,6 +1931,7 @@
     getDataPlaneStatusForOrigin: handleGetDataPlaneStatus,
     setDataPlaneStatus: handleSetDataPlaneStatus,
     deviceCountChanged: handleDeviceCountChanged,
+    getPickerCapabilities: handleGetPickerCapabilities,
     showPageAction: handleShowPageAction,
     getDeviceCache: handleGetDeviceCache,
     getDeviceInfo: handleGetDeviceInfo,

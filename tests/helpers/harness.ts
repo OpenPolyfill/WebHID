@@ -32,7 +32,10 @@ function createHarnessConfig(
 ): FirefoxHarnessConfig {
   return {
     extensionPath: EXTENSION_PATH,
-    firefoxUserPrefs: { 'network.lna.enabled': false },
+    firefoxUserPrefs: {
+      'network.lna.enabled': false,
+      'extensions.experiments.enabled': true
+    },
     contextScope,
     resolveProjectOptions(projectUse) {
       const options: FirefoxHarnessProjectOptions = {}

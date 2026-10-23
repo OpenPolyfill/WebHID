@@ -9,6 +9,7 @@
     "build-for-amo": "npm run fx-build",
     "fx-build": "npm run build:addon",
     "build:addon": "node scripts/build-addon.mjs",
+    "build:addon:experiment": "node scripts/build-addon.mjs --experimental --manifest-version 3",
     "build:apk": "cd packaging/linux/alpine/webhid && abuild -r",
     "refresh:pins": "node scripts/refresh-pins.mjs",
     "build:daemon": "cargo build --release -p webhid-daemon --manifest-path $npm_package_config_cargoManifest",
@@ -69,9 +70,9 @@
     "@commitlint/cli": "^21.2.1",
     "@commitlint/config-conventional": "^21.2.0",
     "@eslint/js": "^10.0.1",
-    "@openpolyfill/firefox-addon-playwright-harness": "0.2.2",
+    "@openpolyfill/firefox-addon-playwright-harness": "0.3.0",
     "@openpolyfill/firefox-rdp": "https://registry.npmjs.org/@openpolyfill/firefox-rdp/-/firefox-rdp-0.1.0.tgz",
-    "@playwright/test": "^1.62.0",
+    "@playwright/test": "1.64.1",
     "@prettier/plugin-xml": "^3.4.2",
     "@types/firefox-webext-browser": "^143.0.0",
     "@types/node": "^26.1.2",
@@ -92,7 +93,7 @@
   "allowScripts": {
     "core-js@2.6.12": true,
     "es5-ext@0.10.64": true,
-    "@openpolyfill/firefox-addon-playwright-harness@0.2.2": true
+    "@openpolyfill/firefox-addon-playwright-harness@0.3.0": true
   },
   "overrides": {
     "adm-zip": "0.6.0",

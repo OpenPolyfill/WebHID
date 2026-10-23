@@ -15,6 +15,9 @@
   initInfoPopovers(document)
 
   const current = await loadGlobalSettings()
+  const pickerCapabilities = await browser.runtime.sendMessage({
+    action: 'getPickerCapabilities'
+  })
 
   for (const key of [
     'daemonAsNmHost',
@@ -25,9 +28,11 @@
     document.getElementById(key).checked = current[key]
   }
 
-  const { applyPlaneRadios, updatePlaneVisibility, saveDataPlane, bindRadioGroup } =
-    webhid.import('settingsUi').createSettingsUi(saveGlobalSetting, (name, value) => {
-      showStatus(`${name} = ${value}`)
+  const { applyPlaneRadios, updatePlaneVisibility, saveDataPlane, bindRadioGroup } = webhid
+    .import('settingsUi')
+    .createSettingsUi(saveGlobalSetting, (name, value) => showStatus(`${name} = ${value}`), {
+      ...pickerCapabilities,
+      savedMode: current.devicePickerMode
     })
 
   applyPlaneRadios(current, GLOBAL_DEFAULTS)

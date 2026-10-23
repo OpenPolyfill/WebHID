@@ -86,7 +86,8 @@ If the active tab contains multiple persistent WebHID frame scopes, the site-nam
 - **Device Picker Mode**: how the chooser appears.
   - **Modal** (default): an overlay on the page. Use unless the site's own design conflicts with it.
   - **Page Action**: a popup from the address bar; use if the overlay gets in the way.
-  - **Window**: a separate popup window; use on heavy pages that slow the overlay down.
+  - **Window**: a separate popup window.
+  - **Privileged doorhanger**: browser-native chooser, shown only when the optional privileged picker API is available.
 - **Worker Polyfill**: support for sites that use WebHID inside Dedicated Workers.
   - **Off** (default): most sites do not need it.
   - **On**: injects the WebHID API into Dedicated Worker scripts. `requestDevice()` remains available only on the page as required by the WebHID model. Service Worker WebHID is not provided by the polyfill. Reload the page after changing.

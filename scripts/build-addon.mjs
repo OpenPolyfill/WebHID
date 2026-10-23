@@ -9,13 +9,15 @@ import webExt from 'web-ext'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const SRC = join(__dirname, '..', 'addon')
 const DIST = join(__dirname, '..', 'dist', 'addon')
+const EXPERIMENTAL_DIST = join(__dirname, '..', 'dist', 'addon-experimental')
 const CHROMIUM_DIST = join(__dirname, '..', 'dist', 'chromium')
 
 const args = parseArgs({
   args: process.argv.slice(2),
   options: {
     'manifest-version': { type: 'string', alias: 'mv' },
-    target: { type: 'string', alias: 't' }
+    target: { type: 'string', alias: 't' },
+    experimental: { type: 'boolean' }
   }
 })
 const MANIFEST_VERSION = args.values['manifest-version'] || process.env.MV || '3'
@@ -134,8 +136,14 @@ function collectRuntimeResources(add) {
   if (existsSync(join(SRC, fragment))) add(fragment)
 }
 
-function collectManifestFiles(manifestPath) {
-  const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8'))
+function parseManifest(manifestInput) {
+  return typeof manifestInput === 'string'
+    ? JSON.parse(readFileSync(manifestInput, 'utf-8'))
+    : manifestInput
+}
+
+function collectManifestFiles(manifestInput) {
+  const manifest = parseManifest(manifestInput)
   const files = new Set()
 
   files.add('')
@@ -149,6 +157,10 @@ function collectManifestFiles(manifestPath) {
   collectIcons(manifest, add)
   collectWebAccessible(manifest, add)
   collectLocales(manifest, add)
+  for (const experiment of Object.values(manifest.experiment_apis || {})) {
+    add(experiment.schema)
+    add(experiment.parent?.script)
+  }
   collectRuntimeResources(add)
 
   return files
@@ -209,11 +221,15 @@ async function lintAddon() {
   }
 }
 
-async function writeDistFiles(allowedFiles, manifestPath, distDir = DIST) {
+async function writeDistFiles(allowedFiles, manifestInput, distDir = DIST) {
   if (existsSync(distDir)) {
     await rm(distDir, { recursive: true, force: true })
   }
   await mkdir(distDir, { recursive: true })
+  const manifestContent =
+    typeof manifestInput === 'string'
+      ? await readFile(manifestInput, 'utf-8')
+      : JSON.stringify(manifestInput, null, 2) + '\n'
 
   let jsCount = 0
   let cssCount = 0
@@ -222,7 +238,6 @@ async function writeDistFiles(allowedFiles, manifestPath, distDir = DIST) {
 
   for (const rel of allowedFiles) {
     if (rel === '') {
-      const manifestContent = await readFile(manifestPath, 'utf-8')
       await writeFile(join(distDir, 'manifest.json'), manifestContent, 'utf-8')
       copyCount++
       continue
@@ -366,12 +381,34 @@ async function build() {
     console.error(`Manifest ${srcName} not found`)
     process.exit(1)
   }
-
-  const manifestFiles = collectManifestFiles(manifestPath)
+  const manifest = parseManifest(manifestPath)
+  if (args.values.experimental) {
+    manifest.experiment_apis = {
+      webhidNativePicker: {
+        schema: 'experiments/webhidNativePicker/schema.json',
+        parent: {
+          scopes: ['addon_parent'],
+          paths: [
+            ['webhidNativePicker', 'show'],
+            ['webhidNativePicker', 'update'],
+            ['webhidNativePicker', 'cancel'],
+            ['webhidNativePicker', 'getState']
+          ],
+          script: 'experiments/webhidNativePicker/api.js'
+        }
+      }
+    }
+  }
+  const manifestFiles = collectManifestFiles(manifest)
   const allowedFiles = collectAllFiles(manifestFiles)
-  console.log(`Source manifest references ${allowedFiles.size} files`)
-
-  await writeDistFiles(allowedFiles, manifestPath)
+  const distDir = args.values.experimental ? EXPERIMENTAL_DIST : DIST
+  const distLabel = args.values.experimental ? 'experimental Firefox manifest' : 'source manifest'
+  console.log(`${distLabel} references ${allowedFiles.size} files`)
+  await writeDistFiles(allowedFiles, manifest, distDir)
+  if (args.values.experimental) {
+    console.log(`Built experimental Firefox addon in ${relative(join(__dirname, '..'), distDir)}/`)
+    return
+  }
   await packageXpi()
 }
 

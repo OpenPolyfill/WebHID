@@ -1,0 +1,122 @@
+[
+  {
+    "namespace": "webhidNativePicker",
+    "functions": [
+      {
+        "name": "show",
+        "type": "function",
+        "async": true,
+        "parameters": [
+          {
+            "name": "input",
+            "type": "object",
+            "properties": {
+              "tabId": { "type": "integer" },
+              "requestId": { "type": "string" },
+              "name": { "type": "string" },
+              "message": { "type": "string" },
+              "groups": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": { "type": "string" },
+                    "label": { "type": "string" }
+                  }
+                }
+              },
+              "loading": { "type": "boolean" },
+              "selectLabel": { "type": "string" },
+              "emptyText": { "type": "string" },
+              "loadingText": { "type": "string" },
+              "errorText": { "type": "string" },
+              "connectLabel": { "type": "string" },
+              "cancelLabel": { "type": "string" }
+            }
+          }
+        ],
+        "returns": {
+          "type": "object",
+          "properties": {
+            "requestId": { "type": "string", "optional": true },
+            "selected": { "type": "boolean", "optional": true },
+            "groupId": { "type": ["string", "null"], "optional": true },
+            "error": { "type": "string", "optional": true }
+          }
+        }
+      },
+      {
+        "name": "update",
+        "type": "function",
+        "async": true,
+        "parameters": [
+          {
+            "name": "input",
+            "type": "object",
+            "properties": {
+              "tabId": { "type": "integer" },
+              "requestId": { "type": "string" },
+              "groups": {
+                "type": "array",
+                "optional": true,
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": { "type": "string" },
+                    "label": { "type": "string" }
+                  }
+                }
+              },
+              "loading": { "type": "boolean", "optional": true },
+              "error": { "type": "string", "optional": true },
+              "emptyText": { "type": "string", "optional": true }
+            }
+          }
+        ],
+        "returns": { "type": "boolean" }
+      },
+      {
+        "name": "cancel",
+        "type": "function",
+        "async": true,
+        "parameters": [
+          {
+            "name": "input",
+            "type": "object",
+            "properties": {
+              "tabId": { "type": "integer" },
+              "requestId": { "type": "string" }
+            }
+          }
+        ],
+        "returns": { "type": "boolean" }
+      },
+      {
+        "name": "getState",
+        "type": "function",
+        "async": true,
+        "parameters": [
+          {
+            "name": "input",
+            "type": "object",
+            "properties": {
+              "tabId": { "type": "integer" },
+              "requestId": { "type": "string" }
+            }
+          }
+        ],
+        "returns": {
+          "type": "object",
+          "properties": {
+            "phase": { "type": "string" },
+            "requestId": { "type": "string", "optional": true },
+            "loading": { "type": "boolean", "optional": true },
+            "error": { "type": "string", "optional": true },
+            "filterApplied": { "type": "boolean", "optional": true },
+            "deviceCount": { "type": "integer", "optional": true }
+          }
+        }
+      }
+    ]
+  }
+]

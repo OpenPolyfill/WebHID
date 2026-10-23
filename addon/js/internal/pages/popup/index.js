@@ -20,6 +20,9 @@
   localizeHTML(document)
   initInfoPopovers(document)
   const globalSettings = await loadGlobalSettings()
+  const pickerCapabilities = await browser.runtime.sendMessage({
+    action: 'getPickerCapabilities'
+  })
 
   /** @type {object|undefined} */
   let tab
@@ -110,8 +113,7 @@
    */
   function labelForTarget(target) {
     if (!target) return origin || t('popupNoSite')
-    if (target.kind !== 'opaque' || !target.persistentOrigin)
-      return target.label || target.origin
+    if (target.kind !== 'opaque' || !target.persistentOrigin) return target.label || target.origin
     const parts = target.persistentOrigin.split('|')
     return parts.length === 3 && parts[0] === 'opaque'
       ? `${parts[2]} (Opaque iframe)`
@@ -294,6 +296,9 @@
    */
   function applySettingsToUI() {
     applyPlaneRadios(settings, GLOBAL_DEFAULTS)
+    if (settings.devicePickerMode === 'privileged' && !pickerCapabilities.privileged) {
+      saveSetting('devicePickerMode', 'modal')
+    }
     /** @type {HTMLInputElement} */
     document.getElementById('workerPolyfillEnabled').checked =
       settings.workerPolyfillEnabled || false
@@ -309,7 +314,7 @@
   }
 
   const { applyPlaneRadios, updatePlaneVisibility, saveDataPlane, bindRadioGroup } =
-    settingsUi.createSettingsUi(saveSetting, () => refreshStatus())
+    settingsUi.createSettingsUi(saveSetting, () => refreshStatus(), pickerCapabilities)
 
   bindRadioGroup('devicePickerMode')
   bindRadioGroup('workerSpawnMode')

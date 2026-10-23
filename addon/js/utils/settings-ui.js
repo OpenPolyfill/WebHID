@@ -1,6 +1,7 @@
 ;(function () {
   const webhid = globalThis.webhid
   const isChromium = webhid.import('isChromium')
+  let privilegedPickerAvailable = false
 
   /**
    * Checks the radio with the given name/value.
@@ -46,7 +47,11 @@
   function applyPlaneRadios(s, defaults) {
     setRadioValue('dataPlane', effectiveDataPlaneValue(s))
     let pickerMode = s.devicePickerMode || defaults.devicePickerMode
-    if (isChromium && pickerMode === 'pageAction') pickerMode = 'modal'
+    if (
+      (isChromium && pickerMode === 'pageAction') ||
+      (pickerMode === 'privileged' && !privilegedPickerAvailable)
+    )
+      pickerMode = 'modal'
     setRadioValue('devicePickerMode', pickerMode)
     setRadioValue('workerSpawnMode', s.workerSpawnMode || defaults.workerSpawnMode)
     setRadioValue('logLevel', String(s.logLevel))
@@ -86,7 +91,15 @@
    * @param {(name: string, value: any) => void} [afterSave]
    * @returns {{applyPlaneRadios: typeof applyPlaneRadios, updatePlaneVisibility: typeof updatePlaneVisibility, saveDataPlane: (value: string) => any, bindRadioGroup: (name: string, transform?: (value: string) => any) => void}}
    */
-  function createSettingsUi(save, afterSave) {
+  function createSettingsUi(save, afterSave, pickerCapabilities = {}) {
+    privilegedPickerAvailable = pickerCapabilities.privileged === true
+    const privilegedPicker = document.querySelector(
+      'input[name="devicePickerMode"][value="privileged"]'
+    )
+    if (privilegedPicker && !privilegedPickerAvailable) {
+      privilegedPicker.closest('label').style.display = 'none'
+      if (pickerCapabilities.savedMode === 'privileged') save('devicePickerMode', 'modal')
+    }
     hideChromiumOptions()
 
     /**
