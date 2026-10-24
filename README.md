@@ -123,6 +123,6 @@ The technical side of this project lives in the docs:
 - [Architecture](docs/ARCHITECTURE.md): system design, data plane, security, reconnect
 - [Spec Compliance](docs/SPECIFICATION.md): WebHID spec compliance report with item-level evidence
 - [Data Path Analysis](docs/DATA_PATH.md): concrete runtime paths and application-level handoff accounting
-- [Benchmark Report](docs/BENCHMARK.md): automated image-pipeline and 8000Hz loss benchmarks for the supported data planes and Chromium native WebHID, with per-report latency, walltime results, and RDP profiling
+- [Benchmark Report](docs/BENCHMARK.md): automated Firefox image-pipeline and 8000Hz loss benchmarks with per-report latency, walltime results, and RDP profiling
 - [Development Guide](docs/DEVELOPMENT.md): building, testing, debugging, packaging
 - [Installation Guide](docs/INSTALLATION.md): platform-specific install instructions and recommended settings

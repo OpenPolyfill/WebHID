@@ -10,7 +10,7 @@ export default defineConfig({
     {
       name: 'firefox-benchmark',
       testDir: './benchmark',
-      testIgnore: ['**/chromium/**', '**/chromium-addon/**', '**/loss/**'],
+      testIgnore: ['**/loss/**'],
       use: {
         browserName: 'firefox',
         daemonMode: 'daemon-nm',
@@ -40,26 +40,5 @@ export default defineConfig({
         launchOptions: { firefoxUserPrefs: { [key: string]: boolean } }
       }
     },
-    {
-      name: 'chromium-benchmark',
-      testDir: './benchmark/chromium',
-      timeout: 600000,
-      use: {
-        browserName: 'chromium',
-        headless: true,
-        benchmarkRuns: 5
-      } as PlaywrightUseOptions & { benchmarkRuns: number }
-    },
-    {
-      name: 'chromium-addon-benchmark',
-      testDir: './benchmark/chromium-addon',
-      timeout: 600000,
-      use: {
-        browserName: 'chromium',
-        channel: 'chromium',
-        headless: true,
-        benchmarkRuns: 10
-      } as PlaywrightUseOptions & { benchmarkRuns: number }
-    }
   ]
 })

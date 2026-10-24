@@ -2,7 +2,7 @@
 
 ## Automated image-pipeline benchmark
 
-A Playwright-driven end-to-end benchmark measuring the full data-plane round-trip automatically. The Firefox project (`firefox-benchmark`) exercises the three production modes, nm, ws, and worker wt, plus `wt-inpage`, a benchmark-only WT configuration. `wt-inpage` sets `dataPlane: 'wt'` with `useWorker: false`, so the page MAIN world owns transport handling and parsing and receives the derived transport authentication value needed to establish WT, not the daemon Session bearer token. It is retained to measure the performance cost of moving that work onto the page main thread, performs worse under page CPU and render load, and is hidden from the normal settings UI. It is not a supported user-facing data plane. The Chromium projects run native WebHID (`chromium-benchmark`) and the addon on the same Chromium build (`chromium-addon-benchmark`) across the same benchmark modes.
+A Playwright-driven end-to-end benchmark measures the full data-plane round-trip automatically. The Firefox project (`firefox-benchmark`) covers the production modes nm, ws, and worker wt, plus `wt-inpage`, a benchmark-only WT configuration. `wt-inpage` sets `dataPlane: 'wt'` with `useWorker: false`, so the page MAIN world owns transport handling and parsing and receives the derived transport authentication value needed to establish WT, not the daemon Session bearer token. It measures the cost of moving this work to the page main thread, performs worse under CPU and render load, and is hidden from normal settings. It is not a supported user-facing data plane.
 
 **Scenario**: a benchmark page fetches a small PNG fixture
 (`tests/fixtures/images/sample.png`, the project icon, ~32KB), chunks it into
@@ -49,32 +49,9 @@ npm run test:benchmark
 
 Standalone project, `daemonMode: 'daemon-nm'`, Firefox only. The production modes are separate specs (`benchmark-ws.spec.ts`, `benchmark-wt.spec.ts`, and `benchmark-nm.spec.ts`), each running in its own worker, so each gets an identical cold start (fresh Firefox, profile, daemon, grant) with no mid-session toggle. `benchmark-wt-inpage.spec.ts` separately exercises the benchmark-only in-page configuration. The project disables `privacy.reduceTimerPrecision` (the harness Firefox otherwise quantizes `performance.now()` to 1ms), so per-report latency timestamps are true floats. The data plane is selected by writing `settings :: dataPlane` (global and site-scoped) to storage before the benchmark page loads, so the bridge handshakes with the target mode from the start instead of racing a mid-session `storage.onChanged` update.
 
-A separate **Chromium project** (`chromium-benchmark`) benchmarks native
-WebHID (no addon, no daemon; the mock talks straight to `/dev/hidraw`). It
-runs fully automated and headless: `npm run test:benchmark:chromium`. WebHID
-cannot be granted via CDP (`Browser.grantPermissions` rejects `hid`;
-`DeviceAccess` does not cover the WebHID chooser), so the mock is pre-granted
-with the `WebHidAllowDevicesForUrls` policy and the benchmark page's own
-`open()` (`getDevices()`-based) finds it without ever touching
-`requestDevice`/the chooser. The policy matches origins including the port, so
-the benchmark serves on the fixed port 8123 and the policy file must contain
-exactly `http://localhost:8123` (see the spec header for the JSON and the
-install path). Chromium coarsens
-`performance.now()` to 100us with no flag to disable that clamp, so the
-benchmark page is served cross-origin-isolated (COOP/COEP, `tests/serve.ts`)
-to get 5us timestamps instead.
+The Chromium benchmark projects and their run scripts were removed on 2026-10-24. Chromium measurements in the archived results section below are historical and are not runnable from the current suite.
 
-The **addon Chromium project** (`chromium-addon-benchmark`, `npm run test:benchmark:chromium:addon`) runs the same page on the same Chromium build with the addon loaded unpacked (`TARGET=chromium` build, `--disable-features=WebHID` removes native `navigator.hid`). It exercises three production modes and the benchmark-only `wt-inpage` mode. The page has no CSP, so ws/wt spawn their worker via the blob path; run this project on its own (the config pins `workers: 1`), an early wt execution alongside other benchmarks showed ~4.7ms p50 while sequential runs are stable at ~0.6ms. Init `total` is measured from the device `open` mark (run #1 send-start minus open-start) for every series, so the modal-picker pairing that precedes open in the addon flow is excluded and totals stay comparable across modes; per-report and whole-run numbers are measured identically for every mode. Harness conventions live in `tests/helpers/chromium-addon.ts` and AGENTS.md.
-
-All modes run
-one unmeasured warm-up (no painting; the page shows "Warming up..."), an
-awaited 96-report priming burst so run #1 starts with a clear path,
-then the measured runs (the
-count is the `BENCHMARK_RUNS` env var, falling back to the project's
-`benchmarkRuns` use option, default 5) with run-level retries (a dropped or
-late report invalidates the run, it does not produce a bogus number). The
-summary row reports min/p50/p90/p95/max (nearest-rank percentiles; with the
-default 5 runs p90 and p95 collapse onto max).
+The Firefox modes run one unmeasured warm-up (no painting; the page shows "Warming up..."), an awaited 96-report priming burst so run #1 starts with a clear path, then the measured runs (the count is the `BENCHMARK_RUNS` env var, falling back to the project's `benchmarkRuns` use option, default 5) with run-level retries (a dropped or late report invalidates the run, it does not produce a bogus number). The summary row reports min/p50/p90/p95/max (nearest-rank percentiles; with the default 5 runs p90 and p95 collapse onto max).
 
 ## Input-report loss benchmark (8000Hz, render-saturated page)
 
@@ -82,16 +59,9 @@ The plain image-pipeline benchmark never drops reports (idle pages do not exerci
 
 ---
 
-## Automated benchmark results (10 runs per mode)
+## Archived benchmark results (10 runs per mode)
 
-Fresh page per spec (a new tab is created and closed around each spec, so no
-mode measures on a page carrying JIT/GC/canvas state from earlier ones; the
-harness's default tab stays untouched). `BENCHMARK_RUNS=10`, all four Firefox
-modes in one worker. Each mode opens the mock device cold, runs one warm-up
-burst, then 10 measured runs; a dropped or late report invalidates a run and
-it is retried. The `chr-*` series adds the same-engine addon-vs-native
-comparison on the same Chromium build; all four data planes run, see the
-dataset tables.
+These tables preserve measurements recorded by earlier runs. Firefox modes were measured in one worker; the `chr-*` series came from the removed Chromium projects and is historical reference data only.
 
 Init time per mode, stacked:
 

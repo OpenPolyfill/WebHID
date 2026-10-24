@@ -7,7 +7,7 @@ export default defineConfig({
   expect: { timeout: 10000 },
   fullyParallel: false,
   retries: 0,
-  globalSetup: fileURLToPath(new URL('./global-setup.mjs', import.meta.url)),
+  globalSetup: fileURLToPath(import.meta.resolve('@openpolyfill/firefox-addon-playwright-harness/globalSetup')),
   use: {
     headless: true,
     screenshot: 'only-on-failure',

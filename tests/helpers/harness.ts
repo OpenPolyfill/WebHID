@@ -1,4 +1,4 @@
-import type { Route, TestType } from '@playwright/test'
+import type { TestType } from '@playwright/test'
 import { createFirefoxFixtures } from '@openpolyfill/firefox-addon-playwright-harness/fixtures'
 import type {
   FirefoxHarnessConfig,
@@ -15,7 +15,6 @@ export const EXTENSION_PATH = process.env.EXTENSION_PATH
   : resolve(directoryPath, '..', '..', 'addon')
 const EXTENSION_ID = 'webhid@k4zoku.dev'
 
-export const defaultRouteHandler = (route: Route) => route.continue()
 
 function createHarnessConfig(
   contextScope: NonNullable<FirefoxHarnessConfig['contextScope']>

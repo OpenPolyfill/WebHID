@@ -56,11 +56,9 @@
     "test:e2e": "npx playwright test --config $npm_package_config_playwrightConfig --project=firefox-conformance-e2e && npx playwright test --config $npm_package_config_playwrightConfig --project=firefox-regression",
     "test:benchmark": "npx playwright test --config $npm_package_config_playwrightBenchmarkConfig --project=firefox-benchmark",
     "test:benchmark:loss": "npx playwright test --config $npm_package_config_playwrightBenchmarkConfig --project=firefox-benchmark-loss",
-    "test:benchmark:chromium": "npx playwright test --config $npm_package_config_playwrightBenchmarkConfig --project=chromium-benchmark",
     "test:headed": "npx playwright test --config $npm_package_config_playwrightConfig --headed --project=firefox-conformance-browser",
     "test:rs": "cargo test --manifest-path $npm_package_config_cargoManifest",
-    "prepare": "husky",
-    "test:benchmark:chromium:addon": "npx playwright test --config $npm_package_config_playwrightBenchmarkConfig --project=chromium-addon-benchmark"
+    "prepare": "husky"
   },
   "name": "ff-webhid",
   "private": true,
@@ -80,8 +78,6 @@
     "eslint": "^10.8.0",
     "eslint-plugin-jsdoc": "^63.3.2",
     "husky": "^9.1.7",
-    "jiti": "^2.7.0",
-    "jszip": "^3.10.1",
     "prettier": "^3.9.6",
     "terser": "^5.49.0",
     "typescript-eslint": "^8.65.0",
