@@ -1,5 +1,4 @@
 import { test, configureDaemonMode } from '../helpers/e2e.js'
-import { getFirefoxBackgroundPage } from '../helpers/harness.js'
 import { withTimeout } from '../helpers/test-utils.js'
 import { type Page } from '@playwright/test'
 import type { FirefoxExtension } from '@openpolyfill/firefox-addon-playwright-harness'
@@ -78,7 +77,7 @@ export interface BenchmarkResult {
 }
 
 export async function setSiteSettings(
-  bg: { evaluate: Page['evaluate'] },
+  extension: FirefoxExtension,
   origin: string,
   opts: {
     dataPlane?: 'ws' | 'wt' | 'nm'
@@ -93,11 +92,8 @@ export async function setSiteSettings(
     keys[`settings :: ${name}`] = value
     keys[`settings :: ${origin} :: ${name}`] = value
   }
-  await bg.evaluate(
-    ({ keys }: { keys: Record<string, string | number | boolean> }) =>
-      browser.storage.local.set(keys),
-    { keys }
-  )
+  await extension.background!.evaluate(({ keys }: { keys: Record<string, string | number | boolean> }) =>
+    browser.storage.local.set(keys), [{ keys }])
 }
 
 export function chunkImage(img: Buffer): number[][] {
@@ -236,21 +232,21 @@ async function runWarmupWithRetry(
 }
 
 async function configurePageSettings(
-  backgroundPage: { evaluate: Page['evaluate'] },
+  extension: FirefoxExtension,
   origin: string,
   mode: 'ws' | 'wt' | 'nm',
   opts?: { inPage?: boolean }
 ): Promise<void> {
-  await setSiteSettings(backgroundPage, origin, { dataPlane: mode })
+  await setSiteSettings(extension, origin, { dataPlane: mode })
   const spawnMode = process.env.BENCHMARK_WORKER_SPAWN
   if (spawnMode === 'blob' || spawnMode === 'shadow') {
-    await setSiteSettings(backgroundPage, origin, { workerSpawnMode: spawnMode })
+    await setSiteSettings(extension, origin, { workerSpawnMode: spawnMode })
   }
   if (opts?.inPage) {
-    await setSiteSettings(backgroundPage, origin, { useWorker: false })
-    await setSiteSettings(backgroundPage, origin, { logLevel: 3 })
+    await setSiteSettings(extension, origin, { useWorker: false })
+    await setSiteSettings(extension, origin, { logLevel: 3 })
   } else if (process.env.BENCHMARK_DEBUG_LOG) {
-    await setSiteSettings(backgroundPage, origin, { logLevel: 3 })
+    await setSiteSettings(extension, origin, { logLevel: 3 })
   }
 }
 
@@ -294,24 +290,20 @@ async function verifyChunkCount(page: Page): Promise<void> {
 }
 
 async function resetBenchmarkSettings(
-  backgroundPage: { evaluate: Page['evaluate'] },
+  extension: FirefoxExtension,
   origin: string
 ): Promise<void> {
-  await backgroundPage
-    .evaluate(
-      ({ origin }: { origin: string }) =>
-        browser.storage.local.remove([
-          'settings :: dataPlane',
-          'settings :: useWorker',
-          'settings :: logLevel',
-          'settings :: workerSpawnMode',
-          `settings :: ${origin} :: dataPlane`,
-          `settings :: ${origin} :: useWorker`,
-          `settings :: ${origin} :: logLevel`,
-          `settings :: ${origin} :: workerSpawnMode`
-        ]),
-      { origin }
-    )
+  await extension.background!.evaluate(({ origin }: { origin: string }) =>
+    browser.storage.local.remove([
+      'settings :: dataPlane',
+      'settings :: useWorker',
+      'settings :: logLevel',
+      'settings :: workerSpawnMode',
+      `settings :: ${origin} :: dataPlane`,
+      `settings :: ${origin} :: useWorker`,
+      `settings :: ${origin} :: logLevel`,
+      `settings :: ${origin} :: workerSpawnMode`
+    ]), [{ origin }])
     .catch(() => {})
 }
 
@@ -358,11 +350,10 @@ export async function benchmarkMode(
   opts?: { inPage?: boolean }
 ): Promise<BenchmarkResult> {
   const { page, extension, vendorDevice, httpPort, daemonMode, rdp } = fixtures
-  const backgroundPage = getFirefoxBackgroundPage(extension)
   const origin = `http://localhost:${httpPort}`
 
-  await configureDaemonMode(backgroundPage, daemonMode)
-  await configurePageSettings(backgroundPage, origin, mode, opts)
+  await configureDaemonMode(extension, daemonMode)
+  await configurePageSettings(extension, origin, mode, opts)
   await prepareBenchmarkPage(page, origin)
   await verifyChunkCount(page)
 
@@ -370,7 +361,7 @@ export async function benchmarkMode(
   const profiler = profileDir ? await startProfiler(rdp) : null
 
   return await runBenchmark(page, vendorDevice, { inPage: !!opts?.inPage })
-    .finally(() => resetBenchmarkSettings(backgroundPage, origin))
+    .finally(() => resetBenchmarkSettings(extension, origin))
     .finally(async () => {
       if (profiler) {
         await saveProfile(profiler, profileDir!, mode, !!opts?.inPage)

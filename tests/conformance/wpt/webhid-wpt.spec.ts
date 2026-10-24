@@ -1,5 +1,4 @@
 import { test, expect } from '../../helpers/browser.js'
-import { getFirefoxBackgroundPage } from '../../helpers/harness.js'
 import type { Page } from '@playwright/test'
 
 const WORKER_SETTING = 'settings :: workerPolyfillEnabled'
@@ -56,20 +55,22 @@ const wptCases = [
 ] as const
 
 test('WPT WebHID Permissions Policy cases', async ({ extension, page, wptUrl }) => {
-  const backgroundPage = getFirefoxBackgroundPage(extension)
-  const previousWorkerSetting = await backgroundPage.evaluate(async (key) => {
-    const values = (await browser.storage.local.get(key)) as Record<string, boolean | undefined>
-    return {
-      exists: Object.prototype.hasOwnProperty.call(values, key),
-      value: values[key]
-    }
-  }, WORKER_SETTING)
+  const previousWorkerSetting = await extension.background!.evaluate<{
+    exists: boolean
+    value: boolean | undefined
+  }>(
+    async (key: string) => {
+      const values = (await browser.storage.local.get(key)) as Record<string, boolean | undefined>
+      return {
+        exists: Object.prototype.hasOwnProperty.call(values, key),
+        value: values[key]
+      }
+    },
+    [WORKER_SETTING]
+  )
 
   try {
-    await backgroundPage.evaluate(
-      (key) => browser.storage.local.set({ [key]: true }),
-      WORKER_SETTING
-    )
+    await extension.background!.evaluate((key) => browser.storage.local.set({ [key]: true }), [WORKER_SETTING])
     await page.context().addInitScript(() => {
       if (window !== window.top) return
       const currentWindow = window as WptWindow
@@ -112,12 +113,15 @@ test('WPT WebHID Permissions Policy cases', async ({ extension, page, wptUrl }) 
     )
     expect(failures).toEqual([])
   } finally {
-    await backgroundPage.evaluate(
-      ({ key, previous }) =>
+    await extension.background!.evaluate(
+      ({ key, previous }: {
+        key: string
+        previous: { exists: boolean; value: boolean | undefined }
+      }) =>
         previous.exists
           ? browser.storage.local.set({ [key]: previous.value })
           : browser.storage.local.remove(key),
-      { key: WORKER_SETTING, previous: previousWorkerSetting }
+      [{ key: WORKER_SETTING, previous: previousWorkerSetting }]
     )
   }
 })

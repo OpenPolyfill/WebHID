@@ -1,7 +1,6 @@
 import { test, expect } from '../helpers/e2e.js'
 import { grantDevicePermission, mockIdFor } from '../helpers/e2e-devices.js'
 import type { Page } from '@playwright/test'
-import { getFirefoxBackgroundPage } from '../helpers/harness.js'
 
 const VENDOR = mockIdFor('vendor')
 
@@ -20,12 +19,11 @@ test.describe.serial('NM report request routing', () => {
     extension,
     vendorDevice
   }) => {
-    const backgroundPage = getFirefoxBackgroundPage(extension)
     await vendorDevice.ready
     const origin = new URL(page.url()).origin
-    await backgroundPage.evaluate((siteOrigin: string) => {
+    await extension.background!.evaluate((siteOrigin: string) => {
       return browser.storage.local.set({ [`settings :: ${siteOrigin} :: dataPlane`]: 'nm' })
-    }, origin)
+    }, [origin])
     await page.goto(`${origin}/tests/test-page.html`, { waitUntil: 'domcontentloaded' })
     await page.waitForFunction(() => typeof navigator.hid !== 'undefined', { timeout: 15000 })
     await page.evaluate(async () => {

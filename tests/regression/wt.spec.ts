@@ -1,7 +1,6 @@
 import { test, expect } from '../helpers/e2e.js'
 import { grantDevicePermission } from '../helpers/e2e-devices.js'
 import { sendInput, waitForOutputReport } from '../helpers/e2e-process.js'
-import { getFirefoxBackgroundPage } from '../helpers/harness.js'
 import {
   armInputReport,
   VENDOR,
@@ -15,20 +14,28 @@ test('WebHID report I/O works with the WebTransport dataPlane setting', async ({
   extension,
   vendorDevice
 }) => {
-  const backgroundPage = getFirefoxBackgroundPage(extension)
   const origin = new URL(page.url()).origin
   const settingKey = `settings :: ${origin} :: dataPlane`
 
-  const previous = await backgroundPage.evaluate(async (key) => {
-    const values = (await browser.storage.local.get(key)) as Record<string, unknown>
-    return {
-      exists: Object.prototype.hasOwnProperty.call(values, key),
-      value: values[key] as string | undefined
-    }
-  }, settingKey)
+  const previous = await extension.background!.evaluate<{
+    exists: boolean
+    value: string | undefined
+  }>(
+    async (key: string) => {
+      const values = (await browser.storage.local.get(key)) as Record<string, unknown>
+      return {
+        exists: Object.prototype.hasOwnProperty.call(values, key),
+        value: values[key] as string | undefined
+      }
+    },
+    [settingKey]
+  )
 
   try {
-    await backgroundPage.evaluate((key) => browser.storage.local.set({ [key]: 'wt' }), settingKey)
+    await extension.background!.evaluate<void>(
+      (key: string) => browser.storage.local.set({ [key]: 'wt' }),
+      [settingKey]
+    )
     await page.reload({ waitUntil: 'domcontentloaded' })
     await page.waitForFunction(() => typeof navigator.hid !== 'undefined', {
       timeout: 15000
@@ -73,12 +80,13 @@ test('WebHID report I/O works with the WebTransport dataPlane setting', async ({
     }, VENDOR_CTX)
   } finally {
     if (previous.exists) {
-      await backgroundPage.evaluate(
-        ({ key, value }) => browser.storage.local.set({ [key]: value }),
-        { key: settingKey, value: previous.value }
+      await extension.background!.evaluate<void>(
+        ({ key, value }: { key: string; value: string }) =>
+          browser.storage.local.set({ [key]: value }),
+        [{ key: settingKey, value: previous.value }]
       )
     } else {
-      await backgroundPage.evaluate((key) => browser.storage.local.remove(key), settingKey)
+      await extension.background!.evaluate((key) => browser.storage.local.remove(key), [settingKey])
     }
     await page.reload({ waitUntil: 'domcontentloaded' })
   }

@@ -1,5 +1,4 @@
 import { test, expect } from '../../helpers/e2e.js'
-import { getFirefoxBackgroundPage } from '../../helpers/harness.js'
 import { VENDOR } from '../../helpers/e2e-reports.js'
 import { mockDeviceName } from '../../helpers/e2e-devices.js'
 
@@ -17,16 +16,12 @@ test('privileged picker renders and grants selection in Firefox chrome', async (
   extension,
   vendorDevice
 }) => {
-  const backgroundPage = getFirefoxBackgroundPage(extension)
   const requesterUrl = page.url()
   const origin = new URL(requesterUrl).origin
   const settingKey = `settings :: ${origin} :: devicePickerMode`
-  const available = await backgroundPage.evaluate(() => Boolean(browser.webhidNativePicker))
+  const available = await extension.background!.evaluate(() => Boolean(browser.webhidNativePicker))
   test.skip(!available, 'Requires the experimental addon build with the privileged picker API.')
-  const previousResult: unknown = await backgroundPage.evaluate(
-    (key: string) => browser.storage.local.get(key),
-    settingKey
-  )
+  const previousResult: unknown = await extension.background!.evaluate((key: string) => browser.storage.local.get(key), [settingKey])
   if (!previousResult || typeof previousResult !== 'object' || Array.isArray(previousResult)) {
     throw new Error('Unable to read the previous picker setting')
   }
@@ -34,16 +29,13 @@ test('privileged picker renders and grants selection in Firefox chrome', async (
   const hadPrevious = Object.hasOwn(previous, settingKey)
   const previousMode = previous[settingKey]
 
-  await backgroundPage.evaluate(
-    (key: string) => browser.storage.local.set({ [key]: 'privileged' }),
-    settingKey
-  )
+  await extension.background!.evaluate((key: string) => browser.storage.local.set({ [key]: 'privileged' }), [settingKey])
   try {
     await vendorDevice.ready
     await page.evaluate((filters) => window.tests!.helper.requestDevice!(filters), [VENDOR])
     await expect
       .poll(() =>
-        backgroundPage.evaluate(() => {
+        extension.background!.evaluate(() => {
           const backgroundWebhid = (
             globalThis as unknown as {
               webhid: {
@@ -88,13 +80,10 @@ test('privileged picker renders and grants selection in Firefox chrome', async (
     expect(await result).toBe(1)
   } finally {
     if (hadPrevious && typeof previousMode === 'string') {
-      await backgroundPage.evaluate(
-        ({ key, value }: { key: string; value: string }) =>
-          browser.storage.local.set({ [key]: value }),
-        { key: settingKey, value: previousMode }
-      )
+      await extension.background!.evaluate(({ key, value }: { key: string; value: string }) =>
+        browser.storage.local.set({ [key]: value }), [{ key: settingKey, value: previousMode }])
     } else {
-      await backgroundPage.evaluate((key: string) => browser.storage.local.remove(key), settingKey)
+      await extension.background!.evaluate((key: string) => browser.storage.local.remove(key), [settingKey])
     }
   }
 })

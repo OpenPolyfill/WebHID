@@ -1,6 +1,5 @@
 import { test, expect } from '../helpers/browser.js'
 import type { Frame, Page } from '@playwright/test'
-import { getFirefoxBackgroundPage } from '../helpers/harness.js'
 
 async function frameWithId(page: Page, id: string, urlSubstring: string): Promise<Frame> {
   await expect
@@ -32,7 +31,6 @@ test.describe('OpenPolyfill permissions policy internals', () => {
     crossUrl,
     extension
   }) => {
-    const backgroundPage = getFirefoxBackgroundPage(extension)
     await page.goto(pageUrl('/iframe-parent'), {
       waitUntil: 'domcontentloaded',
       timeout: 15000
@@ -56,7 +54,7 @@ test.describe('OpenPolyfill permissions policy internals', () => {
     await frameWithId(page, 'opaque-a', '/iframe-child-no-allow')
     await frameWithId(page, 'opaque-b', '/iframe-child-no-allow')
     await frameWithId(page, 'opaque-c', '/iframe-child-no-allow')
-    const targets = (await backgroundPage.evaluate(async () => {
+    const targets = (await extension.background!.evaluate(async () => {
       const tabs = await browser.tabs.query({ active: true, currentWindow: true })
       const tab = tabs[0]
       if (!tab || tab.id == null) return []
@@ -73,8 +71,8 @@ test.describe('OpenPolyfill permissions policy internals', () => {
     const scopeB = opaqueTargets[1].persistentOrigin
     if (typeof scopeA !== 'string' || typeof scopeB !== 'string')
       throw new Error('opaque target has no persistent scope')
-    const delivered = await backgroundPage.evaluate(
-      ({ scopeA, scopeB }) => {
+    const delivered = await extension.background!.evaluate<{ scopeA: number; scopeB: number }>(
+      ({ scopeA, scopeB }: { scopeA: string; scopeB: string }) => {
         const fanout = (
           globalThis as unknown as {
             webhid: {
@@ -93,7 +91,7 @@ test.describe('OpenPolyfill permissions policy internals', () => {
           })
         return { scopeA: send(scopeA), scopeB: send(scopeB) }
       },
-      { scopeA, scopeB }
+      [{ scopeA, scopeB }]
     )
     expect(delivered).toEqual({ scopeA: 2, scopeB: 1 })
   })
@@ -104,7 +102,6 @@ test.describe('OpenPolyfill permissions policy internals', () => {
     crossUrl,
     extension
   }) => {
-    const backgroundPage = getFirefoxBackgroundPage(extension)
     await page.goto(pageUrl('/iframe-parent'), {
       waitUntil: 'domcontentloaded',
       timeout: 15000
@@ -129,7 +126,7 @@ test.describe('OpenPolyfill permissions policy internals', () => {
       document.body.appendChild(frame)
     }, pageUrl('/iframe-child-no-allow'))
     await frameWithId(page, 'new-opaque', '/iframe-child-no-allow')
-    const targets = (await backgroundPage.evaluate(async () => {
+    const targets = (await extension.background!.evaluate(async () => {
       const tabs = await browser.tabs.query({ active: true, currentWindow: true })
       const tab = tabs[0]
       if (!tab || tab.id == null) return []
@@ -152,20 +149,26 @@ test.describe('OpenPolyfill permissions policy internals', () => {
     crossUrl,
     extension
   }) => {
-    const backgroundPage = getFirefoxBackgroundPage(extension)
     const settingKey = `settings :: ${new URL(crossUrl('')).origin} :: workerPolyfillEnabled`
-    const previous = await backgroundPage.evaluate(async (key) => {
-      const values = (await browser.storage.local.get(key)) as Record<string, unknown>
-      return {
-        exists: Object.prototype.hasOwnProperty.call(values, key),
-        value: values[key] as boolean | undefined
-      }
-    }, settingKey)
+    const previous = await extension.background!.evaluate<{
+      exists: boolean
+      value: boolean | undefined
+    }>(
+      async (key: string) => {
+        const values = (await browser.storage.local.get(key)) as Record<string, unknown>
+        return {
+          exists: Object.prototype.hasOwnProperty.call(values, key),
+          value: values[key] as boolean | undefined
+        }
+      },
+      [settingKey]
+    )
 
     try {
-      await backgroundPage.evaluate(
-        ({ key, value }) => browser.storage.local.set({ [key]: value }),
-        { key: settingKey, value: true }
+      await extension.background!.evaluate<void>(
+        ({ key, value }: { key: string; value: boolean }) =>
+          browser.storage.local.set({ [key]: value }),
+        [{ key: settingKey, value: true }]
       )
       await page.goto(pageUrl('/iframe-parent'), {
         waitUntil: 'domcontentloaded',
@@ -202,12 +205,15 @@ test.describe('OpenPolyfill permissions policy internals', () => {
         expect.objectContaining({ ok: false, name: 'SecurityError' })
       )
     } finally {
-      await backgroundPage.evaluate(
-        ({ key, previous }) => {
+      await extension.background!.evaluate<void>(
+        ({ key, previous }: {
+          key: string
+          previous: { exists: boolean; value: boolean | undefined }
+        }) => {
           if (previous.exists) return browser.storage.local.set({ [key]: previous.value })
           return browser.storage.local.remove(key)
         },
-        { key: settingKey, previous }
+        [{ key: settingKey, previous }]
       )
     }
   })

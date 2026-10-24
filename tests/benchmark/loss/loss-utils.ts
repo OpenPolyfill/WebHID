@@ -1,5 +1,4 @@
 import { configureDaemonMode } from '../../helpers/e2e.js'
-import { getFirefoxBackgroundPage } from '../../helpers/harness.js'
 import { sleep } from '../../helpers/test-utils.js'
 import type { Page } from '@playwright/test'
 import type { FirefoxExtension } from '@openpolyfill/firefox-addon-playwright-harness'
@@ -160,7 +159,6 @@ export async function benchmarkLoss(
   opts: { inPage?: boolean } = {}
 ): Promise<LossResult> {
   const { page, extension, httpPort, daemonMode, rdp } = fixtures
-  const backgroundPage = getFirefoxBackgroundPage(extension)
   const watch = watchConsole(page)
   const profileDir = process.env.BENCHMARK_PROFILE_DIR
   let profiler: ProfilerCapture | null = null
@@ -170,24 +168,20 @@ export async function benchmarkLoss(
   }
   const origin = `http://localhost:${httpPort}`
   const resetSettings = () =>
-    backgroundPage
-      .evaluate(
-        ({ origin }: { origin: string }) =>
-          browser.storage.local.remove([
-            'settings :: useWorker',
-            'settings :: logLevel',
-            `settings :: ${origin} :: useWorker`,
-            `settings :: ${origin} :: logLevel`
-          ]),
-        { origin }
-      )
+    extension.background!.evaluate(({ origin }: { origin: string }) =>
+      browser.storage.local.remove([
+        'settings :: useWorker',
+        'settings :: logLevel',
+        `settings :: ${origin} :: useWorker`,
+        `settings :: ${origin} :: logLevel`
+      ]), [{ origin }])
       .catch(() => {})
   try {
-    await configureDaemonMode(backgroundPage, daemonMode)
-    await setSiteSettings(backgroundPage, origin, { dataPlane: mode })
+    await configureDaemonMode(extension, daemonMode)
+    await setSiteSettings(extension, origin, { dataPlane: mode })
     if (opts.inPage) {
-      await setSiteSettings(backgroundPage, origin, { useWorker: false })
-      await setSiteSettings(backgroundPage, origin, { logLevel: 3 })
+      await setSiteSettings(extension, origin, { useWorker: false })
+      await setSiteSettings(extension, origin, { logLevel: 3 })
     }
     await page.goto(`${origin}/tests/test-page.html`, {
       waitUntil: 'domcontentloaded',

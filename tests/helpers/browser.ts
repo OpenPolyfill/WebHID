@@ -1,7 +1,7 @@
 import { test as base, expect, type Page } from '@playwright/test'
 import { startPolicyServer, startWptServer } from '../serve.js'
 import type { Server } from 'node:http'
-import { createHarnessFixtures, defaultRouteHandler, getFirefoxBackgroundPage } from './harness.js'
+import { createHarnessFixtures, defaultRouteHandler } from './harness.js'
 
 type Servers = { main: { port: number; server: Server }; cross: { port: number; server: Server } }
 type WptServer = { port: number; server: Server }
@@ -53,32 +53,37 @@ export const test = createHarnessFixtures(base).extend<BrowserTestFixtures, Brow
     await use(page)
   },
   workerHidPage: async ({ extension, page, pageUrl }, use) => {
-    const backgroundPage = getFirefoxBackgroundPage(extension)
     const key = `settings :: ${new URL(pageUrl('')).origin} :: workerPolyfillEnabled`
-    const previous = await backgroundPage.evaluate(async (settingKey) => {
-      const values = (await browser.storage.local.get(settingKey)) as Record<string, unknown>
-      return {
-        exists: Object.prototype.hasOwnProperty.call(values, settingKey),
-        value: values[settingKey] as boolean | undefined
-      }
-    }, key)
+    const previous = await extension.background!.evaluate<{
+      exists: boolean
+      value: boolean | undefined
+    }>(
+      async (settingKey: string) => {
+        const values = (await browser.storage.local.get(settingKey)) as Record<string, unknown>
+        return {
+          exists: Object.prototype.hasOwnProperty.call(values, settingKey),
+          value: values[settingKey] as boolean | undefined
+        }
+      },
+      [key]
+    )
     try {
-      await backgroundPage.evaluate(
-        (settingKey) => browser.storage.local.set({ [settingKey]: true }),
-        key
-      )
+      await extension.background!.evaluate((settingKey) => browser.storage.local.set({ [settingKey]: true }), [key])
       await page.goto(pageUrl('/policy-check'), {
         waitUntil: 'domcontentloaded',
         timeout: 15000
       })
       await use(page)
     } finally {
-      await backgroundPage.evaluate(
-        ({ settingKey, previous }) => {
+      await extension.background!.evaluate(
+        ({ settingKey, previous }: {
+          settingKey: string
+          previous: { exists: boolean; value: boolean | undefined }
+        }) => {
           if (previous.exists) return browser.storage.local.set({ [settingKey]: previous.value })
           return browser.storage.local.remove(settingKey)
         },
-        { settingKey: key, previous }
+        [{ settingKey: key, previous }]
       )
     }
   },

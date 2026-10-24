@@ -2,24 +2,24 @@ import { test, expect } from '../helpers/e2e.js'
 import type { Page } from '@playwright/test'
 import { grantDevicePermission, mockIdFor } from '../helpers/e2e-devices.js'
 import { sendInput } from '../helpers/e2e-process.js'
-import { getFirefoxBackgroundPage, type FirefoxBackgroundPage } from '../helpers/harness.js'
+import type { FirefoxExtension } from '@openpolyfill/firefox-addon-playwright-harness'
 
 const VENDOR = mockIdFor('vendor')
 const PACKET = [0x10, 0x20, 0x30, 0x40, 0x50].concat(new Array(59).fill(0))
 
 async function prepareFanoutPage(
   page: Page,
-  backgroundPage: FirefoxBackgroundPage,
+  extension: FirefoxExtension,
   enableWorker: boolean
 ): Promise<void> {
   const origin = new URL(page.url()).origin
-  await backgroundPage.evaluate(
-    ({ siteOrigin, enableWorker }) =>
+  await extension.background!.evaluate<void>(
+    ({ siteOrigin, enableWorker }: { siteOrigin: string; enableWorker: boolean }) =>
       browser.storage.local.set({
         [`settings :: ${siteOrigin} :: dataPlane`]: 'nm',
         [`settings :: ${siteOrigin} :: workerPolyfillEnabled`]: enableWorker
       }),
-    { siteOrigin: origin, enableWorker }
+    [{ siteOrigin: origin, enableWorker }]
   )
   await page.goto(`${origin}/tests/test-page.html`, {
     waitUntil: 'domcontentloaded'
@@ -46,18 +46,17 @@ test.describe.serial('OpenPolyfill input report fan-out', () => {
     extension,
     vendorDevice
   }) => {
-    const backgroundPage = getFirefoxBackgroundPage(extension)
     const origin = new URL(page.url()).origin
     const settingKeys = [
       `settings :: ${origin} :: dataPlane`,
       `settings :: ${origin} :: workerPolyfillEnabled`
     ]
-    const previous = await backgroundPage.evaluate(
-      (keys) => browser.storage.local.get(keys),
-      settingKeys
+    const previous = await extension.background!.evaluate<Record<string, unknown>>(
+      (keys: string[]) => browser.storage.local.get(keys),
+      [settingKeys]
     )
     try {
-      await prepareFanoutPage(page, backgroundPage, true)
+      await prepareFanoutPage(page, extension, true)
       await page.evaluate(() => {
         window.postMessage(
           { type: 'startFanout', iframeCount: 0, includeWorker: true },
@@ -105,12 +104,12 @@ test.describe.serial('OpenPolyfill input report fan-out', () => {
       await page.waitForFunction(async () => (await navigator.hid.getDevices()).length === 0, {
         timeout: 15000
       })
-      await backgroundPage.evaluate(
-        ({ keys, values }) => {
+      await extension.background!.evaluate<void>(
+        ({ keys, values }: { keys: string[]; values: Record<string, unknown> }) => {
           const missing = keys.filter((key) => !(key in values))
           return browser.storage.local.remove(missing).then(() => browser.storage.local.set(values))
         },
-        { keys: settingKeys, values: previous }
+        [{ keys: settingKeys, values: previous }]
       )
     }
   })
@@ -120,20 +119,20 @@ test.describe.serial('OpenPolyfill input report fan-out', () => {
     extension,
     vendorDevice
   }) => {
-    const backgroundPage = getFirefoxBackgroundPage(extension)
     test.setTimeout(60000)
     const origin = new URL(page.url()).origin
     const settingKeys = [
       `settings :: ${origin} :: dataPlane`,
       `settings :: ${origin} :: workerPolyfillEnabled`
     ]
-    const previous = await backgroundPage.evaluate(
-      (keys) => browser.storage.local.get(keys),
-      settingKeys
+    const previous = await extension.background!.evaluate<Record<string, unknown>>(
+      (keys: string[]) => browser.storage.local.get(keys),
+      [settingKeys]
     )
-    await backgroundPage.evaluate(
-      (keys) => browser.storage.local.set({ [keys[0]]: 'ws', [keys[1]]: false }),
-      settingKeys
+    await extension.background!.evaluate<void>(
+      (keys: string[]) =>
+        browser.storage.local.set({ [keys[0]]: 'ws', [keys[1]]: false }),
+      [settingKeys]
     )
     try {
       await page.goto(`${origin}/tests/test-page.html`, {
@@ -216,12 +215,12 @@ test.describe.serial('OpenPolyfill input report fan-out', () => {
       await page.waitForFunction(async () => (await navigator.hid.getDevices()).length === 0, {
         timeout: 15000
       })
-      await backgroundPage.evaluate(
-        ({ keys, values }) => {
+      await extension.background!.evaluate<void>(
+        ({ keys, values }: { keys: string[]; values: Record<string, unknown> }) => {
           const missing = keys.filter((key) => !(key in values))
           return browser.storage.local.remove(missing).then(() => browser.storage.local.set(values))
         },
-        { keys: settingKeys, values: previous }
+        [{ keys: settingKeys, values: previous }]
       )
       await page.goto(`${origin}/tests/test-page.html`, { waitUntil: 'domcontentloaded' })
     }

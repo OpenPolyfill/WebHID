@@ -1,7 +1,6 @@
 import { test, expect } from '../helpers/e2e.js'
 import { grantDevicePermission, mockIdFor } from '../helpers/e2e-devices.js'
 import { sendInput } from '../helpers/e2e-process.js'
-import { getFirefoxBackgroundPage } from '../helpers/harness.js'
 
 const VENDOR = mockIdFor('vendor')
 const PACKET = [0x10, 0x20, 0x30, 0x40, 0x50].concat(new Array(59).fill(0))
@@ -29,20 +28,19 @@ test.describe.serial('Exact frame endpoint fanout', () => {
     extension,
     vendorDevice
   }) => {
-    const backgroundPage = getFirefoxBackgroundPage(extension)
     const origin = new URL(page.url()).origin
     const settingKeys = [
       `settings :: ${origin} :: dataPlane`,
       `settings :: ${origin} :: workerPolyfillEnabled`
     ]
-    const previous = await backgroundPage.evaluate(
+    const previous = await extension.background!.evaluate<Record<string, unknown>>(
       (keys: string[]) => browser.storage.local.get(keys),
-      settingKeys
+      [settingKeys]
     )
-    await backgroundPage.evaluate(
-      ([dataPlaneKey, workerKey]) =>
+    await extension.background!.evaluate<void>(
+      ([dataPlaneKey, workerKey]: string[]) =>
         browser.storage.local.set({ [dataPlaneKey]: 'nm', [workerKey]: false }),
-      settingKeys
+      [settingKeys]
     )
     try {
       await page.goto(`${origin}/tests/test-page.html`, { waitUntil: 'domcontentloaded' })
@@ -83,7 +81,7 @@ test.describe.serial('Exact frame endpoint fanout', () => {
       await expect
         .poll(
           () =>
-            backgroundPage.evaluate(async () => {
+            extension.background!.evaluate(async () => {
               const tabs = await browser.tabs.query({ active: true, currentWindow: true })
               const tab = tabs[0]
               if (!tab || tab.id == null) return 0
@@ -119,12 +117,12 @@ test.describe.serial('Exact frame endpoint fanout', () => {
       await page.waitForFunction(async () => (await navigator.hid.getDevices()).length === 0, {
         timeout: 15000
       })
-      await backgroundPage.evaluate(
-        ({ keys, values }) => {
+      await extension.background!.evaluate<void>(
+        ({ keys, values }: { keys: string[]; values: Record<string, unknown> }) => {
           const missing = keys.filter((key) => !(key in values))
           return browser.storage.local.remove(missing).then(() => browser.storage.local.set(values))
         },
-        { keys: settingKeys, values: previous }
+        [{ keys: settingKeys, values: previous }]
       )
       await page.goto(`${origin}/tests/test-page.html`, { waitUntil: 'domcontentloaded' })
     }
@@ -135,25 +133,21 @@ test.describe.serial('Exact frame endpoint fanout', () => {
     extension,
     vendorDevice
   }) => {
-    const backgroundPage = getFirefoxBackgroundPage(extension)
     const origin = new URL(page.url()).origin
     const settingKey = `settings :: ${origin} :: dataPlane`
     await vendorDevice.ready
-    const previous = await backgroundPage.evaluate(
+    const previous = await extension.background!.evaluate<Record<string, unknown>>(
       (key: string) => browser.storage.local.get(key),
-      settingKey
+      [settingKey]
     )
-    await backgroundPage.evaluate(
-      (key: string) => browser.storage.local.set({ [key]: 'nm' }),
-      settingKey
-    )
+    await extension.background!.evaluate((key: string) => browser.storage.local.set({ [key]: 'nm' }), [settingKey])
     try {
       await page.goto(`${origin}/tests/test-page.html`, { waitUntil: 'domcontentloaded' })
       await page.waitForFunction(() => typeof navigator.hid !== 'undefined', {
         timeout: 15000
       })
       await grantDevicePermission(page, [VENDOR])
-      await backgroundPage.evaluate(() => {
+      await extension.background!.evaluate(() => {
         const state = globalThis as unknown as {
           webhid: BackgroundWebhid
           tests: BackgroundTestState
@@ -186,7 +180,7 @@ test.describe.serial('Exact frame endpoint fanout', () => {
       })
       await expect
         .poll(() =>
-          backgroundPage.evaluate(() => {
+          extension.background!.evaluate(() => {
             const testState = globalThis.tests as unknown as BackgroundTestState
             return testState.results.openEntered === true
           })
@@ -196,14 +190,14 @@ test.describe.serial('Exact frame endpoint fanout', () => {
       await page.waitForFunction(() => typeof navigator.hid !== 'undefined', {
         timeout: 15000
       })
-      await backgroundPage.evaluate(() => {
+      await extension.background!.evaluate(() => {
         const testState = globalThis.tests as unknown as BackgroundTestState
         testState.helper.releaseOpen?.()
       })
       await expect
         .poll(
           () =>
-            backgroundPage.evaluate(async () => {
+            extension.background!.evaluate(async () => {
               const tabs = await browser.tabs.query({ active: true, currentWindow: true })
               const tab = tabs[0]
               if (!tab || tab.id == null) return []
@@ -216,7 +210,7 @@ test.describe.serial('Exact frame endpoint fanout', () => {
         )
         .toEqual([])
     } finally {
-      await backgroundPage.evaluate(() => {
+      await extension.background!.evaluate(() => {
         const state = globalThis as unknown as {
           webhid: BackgroundWebhid
           tests: BackgroundTestState
@@ -229,12 +223,12 @@ test.describe.serial('Exact frame endpoint fanout', () => {
           nm.closeDevice = state.tests.helper.originalCloseDevice
         }
       })
-      await backgroundPage.evaluate(
-        ({ key, values }) =>
+      await extension.background!.evaluate<void>(
+        ({ key, values }: { key: string; values: Record<string, unknown> }) =>
           browser.storage.local
             .remove(!(key in values) ? [key] : [])
             .then(() => (key in values ? browser.storage.local.set(values) : undefined)),
-        { key: settingKey, values: previous }
+        [{ key: settingKey, values: previous }]
       )
     }
   })

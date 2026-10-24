@@ -1,7 +1,7 @@
 import type { WorkerFixture } from '@playwright/test'
 import { test as base, expect } from '@playwright/test'
 import { withSharedPage } from '@openpolyfill/firefox-addon-playwright-harness/fixtures'
-import { getFirefoxBackgroundPage, type FirefoxBackgroundPage } from './harness.js'
+import type { FirefoxExtension } from '@openpolyfill/firefox-addon-playwright-harness'
 import { rm } from 'node:fs/promises'
 import { startStaticServer } from '../serve.js'
 import {
@@ -42,11 +42,11 @@ interface MockDeviceFixture {
 /** Configures the addon to spawn the daemon as its NM host when running in
  * daemon-nm mode (no-op in forwarder mode). */
 export async function configureDaemonMode(
-  backgroundPage: FirefoxBackgroundPage,
+  extension: FirefoxExtension,
   daemonMode: string
 ): Promise<void> {
   if (daemonMode !== 'daemon-nm') return
-  await backgroundPage
+  await extension.background!
     .evaluate(() => browser.storage.local.set({ 'settings :: daemonAsNmHost': true }))
     .catch(() => {})
 }
@@ -84,8 +84,7 @@ function extendE2eFixtures(testBase: typeof defaultHarnessTest) {
   const e2eTest = testBase.extend<E2eTestFixtures, E2eWorkerFixtures>({
     e2eSetup: [
       async ({ page, extension, httpPort, daemonMode }, use) => {
-        const backgroundPage = getFirefoxBackgroundPage(extension)
-        await configureDaemonMode(backgroundPage, daemonMode)
+        await configureDaemonMode(extension, daemonMode)
         const url = `http://localhost:${httpPort}/tests/test-page.html`
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 })
         await page.waitForFunction(() => typeof navigator.hid !== 'undefined', {

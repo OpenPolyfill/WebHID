@@ -1,7 +1,6 @@
-import type { Page, Route, TestType } from '@playwright/test'
+import type { Route, TestType } from '@playwright/test'
 import { createFirefoxFixtures } from '@openpolyfill/firefox-addon-playwright-harness/fixtures'
 import type {
-  FirefoxExtension,
   FirefoxHarnessConfig,
   FirefoxHarnessProjectOptions
 } from '@openpolyfill/firefox-addon-playwright-harness'
@@ -15,17 +14,6 @@ export const EXTENSION_PATH = process.env.EXTENSION_PATH
   : resolve(directoryPath, '..', '..', 'addon')
 
 export const defaultRouteHandler = (route: Route) => route.continue()
-export type FirefoxBackgroundPage = Pick<Page, 'evaluate'>
-
-export function getFirefoxBackgroundPage(extension: FirefoxExtension): FirefoxBackgroundPage {
-  const backgroundPage = extension.background
-  if (!backgroundPage) throw new Error('Firefox extension has no background context')
-  const evaluate = (
-    pageFunction: string | ((...args: unknown[]) => unknown),
-    ...args: unknown[]
-  ): Promise<unknown> => backgroundPage.evaluate(pageFunction, args)
-  return { evaluate: evaluate as Page['evaluate'] }
-}
 
 function createHarnessConfig(
   contextScope: NonNullable<FirefoxHarnessConfig['contextScope']>
