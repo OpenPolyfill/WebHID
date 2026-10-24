@@ -9,10 +9,6 @@ import {
   stopDaemon,
   startWebhidMock,
   stopWebhidMock,
-  installNmManifest,
-  uninstallNmManifest,
-  installDaemonNmManifest,
-  uninstallDaemonNmManifest,
   workerSocketPath,
   type DaemonProcess,
   type WebhidMockProcess
@@ -28,7 +24,6 @@ interface E2eWorkerFixtures {
   daemon: DaemonProcess | null
   vendorDevice: MockDeviceFixture
   httpPort: number
-  nmManifest: void
   daemonMode: string
 }
 
@@ -46,9 +41,9 @@ export async function configureDaemonMode(
   daemonMode: string
 ): Promise<void> {
   if (daemonMode !== 'daemon-nm') return
-  await extension.background!
-    .evaluate(() => browser.storage.local.set({ 'settings :: daemonAsNmHost': true }))
-    .catch(() => {})
+  await extension.background!.evaluate(() =>
+    browser.storage.local.set({ 'settings :: daemonAsNmHost': true })
+  )
 }
 
 function deviceFixture(
@@ -126,20 +121,6 @@ function extendE2eFixtures(testBase: typeof defaultHarnessTest) {
       },
       { scope: 'worker', auto: true }
     ],
-    nmManifest: [
-      async ({ daemonMode }, use) => {
-        if (daemonMode === 'daemon-nm') {
-          installDaemonNmManifest()
-          await use()
-          uninstallDaemonNmManifest()
-        } else {
-          installNmManifest()
-          await use()
-          uninstallNmManifest()
-        }
-      },
-      { scope: 'worker', auto: true }
-    ]
   })
 
   return e2eTest

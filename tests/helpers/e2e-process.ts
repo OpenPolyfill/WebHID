@@ -1,7 +1,6 @@
 import { spawn, type ChildProcess } from 'child_process'
-import { existsSync, mkdirSync, writeFileSync, unlinkSync, createWriteStream } from 'fs'
+import { existsSync, mkdirSync, createWriteStream } from 'fs'
 import { join, resolve, dirname } from 'path'
-import { homedir } from 'os'
 import { fileURLToPath } from 'url'
 
 const filePath = fileURLToPath(import.meta.url)
@@ -147,48 +146,3 @@ export async function waitForOutputReport(
   })
 }
 
-export function installNmManifest(): void {
-  const nmDir = join(homedir(), '.mozilla', 'native-messaging-hosts')
-  mkdirSync(nmDir, { recursive: true })
-  const manifest = {
-    name: 'webhid.forwarder_nm_host',
-    description: 'WebHID daemon native messaging host (e2e: debug forwarder)',
-    path: join(projectRoot, 'crates', 'target', 'debug', 'webhid-native-messaging'),
-    type: 'stdio',
-    allowed_extensions: ['webhid@k4zoku.dev']
-  }
-  writeFileSync(join(nmDir, 'webhid.forwarder_nm_host.json'), JSON.stringify(manifest, null, 2))
-}
-
-export function uninstallNmManifest(): void {
-  const manifestPath = join(
-    homedir(),
-    '.mozilla',
-    'native-messaging-hosts',
-    'webhid.forwarder_nm_host.json'
-  )
-  if (existsSync(manifestPath)) unlinkSync(manifestPath)
-}
-
-export function installDaemonNmManifest(): void {
-  const nmDir = join(homedir(), '.mozilla', 'native-messaging-hosts')
-  mkdirSync(nmDir, { recursive: true })
-  const manifest = {
-    name: 'webhid.daemon_nm_host',
-    description: 'WebHID daemon-as-NM-host (e2e: debug daemon direct)',
-    path: join(projectRoot, 'crates', 'target', 'debug', 'webhid-daemon'),
-    type: 'stdio',
-    allowed_extensions: ['webhid@k4zoku.dev']
-  }
-  writeFileSync(join(nmDir, 'webhid.daemon_nm_host.json'), JSON.stringify(manifest, null, 2))
-}
-
-export function uninstallDaemonNmManifest(): void {
-  const manifestPath = join(
-    homedir(),
-    '.mozilla',
-    'native-messaging-hosts',
-    'webhid.daemon_nm_host.json'
-  )
-  if (existsSync(manifestPath)) unlinkSync(manifestPath)
-}
