@@ -6,6 +6,7 @@ import type {
 } from '@openpolyfill/firefox-addon-playwright-harness'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { LOCAL_MAPPINGS } from '../serve.js'
 
 const directoryPath = dirname(fileURLToPath(import.meta.url))
 
@@ -21,6 +22,7 @@ function createHarnessConfig(
 ): FirefoxHarnessConfig {
   return {
     extensionPath: EXTENSION_PATH,
+    localMappings: LOCAL_MAPPINGS,
     nativeMessagingHosts: {
       'webhid.daemon_nm_host': {
         description: 'WebHID daemon-as-NM-host (e2e: debug daemon direct)',

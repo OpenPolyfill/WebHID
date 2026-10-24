@@ -4,7 +4,7 @@ import { tmpdir } from 'os'
 import { dirname, join, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { startWebhidMock, stopWebhidMock } from '../../helpers/e2e-process.js'
-import { startStaticServer } from '../../serve.js'
+import { startChromiumStaticServer } from '../chromium-static-server.js'
 import { runBenchmark, printResults } from '../benchmark-utils.js'
 import {
   installChromeNmManifest,
@@ -65,7 +65,7 @@ export async function runChromiumAddonBenchmark(
   let context: BrowserContext | null = null
   try {
     await mock.ready
-    const started = await startStaticServer()
+    const started = await startChromiumStaticServer()
     server = started.server
     const port = started.port
     userDataDir = mkdtempSync(join(tmpdir(), 'webhid-addon-crbench-'))

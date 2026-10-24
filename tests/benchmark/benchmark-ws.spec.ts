@@ -5,12 +5,12 @@ test('image pipeline benchmark ws', async ({
   page,
   extension,
   vendorDevice,
-  httpPort,
+  httpOrigin,
   daemonMode,
   rdp
 }) => {
   const result = await benchmarkMode(
-    { page, extension, vendorDevice, httpPort, daemonMode, rdp },
+    { page, extension, vendorDevice, httpOrigin, daemonMode, rdp },
     'ws'
   )
   expect(result.runs.length).toBeGreaterThan(0)

@@ -1,50 +1,49 @@
 import { test as base, expect, type Page } from '@playwright/test'
-import { startPolicyServer, startWptServer } from '../serve.js'
-import type { Server } from 'node:http'
-import { createHarnessFixtures, defaultRouteHandler } from './harness.js'
-
-type Servers = { main: { port: number; server: Server }; cross: { port: number; server: Server } }
-type WptServer = { port: number; server: Server }
+import { fulfillWptReportRoute, startTestServer, type ServerHandle } from '../serve.js'
+import { createHarnessFixtures } from './harness.js'
 
 interface BrowserTestFixtures {
   workerHidPage: Page
 }
 
 interface BrowserWorkerFixtures {
-  servers: Servers
+  testServer: ServerHandle
   pageUrl: (path: string) => string
   crossUrl: (path: string) => string
-  wptServer: WptServer
   wptUrl: (path: string) => string
 }
 
+
+
 export const test = createHarnessFixtures(base).extend<BrowserTestFixtures, BrowserWorkerFixtures>({
-  servers: [
+  testServer: [
     async ({}, use) => {
-      const main = await startPolicyServer()
-      const cross = await startPolicyServer()
-      await use({ main, cross })
-      main.server.close()
-      cross.server.close()
+      const server = await startTestServer()
+      await use(server)
+      server.server.close()
     },
     { scope: 'worker', auto: true }
   ],
-  wptServer: [
-    async ({}, use) => {
-      const server = await startWptServer()
-      await use(server)
-      server.server.close()
+  pageUrl: [
+    async ({ testServer }, use) => {
+      await use((path: string) => `http://localhost:${testServer.port}${path}`)
+    },
+    { scope: 'worker' }
+  ],
+  crossUrl: [
+    async ({ testServer }, use) => {
+      await use((path: string) => `http://127.0.0.1:${testServer.port}${path}`)
     },
     { scope: 'worker' }
   ],
   wptUrl: [
-    async ({ wptServer }, use) => {
-      await use((path: string) => `http://localhost:${wptServer.port}${path}`)
+    async ({ testServer }, use) => {
+      await use((path: string) => `http://localhost:${testServer.port}${path}`)
     },
     { scope: 'worker' }
   ],
   page: async ({ page, context, pageUrl }, use) => {
-    await context.route('**/*', defaultRouteHandler)
+    await context.route('**/resources/testharnessreport.js', fulfillWptReportRoute)
     await page.goto(pageUrl('/policy-check'), {
       waitUntil: 'domcontentloaded',
       timeout: 15000
@@ -87,18 +86,6 @@ export const test = createHarnessFixtures(base).extend<BrowserTestFixtures, Brow
       )
     }
   },
-  pageUrl: [
-    async ({ servers }, use) => {
-      await use((path: string) => `http://localhost:${servers.main.port}${path}`)
-    },
-    { scope: 'worker' }
-  ],
-  crossUrl: [
-    async ({ servers }, use) => {
-      await use((path: string) => `http://localhost:${servers.cross.port}${path}`)
-    },
-    { scope: 'worker' }
-  ]
 })
 
 export { expect }

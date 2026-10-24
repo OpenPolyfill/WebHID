@@ -5,12 +5,12 @@ test('input-report loss benchmark wt in-page (useWorker off) @ 8000Hz', async ({
   page,
   extension,
   vendorDevice,
-  httpPort,
+  httpOrigin,
   daemonMode,
   rdp
 }) => {
   const result = await benchmarkLoss(
-    { page, extension, vendorDevice, httpPort, daemonMode, rdp },
+    { page, extension, vendorDevice, httpOrigin, daemonMode, rdp },
     'wt',
     { inPage: true }
   )

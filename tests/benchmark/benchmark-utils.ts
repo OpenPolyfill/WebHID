@@ -46,7 +46,7 @@ interface BenchmarkFixtures {
   page: Page
   extension: FirefoxExtension
   vendorDevice: WebhidMockProcess
-  httpPort: number
+  httpOrigin: string
   daemonMode: string
   rdp: FirefoxRDP
 }
@@ -349,8 +349,8 @@ export async function benchmarkMode(
   mode: 'ws' | 'wt' | 'nm',
   opts?: { inPage?: boolean }
 ): Promise<BenchmarkResult> {
-  const { page, extension, vendorDevice, httpPort, daemonMode, rdp } = fixtures
-  const origin = `http://localhost:${httpPort}`
+  const { page, extension, vendorDevice, httpOrigin, daemonMode, rdp } = fixtures
+  const origin = httpOrigin
 
   await configureDaemonMode(extension, daemonMode)
   await configurePageSettings(extension, origin, mode, opts)

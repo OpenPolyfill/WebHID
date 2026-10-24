@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { startWebhidMock, stopWebhidMock } from '../../helpers/e2e-process.js'
-import { startStaticServer } from '../../serve.js'
+import { startChromiumStaticServer } from '../chromium-static-server.js'
 import { runBenchmark, printResults } from '../benchmark-utils.js'
 
 const POLICY_PORT = 8123
@@ -12,7 +12,7 @@ const POLICY_PORT = 8123
 test('image pipeline benchmark chromium native (headless auto)', async () => {
   const mock = startWebhidMock('vendor.bin', 0x16c0, 0x0001)
   await mock.ready
-  const { port, server } = await startStaticServer(POLICY_PORT)
+  const { port, server } = await startChromiumStaticServer(POLICY_PORT)
   const userDataDir = mkdtempSync(join(tmpdir(), 'webhid-crbench-'))
   const context = await chromium.launchPersistentContext(userDataDir, {
     headless: true,

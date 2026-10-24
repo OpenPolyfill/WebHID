@@ -3,7 +3,7 @@ import { test as base, expect } from '@playwright/test'
 import { withSharedPage } from '@openpolyfill/firefox-addon-playwright-harness/fixtures'
 import type { FirefoxExtension } from '@openpolyfill/firefox-addon-playwright-harness'
 import { rm } from 'node:fs/promises'
-import { startStaticServer } from '../serve.js'
+import { startTestServer } from '../serve.js'
 import {
   startDaemon,
   stopDaemon,
@@ -23,7 +23,7 @@ interface E2eTestFixtures {
 interface E2eWorkerFixtures {
   daemon: DaemonProcess | null
   vendorDevice: MockDeviceFixture
-  httpPort: number
+  httpOrigin: string
   daemonMode: string
 }
 
@@ -78,9 +78,9 @@ const defaultHarnessTest = createHarnessFixtures(base)
 function extendE2eFixtures(testBase: typeof defaultHarnessTest) {
   const e2eTest = testBase.extend<E2eTestFixtures, E2eWorkerFixtures>({
     e2eSetup: [
-      async ({ page, extension, httpPort, daemonMode }, use) => {
+      async ({ page, extension, httpOrigin, daemonMode }, use) => {
         await configureDaemonMode(extension, daemonMode)
-        const url = `http://localhost:${httpPort}/tests/test-page.html`
+        const url = `${httpOrigin}/tests/test-page.html`
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 })
         await page.waitForFunction(() => typeof navigator.hid !== 'undefined', {
           timeout: 15000
@@ -113,10 +113,10 @@ function extendE2eFixtures(testBase: typeof defaultHarnessTest) {
       { scope: 'worker', auto: true }
     ],
     ...deviceFixtures,
-    httpPort: [
+    httpOrigin: [
       async ({}, use) => {
-        const { port, server } = await startStaticServer()
-        await use(port)
+        const { port, server } = await startTestServer()
+        await use(`http://localhost:${port}`)
         server.close()
       },
       { scope: 'worker', auto: true }

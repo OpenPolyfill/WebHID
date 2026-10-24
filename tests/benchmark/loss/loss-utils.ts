@@ -42,7 +42,7 @@ export interface LossFixtures {
   page: Page
   extension: FirefoxExtension
   vendorDevice: { process: WebhidMockProcess['process']; ready: Promise<void> }
-  httpPort: number
+  httpOrigin: string
   daemonMode: string
   rdp: FirefoxRDP
 }
@@ -158,7 +158,7 @@ export async function benchmarkLoss(
   mode: 'ws' | 'wt' | 'nm',
   opts: { inPage?: boolean } = {}
 ): Promise<LossResult> {
-  const { page, extension, httpPort, daemonMode, rdp } = fixtures
+  const { page, extension, httpOrigin, daemonMode, rdp } = fixtures
   const watch = watchConsole(page)
   const profileDir = process.env.BENCHMARK_PROFILE_DIR
   let profiler: ProfilerCapture | null = null
@@ -166,7 +166,7 @@ export async function benchmarkLoss(
     profiler = await ProfilerCapture.create(rdp)
     await profiler.startProfiler()
   }
-  const origin = `http://localhost:${httpPort}`
+  const origin = httpOrigin
   const resetSettings = () =>
     extension.background!.evaluate(({ origin }: { origin: string }) =>
       browser.storage.local.remove([

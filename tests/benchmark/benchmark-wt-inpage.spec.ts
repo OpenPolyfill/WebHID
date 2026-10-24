@@ -5,12 +5,12 @@ test('image pipeline benchmark wt in-page (useWorker off)', async ({
   page,
   extension,
   vendorDevice,
-  httpPort,
+  httpOrigin,
   daemonMode,
   rdp
 }) => {
   const result = await benchmarkMode(
-    { page, extension, vendorDevice, httpPort, daemonMode, rdp },
+    { page, extension, vendorDevice, httpOrigin, daemonMode, rdp },
     'wt',
     { inPage: true }
   )

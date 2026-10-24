@@ -5,12 +5,12 @@ test('image pipeline benchmark nm', async ({
   page,
   extension,
   vendorDevice,
-  httpPort,
+  httpOrigin,
   daemonMode,
   rdp
 }) => {
   const result = await benchmarkMode(
-    { page, extension, vendorDevice, httpPort, daemonMode, rdp },
+    { page, extension, vendorDevice, httpOrigin, daemonMode, rdp },
     'nm'
   )
   expect(result.runs.length).toBeGreaterThan(0)

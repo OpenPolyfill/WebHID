@@ -5,7 +5,7 @@ import { VENDOR, VENDOR_CTX } from '../helpers/e2e-reports.js'
 
 test('forget revokes every device in a grant group across same-origin documents', async ({
   page,
-  httpPort,
+  httpOrigin,
   vendorDevice
 }) => {
   await vendorDevice.ready
@@ -19,7 +19,7 @@ test('forget revokes every device in a grant group across same-origin documents'
   try {
     await secondDevice.ready
     expect(await grantDevicePermission(page, [{ vendorId: VENDOR.vendorId }])).toBe(2)
-    await siblingPage.goto(`http://localhost:${httpPort}/tests/test-page.html`, {
+    await siblingPage.goto(`${httpOrigin}/tests/test-page.html`, {
       waitUntil: 'domcontentloaded',
       timeout: 15000
     })
