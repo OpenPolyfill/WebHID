@@ -1,5 +1,4 @@
 import { test, expect } from '../../helpers/browser.js'
-import { navigateToPolicyCheck } from '../../helpers/browser-utils.js'
 
 test.describe('requestDevice conformance', () => {
   test('requestDevice returns a rejected Promise without user activation', async ({
@@ -28,11 +27,7 @@ test.describe('requestDevice conformance', () => {
     expect(result).toBe('SecurityError')
   })
 
-  test('requestDevice rejects invalid option and filter shapes as Promises', async ({
-    page,
-    pageUrl
-  }) => {
-    await navigateToPolicyCheck(page, pageUrl)
+  test('requestDevice rejects invalid option and filter shapes as Promises', async ({ page }) => {
     await page.evaluate(() => {
       const button = document.createElement('button')
       button.id = 'request-device-validation'
@@ -117,11 +112,9 @@ test.describe('requestDevice conformance', () => {
     expect(result.coercionErrorPreserved).toBe(true)
   })
 
-  test('requestDevice rejects filters with only unknown dictionary members', async ({
-    page,
-    pageUrl
+  test('requestDevice rejects filters with only unknown dictionary members as Promises', async ({
+    page
   }) => {
-    await navigateToPolicyCheck(page, pageUrl)
     const options = [
       { filters: [{ futureMember: true }] },
       { filters: [{ vendorId: 1 }], exclusionFilters: [{ futureMember: true }] }

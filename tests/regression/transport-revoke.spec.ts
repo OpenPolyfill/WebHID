@@ -1,20 +1,14 @@
 import { test, expect } from '../helpers/e2e.js'
-import { spawn, type ChildProcess } from 'child_process'
 import { createConnection } from 'net'
 import { createHash } from 'crypto'
-import { createWriteStream, rmSync } from 'fs'
-import { join, resolve, dirname } from 'path'
-import { fileURLToPath } from 'url'
+import { rmSync } from 'fs'
+import { join } from 'path'
 import { tmpdir } from 'os'
 import { mockIdFor } from '../helpers/e2e-devices.js'
-import { sendInput } from '../helpers/e2e-process.js'
+import { sendInput, startDaemon, stopDaemon } from '../helpers/e2e-process.js'
 import { VENDOR_INPUT_SIZE } from '../helpers/e2e-reports.js'
 
 const VENDOR = mockIdFor('vendor')
-
-const filePath = fileURLToPath(import.meta.url)
-const directoryPath = dirname(filePath)
-const DAEMON_BIN = resolve(directoryPath, '..', '..', 'crates', 'target', 'debug', 'webhid-daemon')
 
 interface NmDeviceEntry {
   deviceId: number
@@ -94,31 +88,6 @@ function makeNmClient(socketPath: string): Promise<NmClient> {
   })
 }
 
-function waitForDaemonListening(proc: ChildProcess): Promise<void> {
-  return new Promise((resolvePromise, reject) => {
-    let settled = false
-    const finish = (fn: () => void) => {
-      if (settled) return
-      settled = true
-      proc.stdout?.off('data', onData)
-      proc.stderr?.off('data', onData)
-      proc.off('exit', onExit)
-      clearTimeout(timer)
-      fn()
-    }
-    const onData = (d: Buffer) => {
-      if (d.toString().includes('webhid-daemon listening on')) finish(resolvePromise)
-    }
-    const onExit = (code: number | null) => {
-      finish(() => reject(new Error(`daemon exited with code ${code} before listening`)))
-    }
-    const timer = setTimeout(() => finish(() => reject(new Error('daemon start timeout'))), 10000)
-    proc.stdout?.on('data', onData)
-    proc.stderr?.on('data', onData)
-    proc.on('exit', onExit)
-  })
-}
-
 test.describe.serial('WebHID E2E (transport revocation)', () => {
   test('closing session A revokes its WS transport while session B keeps the device', async ({
     page,
@@ -126,15 +95,8 @@ test.describe.serial('WebHID E2E (transport revocation)', () => {
   }) => {
     test.setTimeout(90000)
     const socketPath = join(tmpdir(), `webhid-revoke-${process.pid}-${Date.now()}.sock`)
-    const daemon = spawn(DAEMON_BIN, [], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, WEBHID_SOCKET: socketPath }
-    })
-    const logStream = createWriteStream(socketPath.replace(/\.sock$/, '.log'))
-    daemon.stdout.pipe(logStream)
-    daemon.stderr.pipe(logStream)
+    const daemon = await startDaemon(socketPath)
     try {
-      await waitForDaemonListening(daemon)
       const nm = await makeNmClient(socketPath)
       const hs = await nm.request<NmHandshakeResponse>({ a: 8 })
       expect(hs.s).toBe(200)
@@ -285,7 +247,7 @@ test.describe.serial('WebHID E2E (transport revocation)', () => {
 
       nm.close()
     } finally {
-      daemon.kill('SIGTERM')
+      stopDaemon(daemon)
       rmSync(socketPath, { force: true })
     }
   })

@@ -1,5 +1,10 @@
 import { test, expect } from '../../helpers/browser.js'
-import { waitForPermResult, type PermResult } from '../../helpers/browser-utils.js'
+import {
+  frameWithId,
+  waitForFrame,
+  waitForPermResult,
+  type PermResult
+} from '../../helpers/browser-utils.js'
 import type { Page, Frame } from '@playwright/test'
 function expectHidAllowed(result: PermResult | null | undefined): void {
   expect(result).not.toBeNull()
@@ -34,8 +39,7 @@ async function readHidState(page: Page): Promise<PermResult> {
 test.describe('Permissions Policy', () => {
   test.describe.configure({ mode: 'parallel' })
 
-  test('B33: no header allows same-origin', async ({ page, pageUrl }) => {
-    await page.goto(pageUrl('/policy-check'), { waitUntil: 'domcontentloaded', timeout: 15000 })
+  test('B33: no header allows same-origin', async ({ page }) => {
     const r = await waitForPermResult(page)
     expect(r).not.toBeNull()
     expect(r!.isTop).toBe(true)
@@ -57,10 +61,6 @@ test.describe('Permissions Policy', () => {
 test('same-origin top-level documents have independent policies', async ({ page, pageUrl }) => {
   const sibling = await page.context().newPage()
   try {
-    await page.goto(pageUrl('/policy-check'), {
-      waitUntil: 'domcontentloaded',
-      timeout: 15000
-    })
     await sibling.goto(pageUrl('/policy-check-blocked'), {
       waitUntil: 'domcontentloaded',
       timeout: 15000
@@ -75,17 +75,6 @@ test('same-origin top-level documents have independent policies', async ({ page,
 })
 
 test.describe('Cross-origin iframe', () => {
-  async function waitForFrame(p: Page, urlSubstring: string, timeout = 10000) {
-    await expect
-      .poll(() => p.frames().some((frame: Frame) => frame.url().includes(urlSubstring)), {
-        timeout
-      })
-      .toBe(true)
-    const frame = p.frames().find((candidate: Frame) => candidate.url().includes(urlSubstring))
-    if (!frame) throw new Error('Frame with URL containing "' + urlSubstring + '" not found')
-    return frame
-  }
-
   async function readIframeResult(p: Page, urlSubstring: string) {
     const childFrame = await waitForFrame(p, urlSubstring)
     await childFrame.waitForFunction(
@@ -94,6 +83,7 @@ test.describe('Cross-origin iframe', () => {
           ?.results?.perm
         return r !== null && typeof r === 'object'
       },
+      undefined,
       { timeout: 10000 }
     )
     const raw = await childFrame.evaluate<PermResult | null>(() => {
@@ -126,27 +116,6 @@ test.describe('Cross-origin iframe', () => {
       const result = pageState.tests?.results?.perm
       return result && typeof result === 'object' ? result : null
     })
-  }
-  async function frameWithId(p: Page, id: string, urlSubstring: string) {
-    await expect
-      .poll(
-        async () => {
-          for (const frame of p.frames()) {
-            if (!frame.url().includes(urlSubstring)) continue
-            const element = await frame.frameElement().catch(() => null)
-            if (element && (await element.getAttribute('id')) === id) return true
-          }
-          return false
-        },
-        { timeout: 10000 }
-      )
-      .toBe(true)
-    for (const frame of p.frames()) {
-      if (!frame.url().includes(urlSubstring)) continue
-      const element = await frame.frameElement().catch(() => null)
-      if (element && (await element.getAttribute('id')) === id) return frame
-    }
-    throw new Error('Frame #' + id + ' not found')
   }
 
   async function setupIframePair(

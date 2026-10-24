@@ -15,30 +15,33 @@ export function mockIdFor(
   return { vendorId: DEVICES[which].vid, productId: DEVICES[which].pid }
 }
 
-export async function grantDevicePermission(page: Page, filters: DeviceFilter[]): Promise<number> {
+export async function openDevicePicker(page: Page, filters: DeviceFilter[]): Promise<void> {
   await page.evaluate(() => {
     const results = window.tests!.results
-    results.pickerStarted = new Promise<void>((resolve) => {
-      const check = () => {
-        if (document.querySelector('#webhid-shadow-host')?.getAttribute('aria-busy') !== 'true') {
-          return false
-        }
-        observer.disconnect()
-        resolve()
-        return true
+    const { promise, resolve } = Promise.withResolvers<void>()
+    results.pickerStarted = promise
+    const check = () => {
+      if (document.querySelector('#webhid-shadow-host')?.getAttribute('aria-busy') !== 'true') {
+        return false
       }
-      const observer = new MutationObserver(check)
-      observer.observe(document.documentElement, {
-        attributes: true,
-        attributeFilter: ['aria-busy'],
-        childList: true,
-        subtree: true
-      })
-      check()
+      observer.disconnect()
+      resolve()
+      return true
+    }
+    const observer = new MutationObserver(check)
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['aria-busy'],
+      childList: true,
+      subtree: true
     })
+    check()
   })
-  await page.evaluate((flt: DeviceFilter[]) => window.tests!.helper.requestDevice!(flt), filters)
+  await page.evaluate((requestedFilters: DeviceFilter[]) => {
+    window.tests!.helper.requestDevice!(requestedFilters)
+  }, filters)
   await page.locator('#request-device-btn').click()
+
   const pickerStart = await page.evaluate(() => {
     const started = window.tests!.results.pickerStarted as Promise<void>
     const request = window.tests!.helper.requestDeviceResult!()
@@ -63,7 +66,10 @@ export async function grantDevicePermission(page: Page, filters: DeviceFilter[])
     undefined,
     { timeout: 15000 }
   )
+}
 
+export async function grantDevicePermission(page: Page, filters: DeviceFilter[]): Promise<number> {
+  await openDevicePicker(page, filters)
   const picker = page.locator('#webhid-shadow-host')
   const emptyStatus = picker.getByRole('status')
   if ((await emptyStatus.count()) > 0) {

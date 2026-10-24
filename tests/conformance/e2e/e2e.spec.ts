@@ -864,7 +864,7 @@ test.describe('WebHID conformance', () => {
       vendorDevice.process = replacement.process
       vendorDevice.ready = replacement.ready
 
-      await page.waitForFunction(() => window.tests!.results.connect === true, {
+      await page.waitForFunction(() => window.tests!.results.connect === true, undefined, {
         timeout: 10000
       })
       const isPaired = await page.evaluate(

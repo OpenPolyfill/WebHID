@@ -13,8 +13,6 @@ interface BrowserWorkerFixtures {
   wptUrl: (path: string) => string
 }
 
-
-
 export const test = createHarnessFixtures(base).extend<BrowserTestFixtures, BrowserWorkerFixtures>({
   testServer: [
     async ({}, use) => {
@@ -48,7 +46,9 @@ export const test = createHarnessFixtures(base).extend<BrowserTestFixtures, Brow
       waitUntil: 'domcontentloaded',
       timeout: 15000
     })
-    await page.waitForFunction(() => typeof navigator.hid !== 'undefined', { timeout: 15000 })
+    await page.waitForFunction(() => typeof navigator.hid !== 'undefined', undefined, {
+      timeout: 15000
+    })
     await use(page)
   },
   workerHidPage: async ({ extension, page, pageUrl }, use) => {
@@ -67,7 +67,10 @@ export const test = createHarnessFixtures(base).extend<BrowserTestFixtures, Brow
       [key]
     )
     try {
-      await extension.background!.evaluate((settingKey) => browser.storage.local.set({ [settingKey]: true }), [key])
+      await extension.background!.evaluate(
+        (settingKey) => browser.storage.local.set({ [settingKey]: true }),
+        [key]
+      )
       await page.goto(pageUrl('/policy-check'), {
         waitUntil: 'domcontentloaded',
         timeout: 15000
@@ -75,7 +78,10 @@ export const test = createHarnessFixtures(base).extend<BrowserTestFixtures, Brow
       await use(page)
     } finally {
       await extension.background!.evaluate(
-        ({ settingKey, previous }: {
+        ({
+          settingKey,
+          previous
+        }: {
           settingKey: string
           previous: { exists: boolean; value: boolean | undefined }
         }) => {
@@ -85,7 +91,7 @@ export const test = createHarnessFixtures(base).extend<BrowserTestFixtures, Brow
         [{ settingKey: key, previous }]
       )
     }
-  },
+  }
 })
 
 export { expect }

@@ -24,15 +24,21 @@ async function prepareFanoutPage(
   await page.goto(`${origin}/tests/test-page.html`, {
     waitUntil: 'domcontentloaded'
   })
-  await page.waitForFunction(() => typeof navigator.hid !== 'undefined', { timeout: 15000 })
-  await page.waitForFunction(async () => (await navigator.hid.getDevices()).length === 0, {
+  await page.waitForFunction(() => typeof navigator.hid !== 'undefined', undefined, {
     timeout: 15000
   })
+  await page.waitForFunction(
+    async () => (await navigator.hid.getDevices()).length === 0,
+    undefined,
+    { timeout: 15000 }
+  )
   expect(await grantDevicePermission(page, [VENDOR])).toBe(1)
 
   if (enableWorker) {
     await page.reload({ waitUntil: 'domcontentloaded' })
-    await page.waitForFunction(() => typeof navigator.hid !== 'undefined', { timeout: 15000 })
+    await page.waitForFunction(() => typeof navigator.hid !== 'undefined', undefined, {
+      timeout: 15000
+    })
   }
 
   await page.goto(`${origin}/tests/pages/input-report-fanout.html`, {
@@ -63,7 +69,7 @@ test.describe.serial('OpenPolyfill input report fan-out', () => {
           location.origin
         )
       })
-      await page.waitForFunction(() => window.tests?.results?.fanoutReady === true, {
+      await page.waitForFunction(() => window.tests?.results?.fanoutReady === true, undefined, {
         timeout: 15000
       })
       sendInput(vendorDevice, 1, PACKET)
@@ -73,9 +79,10 @@ test.describe.serial('OpenPolyfill input report fan-out', () => {
             { page?: number; worker?: number } | undefined
           return counts?.page === 1 && counts.worker === 1
         },
+        undefined,
         { timeout: 15000 }
       )
-      await page.waitForFunction(() => window.tests?.results?.workerClosed === true, {
+      await page.waitForFunction(() => window.tests?.results?.workerClosed === true, undefined, {
         timeout: 15000
       })
       sendInput(vendorDevice, 1, PACKET)
@@ -84,6 +91,7 @@ test.describe.serial('OpenPolyfill input report fan-out', () => {
           const counts = window.tests?.results?.fanoutCounts as { page?: number } | undefined
           return counts?.page === 2
         },
+        undefined,
         { timeout: 15000 }
       )
       await expect(page.evaluate(() => window.tests?.results?.fanoutCounts)).resolves.toEqual({
@@ -92,7 +100,7 @@ test.describe.serial('OpenPolyfill input report fan-out', () => {
       })
     } finally {
       await page.goto(`${origin}/tests/test-page.html`, { waitUntil: 'domcontentloaded' })
-      await page.waitForFunction(() => typeof navigator.hid !== 'undefined', {
+      await page.waitForFunction(() => typeof navigator.hid !== 'undefined', undefined, {
         timeout: 15000
       })
       await page.evaluate(async () => {
@@ -101,9 +109,11 @@ test.describe.serial('OpenPolyfill input report fan-out', () => {
           await device.forget()
         }
       })
-      await page.waitForFunction(async () => (await navigator.hid.getDevices()).length === 0, {
-        timeout: 15000
-      })
+      await page.waitForFunction(
+        async () => (await navigator.hid.getDevices()).length === 0,
+        undefined,
+        { timeout: 15000 }
+      )
       await extension.background!.evaluate<void>(
         ({ keys, values }: { keys: string[]; values: Record<string, unknown> }) => {
           const missing = keys.filter((key) => !(key in values))
@@ -130,15 +140,14 @@ test.describe.serial('OpenPolyfill input report fan-out', () => {
       [settingKeys]
     )
     await extension.background!.evaluate<void>(
-      (keys: string[]) =>
-        browser.storage.local.set({ [keys[0]]: 'ws', [keys[1]]: false }),
+      (keys: string[]) => browser.storage.local.set({ [keys[0]]: 'ws', [keys[1]]: false }),
       [settingKeys]
     )
     try {
       await page.goto(`${origin}/tests/test-page.html`, {
         waitUntil: 'domcontentloaded'
       })
-      await page.waitForFunction(() => typeof navigator.hid !== 'undefined', {
+      await page.waitForFunction(() => typeof navigator.hid !== 'undefined', undefined, {
         timeout: 15000
       })
       expect(await grantDevicePermission(page, [VENDOR])).toBe(1)
@@ -184,7 +193,7 @@ test.describe.serial('OpenPolyfill input report fan-out', () => {
         await device.open()
       })
       sendInput(vendorDevice, 1, PACKET)
-      await page.waitForFunction(() => window.tests?.results.reportCount === 1, {
+      await page.waitForFunction(() => window.tests?.results.reportCount === 1, undefined, {
         timeout: 15000
       })
       await child.goto(`${origin}/tests/test-page.html`, { waitUntil: 'domcontentloaded' })
@@ -197,12 +206,12 @@ test.describe.serial('OpenPolyfill input report fan-out', () => {
         await device.open()
       })
       sendInput(vendorDevice, 1, PACKET)
-      await page.waitForFunction(() => window.tests?.results.reportCount === 2, {
+      await page.waitForFunction(() => window.tests?.results.reportCount === 2, undefined, {
         timeout: 15000
       })
       await page.evaluate(() => document.querySelector('#frame-owner')?.remove())
       sendInput(vendorDevice, 1, PACKET)
-      await page.waitForFunction(() => window.tests?.results.reportCount === 3, {
+      await page.waitForFunction(() => window.tests?.results.reportCount === 3, undefined, {
         timeout: 15000
       })
     } finally {
@@ -212,9 +221,11 @@ test.describe.serial('OpenPolyfill input report fan-out', () => {
           await device.forget()
         }
       })
-      await page.waitForFunction(async () => (await navigator.hid.getDevices()).length === 0, {
-        timeout: 15000
-      })
+      await page.waitForFunction(
+        async () => (await navigator.hid.getDevices()).length === 0,
+        undefined,
+        { timeout: 15000 }
+      )
       await extension.background!.evaluate<void>(
         ({ keys, values }: { keys: string[]; values: Record<string, unknown> }) => {
           const missing = keys.filter((key) => !(key in values))

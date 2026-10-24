@@ -37,7 +37,7 @@ test('WebHID report I/O works with the WebTransport dataPlane setting', async ({
       [settingKey]
     )
     await page.reload({ waitUntil: 'domcontentloaded' })
-    await page.waitForFunction(() => typeof navigator.hid !== 'undefined', {
+    await page.waitForFunction(() => typeof navigator.hid !== 'undefined', undefined, {
       timeout: 15000
     })
     expect(await grantDevicePermission(page, [VENDOR])).toBe(1)

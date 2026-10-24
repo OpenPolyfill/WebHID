@@ -1,4 +1,3 @@
-import { configureDaemonMode } from '../../helpers/e2e.js'
 import { sleep } from '../../helpers/test-utils.js'
 import type { Page } from '@playwright/test'
 import type { FirefoxExtension } from '@openpolyfill/firefox-addon-playwright-harness'
@@ -158,7 +157,7 @@ export async function benchmarkLoss(
   mode: 'ws' | 'wt' | 'nm',
   opts: { inPage?: boolean } = {}
 ): Promise<LossResult> {
-  const { page, extension, httpOrigin, daemonMode, rdp } = fixtures
+  const { page, extension, httpOrigin, rdp } = fixtures
   const watch = watchConsole(page)
   const profileDir = process.env.BENCHMARK_PROFILE_DIR
   let profiler: ProfilerCapture | null = null
@@ -168,16 +167,19 @@ export async function benchmarkLoss(
   }
   const origin = httpOrigin
   const resetSettings = () =>
-    extension.background!.evaluate(({ origin }: { origin: string }) =>
-      browser.storage.local.remove([
-        'settings :: useWorker',
-        'settings :: logLevel',
-        `settings :: ${origin} :: useWorker`,
-        `settings :: ${origin} :: logLevel`
-      ]), [{ origin }])
+    extension
+      .background!.evaluate(
+        ({ origin }: { origin: string }) =>
+          browser.storage.local.remove([
+            'settings :: useWorker',
+            'settings :: logLevel',
+            `settings :: ${origin} :: useWorker`,
+            `settings :: ${origin} :: logLevel`
+          ]),
+        [{ origin }]
+      )
       .catch(() => {})
   try {
-    await configureDaemonMode(extension, daemonMode)
     await setSiteSettings(extension, origin, { dataPlane: mode })
     if (opts.inPage) {
       await setSiteSettings(extension, origin, { useWorker: false })
@@ -187,7 +189,9 @@ export async function benchmarkLoss(
       waitUntil: 'domcontentloaded',
       timeout: 15000
     })
-    await page.waitForFunction(() => typeof navigator.hid !== 'undefined', { timeout: 15000 })
+    await page.waitForFunction(() => typeof navigator.hid !== 'undefined', undefined, {
+      timeout: 15000
+    })
     const granted = await grantDevicePermission(page, [VENDOR])
     if (granted !== 1)
       throw new Error(`grantDevicePermission resolved ${granted} devices, expected 1`)

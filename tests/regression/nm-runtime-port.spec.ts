@@ -44,7 +44,7 @@ test.describe.serial('Exact frame endpoint fanout', () => {
     )
     try {
       await page.goto(`${origin}/tests/test-page.html`, { waitUntil: 'domcontentloaded' })
-      await page.waitForFunction(() => typeof navigator.hid !== 'undefined', {
+      await page.waitForFunction(() => typeof navigator.hid !== 'undefined', undefined, {
         timeout: 15000
       })
       expect(await grantDevicePermission(page, [VENDOR])).toBe(1)
@@ -64,6 +64,7 @@ test.describe.serial('Exact frame endpoint fanout', () => {
           if (typeof error === 'string') throw new Error(error)
           return results?.fanoutReady === true
         },
+        undefined,
         { timeout: 15000 }
       )
       sendInput(vendorDevice, 1, PACKET)
@@ -75,6 +76,7 @@ test.describe.serial('Exact frame endpoint fanout', () => {
           const counts = testResults.fanoutCounts
           return counts?.page === 1 && counts['iframe-0'] === 1
         },
+        undefined,
         { timeout: 15000 }
       )
       await page.evaluate(() => document.querySelector('iframe')?.remove())
@@ -101,6 +103,7 @@ test.describe.serial('Exact frame endpoint fanout', () => {
           }
           return testResults.fanoutCounts?.page === 2
         },
+        undefined,
         { timeout: 15000 }
       )
       await expect(page.evaluate(() => window.tests?.results?.fanoutCounts)).resolves.toEqual({
@@ -114,9 +117,11 @@ test.describe.serial('Exact frame endpoint fanout', () => {
           await device.forget()
         }
       })
-      await page.waitForFunction(async () => (await navigator.hid.getDevices()).length === 0, {
-        timeout: 15000
-      })
+      await page.waitForFunction(
+        async () => (await navigator.hid.getDevices()).length === 0,
+        undefined,
+        { timeout: 15000 }
+      )
       await extension.background!.evaluate<void>(
         ({ keys, values }: { keys: string[]; values: Record<string, unknown> }) => {
           const missing = keys.filter((key) => !(key in values))
@@ -140,10 +145,13 @@ test.describe.serial('Exact frame endpoint fanout', () => {
       (key: string) => browser.storage.local.get(key),
       [settingKey]
     )
-    await extension.background!.evaluate((key: string) => browser.storage.local.set({ [key]: 'nm' }), [settingKey])
+    await extension.background!.evaluate(
+      (key: string) => browser.storage.local.set({ [key]: 'nm' }),
+      [settingKey]
+    )
     try {
       await page.goto(`${origin}/tests/test-page.html`, { waitUntil: 'domcontentloaded' })
-      await page.waitForFunction(() => typeof navigator.hid !== 'undefined', {
+      await page.waitForFunction(() => typeof navigator.hid !== 'undefined', undefined, {
         timeout: 15000
       })
       await grantDevicePermission(page, [VENDOR])
@@ -187,7 +195,7 @@ test.describe.serial('Exact frame endpoint fanout', () => {
         )
         .toBe(true)
       await page.goto(`${origin}/tests/test-page.html`, { waitUntil: 'domcontentloaded' })
-      await page.waitForFunction(() => typeof navigator.hid !== 'undefined', {
+      await page.waitForFunction(() => typeof navigator.hid !== 'undefined', undefined, {
         timeout: 15000
       })
       await extension.background!.evaluate(() => {

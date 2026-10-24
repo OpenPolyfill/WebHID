@@ -1,5 +1,10 @@
 import { expect, workerBase as base, withSharedPage } from '../../helpers/e2e.js'
-import { grantDevicePermission, mockDeviceName } from '../../helpers/e2e-devices.js'
+import type { Page } from '@playwright/test'
+import {
+  grantDevicePermission,
+  mockDeviceName,
+  openDevicePicker
+} from '../../helpers/e2e-devices.js'
 import type { DeviceFilter } from '../../helpers/e2e-types.js'
 import { armInputReport } from '../../helpers/e2e-reports.js'
 import {
@@ -9,7 +14,6 @@ import {
   waitForOutputReport,
   type WebhidMockProcess
 } from '../../helpers/e2e-process.js'
-import type { Page } from '@playwright/test'
 const test = withSharedPage(base)
 test.describe.configure({ mode: 'serial' })
 
@@ -25,51 +29,7 @@ type MockEvent = { event: string; id?: number; data?: number[] }
 let mock: WebhidMockProcess | null = null
 
 async function cancelDevicePermission(page: Page, filters: DeviceFilter[]): Promise<number> {
-  await page.evaluate(() => {
-    window.tests!.results.pickerStarted = new Promise<void>((resolve) => {
-      const check = () => {
-        if (document.querySelector('#webhid-shadow-host')?.getAttribute('aria-busy') !== 'true') {
-          return false
-        }
-        observer.disconnect()
-        resolve()
-        return true
-      }
-      const observer = new MutationObserver(check)
-      observer.observe(document.documentElement, {
-        attributes: true,
-        attributeFilter: ['aria-busy'],
-        childList: true,
-        subtree: true
-      })
-      check()
-    })
-  })
-  await page.evaluate((requestedFilters) => {
-    window.tests!.helper.requestDevice!(requestedFilters)
-  }, filters)
-  await page.locator('#request-device-btn').click()
-
-  const pickerState = await page.evaluate(() => {
-    const started = window.tests!.results.pickerStarted as Promise<void>
-    const request = window.tests!.helper.requestDeviceResult!()
-    return Promise.race([
-      started.then(() => 'opened' as const),
-      request.then(
-        () => 'settled' as const,
-        () => 'rejected' as const
-      )
-    ])
-  })
-  if (pickerState !== 'opened') {
-    throw new Error(`requestDevice did not open its chooser: ${pickerState}`)
-  }
-
-  await page.waitForFunction(
-    () => document.querySelector('#webhid-shadow-host')?.getAttribute('aria-busy') === 'false',
-    undefined,
-    { timeout: 15000 }
-  )
+  await openDevicePicker(page, filters)
   const requestResult = page.evaluate(() => window.tests!.helper.requestDeviceResult!())
   await page.locator('#webhid-shadow-host').locator('#webhidCancelBtn').click()
   return requestResult

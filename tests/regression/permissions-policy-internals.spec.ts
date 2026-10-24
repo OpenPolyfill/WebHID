@@ -1,28 +1,5 @@
 import { test, expect } from '../helpers/browser.js'
-import type { Frame, Page } from '@playwright/test'
-
-async function frameWithId(page: Page, id: string, urlSubstring: string): Promise<Frame> {
-  await expect
-    .poll(
-      async () => {
-        for (const frame of page.frames()) {
-          if (!frame.url().includes(urlSubstring)) continue
-          const element = await frame.frameElement().catch(() => null)
-          if (element && (await element.getAttribute('id')) === id) return true
-        }
-        return false
-      },
-      { timeout: 10000 }
-    )
-    .toBe(true)
-
-  for (const frame of page.frames()) {
-    if (!frame.url().includes(urlSubstring)) continue
-    const element = await frame.frameElement().catch(() => null)
-    if (element && (await element.getAttribute('id')) === id) return frame
-  }
-  throw new Error(`Frame #${id} not found`)
-}
+import { frameWithId } from '../helpers/browser-utils.js'
 
 test.describe('OpenPolyfill permissions policy internals', () => {
   test('background preserves distinct opaque settings targets', async ({
@@ -187,6 +164,7 @@ test.describe('OpenPolyfill permissions policy internals', () => {
             .tests?.results?.workerPolicy
           return result !== null && typeof result === 'object'
         },
+        undefined,
         { timeout: 15000 }
       )
       const result = await childFrame.evaluate<{
@@ -206,7 +184,10 @@ test.describe('OpenPolyfill permissions policy internals', () => {
       )
     } finally {
       await extension.background!.evaluate<void>(
-        ({ key, previous }: {
+        ({
+          key,
+          previous
+        }: {
           key: string
           previous: { exists: boolean; value: boolean | undefined }
         }) => {

@@ -1,4 +1,4 @@
-import { test, configureDaemonMode } from '../helpers/e2e.js'
+import { test } from '../helpers/e2e.js'
 import { withTimeout } from '../helpers/test-utils.js'
 import { type Page } from '@playwright/test'
 import type { FirefoxExtension } from '@openpolyfill/firefox-addon-playwright-harness'
@@ -92,8 +92,11 @@ export async function setSiteSettings(
     keys[`settings :: ${name}`] = value
     keys[`settings :: ${origin} :: ${name}`] = value
   }
-  await extension.background!.evaluate(({ keys }: { keys: Record<string, string | number | boolean> }) =>
-    browser.storage.local.set(keys), [{ keys }])
+  await extension.background!.evaluate(
+    ({ keys }: { keys: Record<string, string | number | boolean> }) =>
+      browser.storage.local.set(keys),
+    [{ keys }]
+  )
 }
 
 export function chunkImage(img: Buffer): number[][] {
@@ -255,7 +258,9 @@ async function prepareBenchmarkPage(page: Page, origin: string): Promise<void> {
     waitUntil: 'domcontentloaded',
     timeout: 15000
   })
-  await page.waitForFunction(() => typeof navigator.hid !== 'undefined', { timeout: 15000 })
+  await page.waitForFunction(() => typeof navigator.hid !== 'undefined', undefined, {
+    timeout: 15000
+  })
   const granted = await grantDevicePermission(page, [VENDOR])
   if (granted !== 1)
     throw new Error(`grantDevicePermission resolved ${granted} devices, expected 1`)
@@ -269,9 +274,8 @@ async function prepareBenchmarkPage(page: Page, origin: string): Promise<void> {
       ((
         window.tests!.helper as unknown as { webhidBenchmark?: BenchApi }
       ).webhidBenchmark?.chunkCount() ?? 0) > 0,
-    {
-      timeout: 15000
-    }
+    undefined,
+    { timeout: 15000 }
   )
 }
 
@@ -289,21 +293,22 @@ async function verifyChunkCount(page: Page): Promise<void> {
   }
 }
 
-async function resetBenchmarkSettings(
-  extension: FirefoxExtension,
-  origin: string
-): Promise<void> {
-  await extension.background!.evaluate(({ origin }: { origin: string }) =>
-    browser.storage.local.remove([
-      'settings :: dataPlane',
-      'settings :: useWorker',
-      'settings :: logLevel',
-      'settings :: workerSpawnMode',
-      `settings :: ${origin} :: dataPlane`,
-      `settings :: ${origin} :: useWorker`,
-      `settings :: ${origin} :: logLevel`,
-      `settings :: ${origin} :: workerSpawnMode`
-    ]), [{ origin }])
+async function resetBenchmarkSettings(extension: FirefoxExtension, origin: string): Promise<void> {
+  await extension
+    .background!.evaluate(
+      ({ origin }: { origin: string }) =>
+        browser.storage.local.remove([
+          'settings :: dataPlane',
+          'settings :: useWorker',
+          'settings :: logLevel',
+          'settings :: workerSpawnMode',
+          `settings :: ${origin} :: dataPlane`,
+          `settings :: ${origin} :: useWorker`,
+          `settings :: ${origin} :: logLevel`,
+          `settings :: ${origin} :: workerSpawnMode`
+        ]),
+      [{ origin }]
+    )
     .catch(() => {})
 }
 
@@ -349,10 +354,8 @@ export async function benchmarkMode(
   mode: 'ws' | 'wt' | 'nm',
   opts?: { inPage?: boolean }
 ): Promise<BenchmarkResult> {
-  const { page, extension, vendorDevice, httpOrigin, daemonMode, rdp } = fixtures
+  const { page, extension, vendorDevice, httpOrigin, rdp } = fixtures
   const origin = httpOrigin
-
-  await configureDaemonMode(extension, daemonMode)
   await configurePageSettings(extension, origin, mode, opts)
   await prepareBenchmarkPage(page, origin)
   await verifyChunkCount(page)

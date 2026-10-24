@@ -1,14 +1,4 @@
-import type { Page } from '@playwright/test'
-
-export async function navigateToPolicyCheck(
-  page: Page,
-  pageUrl: (path: string) => string
-): Promise<void> {
-  await page.goto(pageUrl('/policy-check'), {
-    waitUntil: 'domcontentloaded',
-    timeout: 15000
-  })
-}
+import { expect, type Frame, type Page } from '@playwright/test'
 
 export interface PermResult {
   isTop?: boolean
@@ -31,7 +21,53 @@ export async function waitForPermResult(page: Page, timeout = 10000): Promise<Pe
       const r = window.tests?.results.perm
       return r !== null && typeof r === 'object'
     },
+    undefined,
     { timeout }
   )
   return getPermResult(page)
+}
+
+async function findFrame(
+  page: Page,
+  urlSubstring: string,
+  id: string | undefined,
+  timeout: number
+): Promise<Frame> {
+  await expect
+    .poll(
+      async () => {
+        for (const frame of page.frames()) {
+          if (!frame.url().includes(urlSubstring)) continue
+          if (id === undefined) return true
+          const element = await frame.frameElement().catch(() => null)
+          if (element && (await element.getAttribute('id')) === id) return true
+        }
+        return false
+      },
+      { timeout }
+    )
+    .toBe(true)
+
+  for (const frame of page.frames()) {
+    if (!frame.url().includes(urlSubstring)) continue
+    if (id === undefined) return frame
+    const element = await frame.frameElement().catch(() => null)
+    if (element && (await element.getAttribute('id')) === id) return frame
+  }
+  throw new Error(
+    id ? `Frame #${id} not found` : `Frame with URL containing "${urlSubstring}" not found`
+  )
+}
+
+export function waitForFrame(page: Page, urlSubstring: string, timeout = 10000): Promise<Frame> {
+  return findFrame(page, urlSubstring, undefined, timeout)
+}
+
+export function frameWithId(
+  page: Page,
+  id: string,
+  urlSubstring: string,
+  timeout = 10000
+): Promise<Frame> {
+  return findFrame(page, urlSubstring, id, timeout)
 }

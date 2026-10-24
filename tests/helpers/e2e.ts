@@ -78,13 +78,16 @@ const defaultHarnessTest = createHarnessFixtures(base)
 function extendE2eFixtures(testBase: typeof defaultHarnessTest) {
   const e2eTest = testBase.extend<E2eTestFixtures, E2eWorkerFixtures>({
     e2eSetup: [
-      async ({ page, extension, httpOrigin, daemonMode }, use) => {
+      async ({ page, extension, httpOrigin, daemonMode }, use, testInfo) => {
         await configureDaemonMode(extension, daemonMode)
-        const url = `${httpOrigin}/tests/test-page.html`
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 })
-        await page.waitForFunction(() => typeof navigator.hid !== 'undefined', {
-          timeout: 15000
-        })
+        const benchmarkRuns = (testInfo.project.use as { benchmarkRuns?: number }).benchmarkRuns
+        if (benchmarkRuns === undefined) {
+          const url = `${httpOrigin}/tests/test-page.html`
+          await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 })
+          await page.waitForFunction(() => typeof navigator.hid !== 'undefined', undefined, {
+            timeout: 15000
+          })
+        }
         await use()
       },
       { auto: true }
@@ -120,7 +123,7 @@ function extendE2eFixtures(testBase: typeof defaultHarnessTest) {
         server.close()
       },
       { scope: 'worker', auto: true }
-    ],
+    ]
   })
 
   return e2eTest

@@ -1,11 +1,6 @@
 import { test, expect } from '../../helpers/browser.js'
-import { navigateToPolicyCheck } from '../../helpers/browser-utils.js'
 
 test.describe('HID WebIDL', () => {
-  test.beforeEach(async ({ page, pageUrl }) => {
-    await navigateToPolicyCheck(page, pageUrl)
-  })
-
   test('navigator.hid is a SameObject HID EventTarget in a secure context', async ({ page }) => {
     const result = await page.evaluate(() => {
       let constructorError: string | null = null

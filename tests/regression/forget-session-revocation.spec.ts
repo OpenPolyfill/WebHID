@@ -23,7 +23,7 @@ test('forget revokes every device in a grant group across same-origin documents'
       waitUntil: 'domcontentloaded',
       timeout: 15000
     })
-    await siblingPage.waitForFunction(() => typeof navigator.hid !== 'undefined', {
+    await siblingPage.waitForFunction(() => typeof navigator.hid !== 'undefined', undefined, {
       timeout: 15000
     })
     await siblingPage.evaluate(async (ctx) => {

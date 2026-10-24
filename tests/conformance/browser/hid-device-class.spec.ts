@@ -1,11 +1,6 @@
 import { test, expect } from '../../helpers/browser.js'
-import { navigateToPolicyCheck } from '../../helpers/browser-utils.js'
 
-test('HIDDevice inherits EventTarget methods and exposes Web IDL descriptors', async ({
-  page,
-  pageUrl
-}) => {
-  await navigateToPolicyCheck(page, pageUrl)
+test('HIDDevice inherits EventTarget methods and exposes Web IDL descriptors', async ({ page }) => {
   const result = await page.evaluate(() => {
     let constructorError: string | null = null
     try {

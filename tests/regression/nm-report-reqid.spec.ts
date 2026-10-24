@@ -21,11 +21,16 @@ test.describe.serial('NM report request routing', () => {
   }) => {
     await vendorDevice.ready
     const origin = new URL(page.url()).origin
-    await extension.background!.evaluate((siteOrigin: string) => {
-      return browser.storage.local.set({ [`settings :: ${siteOrigin} :: dataPlane`]: 'nm' })
-    }, [origin])
+    await extension.background!.evaluate(
+      (siteOrigin: string) => {
+        return browser.storage.local.set({ [`settings :: ${siteOrigin} :: dataPlane`]: 'nm' })
+      },
+      [origin]
+    )
     await page.goto(`${origin}/tests/test-page.html`, { waitUntil: 'domcontentloaded' })
-    await page.waitForFunction(() => typeof navigator.hid !== 'undefined', { timeout: 15000 })
+    await page.waitForFunction(() => typeof navigator.hid !== 'undefined', undefined, {
+      timeout: 15000
+    })
     await page.evaluate(async () => {
       for (const device of await navigator.hid.getDevices()) {
         if (device.opened) await device.close()
@@ -36,7 +41,9 @@ test.describe.serial('NM report request routing', () => {
     await page.goto(`${origin}/tests/pages/nm-report-reqid.html`, {
       waitUntil: 'domcontentloaded'
     })
-    await page.waitForFunction(() => typeof navigator.hid !== 'undefined', { timeout: 15000 })
+    await page.waitForFunction(() => typeof navigator.hid !== 'undefined', undefined, {
+      timeout: 15000
+    })
 
     await page.evaluate(() => {
       window.postMessage({ type: 'start' }, location.origin)
@@ -47,6 +54,7 @@ test.describe.serial('NM report request routing', () => {
         if (typeof results?.reportError === 'string') throw new Error(results.reportError)
         return results?.reportResults !== undefined
       },
+      undefined,
       { timeout: 15000 }
     )
 

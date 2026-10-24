@@ -46,7 +46,7 @@ export async function startDaemon(socketPath: string = DEFAULT_SOCKET): Promise<
     proc.stderr.pipe(logStream)
     const onData = (data: Buffer) => {
       const msg = data.toString()
-      if (msg.includes('listening')) {
+      if (msg.includes('webhid-daemon listening on')) {
         resolvePromise({ process: proc, socketPath })
       }
     }
@@ -145,4 +145,3 @@ export async function waitForOutputReport(
     })
   })
 }
-
