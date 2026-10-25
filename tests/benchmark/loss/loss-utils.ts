@@ -9,6 +9,7 @@ import type { DeviceFilter } from '../../helpers/e2e-types.js'
 import { ProfilerCapture } from '../capture-profile.js'
 import { join } from 'node:path'
 import { percentile, resolveRunCount, setSiteSettings, watchConsole } from '../benchmark-utils.js'
+import { fulfillProjectRoute, isProjectRoute } from '../../serve.js'
 
 export const VENDOR = mockIdFor('vendor')
 
@@ -193,6 +194,7 @@ export async function benchmarkLoss(
     await page.waitForFunction(() => typeof navigator.hid !== 'undefined', undefined, {
       timeout: 15000
     })
+    if (opts.inPage) await page.context().unroute(isProjectRoute, fulfillProjectRoute)
     const granted = await grantDevicePermission(page, [VENDOR])
     if (granted !== 1)
       throw new Error(`grantDevicePermission resolved ${granted} devices, expected 1`)

@@ -2,7 +2,7 @@ import type { WorkerFixture } from '@playwright/test'
 import { test as base, expect } from '@playwright/test'
 import { withSharedPage } from '@openpolyfill/firefox-addon-playwright-harness/fixtures'
 import { rm } from 'node:fs/promises'
-import { fulfillProjectRoute, PROJECT_ROUTE_PATHS, WEBHID_ORIGIN } from '../serve.js'
+import { fulfillProjectRoute, isProjectRoute, WEBHID_ORIGIN } from '../serve.js'
 import {
   startDaemon,
   stopDaemon,
@@ -73,11 +73,7 @@ function extendE2eFixtures(testBase: typeof defaultHarnessTest) {
       async ({ page, extensions, httpOrigin, daemonMode }, use, testInfo) => {
         const extension = getWebHidExtension(extensions)
         await configureDaemonMode(extension, daemonMode)
-        await page.context().route(
-          (url) =>
-            url.origin === WEBHID_ORIGIN && PROJECT_ROUTE_PATHS.includes(url.pathname),
-          fulfillProjectRoute
-        )
+        await page.context().route(isProjectRoute, fulfillProjectRoute)
         const benchmarkRuns = (testInfo.project.use as { benchmarkRuns?: number }).benchmarkRuns
         if (benchmarkRuns === undefined) {
           const url = `${httpOrigin}/tests/test-page.html`

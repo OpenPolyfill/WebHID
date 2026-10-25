@@ -77,8 +77,29 @@
    */
   const shadowRedirectTargets = new Set()
 
-  /** @type {Map<number, {dest: string|null, shadow?: boolean}>} */
+  /** @type {Map<number, {
+   * dest: string|null,
+   * shadow?: boolean,
+   * destinationReady?: Promise<void>,
+   * destinationResolved?: boolean,
+   * resolveDestination?: () => void
+   * }>} */
   const scriptDest = new Map()
+  /** True when Firefox sends Fetch Metadata request headers. */
+  let fetchMetadataSupported = true
+  /** Resolves after the current Firefox version is known. */
+  let browserInfoReady = Promise.resolve()
+
+  /**
+   * Resolves a script's destination metadata once request headers are available.
+   * @param {object} record
+   * @returns {void}
+   */
+  function resolveScriptDestination(record) {
+    if (!record || record.destinationResolved || !record.resolveDestination) return
+    record.destinationResolved = true
+    record.resolveDestination()
+  }
 
   /**
    * Firefox's default Accept header for top-level document navigations, keyed
@@ -207,10 +228,10 @@
 
   /**
    * Prefixes the opt-in worker-polyfill bundle into dedicated worker scripts
-   * when `workerPolyfillEnabled` (global or per-site) is on. Destinations other
-   * than a dedicated worker per Sec-Fetch-Dest (page scripts, importScripts,
-   * dynamic imports, shared/service workers) are left unmodified; `dest ===
-   * null` falls back to the legacy inject-everything behavior.
+   * when workerPolyfillEnabled is on. It waits for destination metadata before
+   * deciding, since response data can arrive before onBeforeSendHeaders.
+   * Firefox 90 and newer supply Sec-Fetch-Dest. Older versions keep the legacy
+   * inject-everything fallback when that header is absent.
    * @param {object} details
    * @param {{workerPolyfillEnabled: boolean}} settings
    * @returns {object | undefined}
@@ -224,7 +245,16 @@
     }
     if (!settings.workerPolyfillEnabled && (!origin || !workerPolyfillSites.has(origin))) return
 
-    const record = { dest: null }
+    let resolveDestination
+    const destinationReady = new Promise((resolve) => {
+      resolveDestination = resolve
+    })
+    const record = {
+      dest: null,
+      destinationReady,
+      destinationResolved: false,
+      resolveDestination
+    }
     scriptDest.set(details.requestId, record)
     const filter = browser.webRequest.filterResponseData(details.requestId)
     const enc = new TextEncoder()
@@ -238,7 +268,10 @@
       }
       firstChunk = false
       injectPromise = injectPromise.then(async () => {
-        const isWorkerScope = record.dest === null || record.dest === 'worker'
+        await record.destinationReady
+        await browserInfoReady
+        const isWorkerScope =
+          record.dest === 'worker' || (record.dest === null && !fetchMetadataSupported)
         const bundle = await ensureWorkerPolyfillBundle()
         if (!bundle || !isWorkerScope) {
           filter.write(event.data)
@@ -263,12 +296,14 @@
       })
     }
     filter.onstop = () => {
+      resolveScriptDestination(record)
       injectPromise.then(() => {
         filter.close()
         scriptDest.delete(details.requestId)
       })
     }
     filter.onerror = () => {
+      resolveScriptDestination(record)
       scriptDest.delete(details.requestId)
       try {
         filter.close()
@@ -669,10 +704,11 @@
       )
       return
     }
-    browser.runtime
+    browserInfoReady = browser.runtime
       .getBrowserInfo()
       .then((info) => {
         const major = Number.parseInt(info.version, 10)
+        fetchMetadataSupported = major >= 90
         for (const [since, value] of NAVIGATION_ACCEPT_BY_VERSION) {
           if (major >= since) {
             navigationAccept = value
@@ -690,6 +726,7 @@
           (h) => h.name.toLowerCase() === 'sec-fetch-dest'
         )
         record.dest = header && header.value ? header.value : null
+        resolveScriptDestination(record)
         if (!record.shadow || record.dest !== 'worker') return
         const headers = details.requestHeaders || (details.requestHeaders = [])
         setRequestHeader(headers, 'Sec-Fetch-Dest', 'document')
@@ -734,6 +771,8 @@
 
     browser.webRequest.onErrorOccurred.addListener(
       (details) => {
+        const record = scriptDest.get(details.requestId)
+        resolveScriptDestination(record)
         scriptDest.delete(details.requestId)
       },
       { urls: ['<all_urls>'], types: ['script'] }

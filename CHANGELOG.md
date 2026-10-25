@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## Unreleased
+
+### Bug Fixes
+
+* **addon:** wait for worker script destination before injecting the worker polyfill
+
 ## [3.3.0](https://github.com/OpenPolyfill/WebHID/compare/v3.2.0...v3.3.0) (2026-10-22)
 
 ### Features

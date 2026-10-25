@@ -98,9 +98,10 @@ test('WPT WebHID Permissions Policy cases', async ({ extensions, page, wptUrl })
     })
 
     const context = page.context()
-    const results = await Promise.allSettled(
-      wptCases.map(({ name, path }) =>
-        test.step(name, async () => {
+    const failures: string[] = []
+    for (const { name, path } of wptCases) {
+      try {
+        await test.step(name, async () => {
           const wptPage = await context.newPage()
           try {
             await runWptPage(wptPage, wptUrl(path))
@@ -108,11 +109,10 @@ test('WPT WebHID Permissions Policy cases', async ({ extensions, page, wptUrl })
             await wptPage.close()
           }
         })
-      )
-    )
-    const failures = results.flatMap((result, index) =>
-      result.status === 'rejected' ? [`${wptCases[index].name}: ${String(result.reason)}`] : []
-    )
+      } catch (error) {
+        failures.push(`${name}: ${String(error)}`)
+      }
+    }
     expect(failures).toEqual([])
   } finally {
     await extension.background!.evaluate(

@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url'
 import { startStreamingRelay } from '../helpers/e2e-relay.js'
 import { type WebhidMockProcess } from '../helpers/e2e-process.js'
 import { grantDevicePermission, mockIdFor } from '../helpers/e2e-devices.js'
+import { fulfillProjectRoute, isProjectRoute } from '../serve.js'
 
 export const VENDOR = mockIdFor('vendor')
 export const IMAGE_PATH = resolve(
@@ -253,7 +254,11 @@ async function configurePageSettings(
   }
 }
 
-async function prepareBenchmarkPage(page: Page, origin: string): Promise<void> {
+async function prepareBenchmarkPage(
+  page: Page,
+  origin: string,
+  inPage: boolean
+): Promise<void> {
   await page.goto(`${origin}/tests/test-page.html`, {
     waitUntil: 'domcontentloaded',
     timeout: 15000
@@ -277,6 +282,7 @@ async function prepareBenchmarkPage(page: Page, origin: string): Promise<void> {
     undefined,
     { timeout: 15000 }
   )
+  if (inPage) await page.context().unroute(isProjectRoute, fulfillProjectRoute)
 }
 
 async function verifyChunkCount(page: Page): Promise<void> {
@@ -358,7 +364,7 @@ export async function benchmarkMode(
   const { page, vendorDevice, httpOrigin, rdp } = fixtures
   const origin = httpOrigin
   await configurePageSettings(extension, origin, mode, opts)
-  await prepareBenchmarkPage(page, origin)
+  await prepareBenchmarkPage(page, origin, !!opts?.inPage)
   await verifyChunkCount(page)
 
   const profileDir = process.env.BENCHMARK_PROFILE_DIR

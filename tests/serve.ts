@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises'
-import { dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path'
+import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Route } from '@playwright/test'
 
@@ -7,7 +7,6 @@ const directoryPath = dirname(fileURLToPath(import.meta.url))
 const pagesRoot = resolve(directoryPath, 'pages')
 const projectRoot = resolve(directoryPath, '..')
 const wptSiteRoot = resolve(directoryPath, 'conformance/wpt/site')
-const wptSupportRoot = resolve(directoryPath, 'conformance/wpt/support')
 
 export const WEBHID_ORIGIN = 'https://webhid.localhost'
 export const POLICY_ORIGIN = 'https://same-origin.localhost'
@@ -35,6 +34,9 @@ export const PROJECT_ROUTE_PATHS = [
   '/tests/pages/iframe-worker-policy.html',
   '/tests/pages/iframe-parent.html'
 ]
+export function isProjectRoute(url: URL): boolean {
+  return url.origin === WEBHID_ORIGIN && PROJECT_ROUTE_PATHS.includes(url.pathname)
+}
 
 
 const policyPageFiles: Record<string, string> = {
@@ -54,34 +56,18 @@ const policyHeaders: Record<string, Record<string, string>> = {
   '/iframe-parent-blocked': { 'permissions-policy': 'hid=()' }
 }
 
-const wptSupportFiles: Record<string, string> = {
-  '/resources/testharness.js': 'testharness.js',
-  '/permissions-policy/resources/permissions-policy.js': 'permissions-policy.js',
-  '/permissions-policy/resources/permissions-policy-hid.html': 'permissions-policy-hid.html',
-  '/permissions-policy/resources/permissions-policy-hid-worker.html':
-    'permissions-policy-hid-worker.html',
-  '/permissions-policy/resources/permissions-policy-hid-worker.js':
-    'permissions-policy-hid-worker.js',
-  '/permissions-policy/resources/redirect-on-load.html': 'redirect-on-load.html'
-}
-const wptTestFiles: Record<string, true> = {
+const wptDocumentFiles: Record<string, boolean> = {
   '/webhid/hid-allowed-by-permissions-policy.https.sub.html': true,
   '/webhid/hid-allowed-by-permissions-policy-attribute.https.sub.html': true,
-  '/webhid/hid-allowed-by-permissions-policy-attribute-redirect-on-load.https.sub.html': true
+  '/webhid/hid-allowed-by-permissions-policy-attribute-redirect-on-load.https.sub.html': true,
+  '/permissions-policy/resources/permissions-policy-hid.html': false,
+  '/permissions-policy/resources/permissions-policy-hid-worker.html': false,
+  '/permissions-policy/resources/redirect-on-load.html': false
 }
 
-export const WPT_ROUTE_PATHS = [
-  '/resources/testharnessreport.js',
-  ...Object.keys(wptSupportFiles),
-  ...Object.keys(wptTestFiles)
-]
+export const WPT_ROUTE_PATHS = Object.keys(wptDocumentFiles)
 
 
-const wptMime: Record<string, string> = {
-  '.html': 'text/html',
-  '.js': 'application/javascript',
-  '.idl': 'text/plain'
-}
 
 function safePath(root: string, pathname: string): string | undefined {
   const filePath = resolve(root, pathname.slice(1))
@@ -173,27 +159,14 @@ export async function fulfillPolicyRoute(route: Route): Promise<void> {
 }
 
 export async function fulfillWptRoute(route: Route): Promise<void> {
-  const url = new URL(route.request().url())
-  const pathname = decodeURIComponent(url.pathname)
-  if (pathname === '/resources/testharnessreport.js') {
-    await route.fulfill({
-      status: 200,
-      headers: { 'content-type': 'application/javascript' },
-      body: ''
-    })
-    return
-  }
-  if (!['document', 'script', 'worker'].includes(route.request().resourceType())) {
+  if (route.request().resourceType() !== 'document') {
     await route.continue()
     return
   }
-
-  const supportFile = wptSupportFiles[pathname]
-  const filePath = supportFile
-    ? resolve(wptSupportRoot, supportFile)
-    : wptTestFiles[pathname]
-      ? safePath(wptSiteRoot, pathname)
-      : undefined
+  const url = new URL(route.request().url())
+  const pathname = decodeURIComponent(url.pathname)
+  const filePath =
+    wptDocumentFiles[pathname] !== undefined ? safePath(wptSiteRoot, pathname) : undefined
   if (!filePath) {
     await route.continue()
     return
@@ -209,9 +182,9 @@ export async function fulfillWptRoute(route: Route): Promise<void> {
 
   let headers: Record<string, string> = {
     'cache-control': 'no-store',
-    'content-type': wptMime[extname(filePath)] ?? 'application/octet-stream'
+    'content-type': 'text/html'
   }
-  if (!supportFile) {
+  if (wptDocumentFiles[pathname]) {
     try {
       headers = {
         ...headers,
@@ -225,9 +198,9 @@ export async function fulfillWptRoute(route: Route): Promise<void> {
     }
   }
 
-  const responseBody =
-    extname(filePath) === '.html'
-      ? transformWptHtml(body.toString('utf8'), pathname)
-      : body
-  await route.fulfill({ status: 200, headers, body: responseBody })
+  await route.fulfill({
+    status: 200,
+    headers,
+    body: transformWptHtml(body.toString('utf8'), pathname)
+  })
 }
