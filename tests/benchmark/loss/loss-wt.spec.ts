@@ -4,16 +4,12 @@ import { skipOnFallback } from '../benchmark-utils.js'
 
 test('input-report loss benchmark wt @ 8000Hz', async ({
   page,
-  extension,
+  extensions,
   vendorDevice,
   httpOrigin,
-  daemonMode,
   rdp
 }) => {
-  const result = await benchmarkLoss(
-    { page, extension, vendorDevice, httpOrigin, daemonMode, rdp },
-    'wt'
-  )
+  const result = await benchmarkLoss({ page, extensions, vendorDevice, httpOrigin, rdp }, 'wt')
   expect(result.runs.length).toBeGreaterThan(0)
   printLossResults('wt', result)
   skipOnFallback(result, 'wt')

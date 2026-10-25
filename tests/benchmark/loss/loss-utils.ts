@@ -1,7 +1,8 @@
 import { sleep } from '../../helpers/test-utils.js'
 import type { Page } from '@playwright/test'
-import type { FirefoxExtension } from '@openpolyfill/firefox-addon-playwright-harness'
+import type { FirefoxExtensions } from '@openpolyfill/firefox-addon-playwright-harness'
 import type { FirefoxRDP } from '@openpolyfill/firefox-rdp'
+import { getWebHidExtension } from '../../helpers/harness.js'
 import { sendInput, type WebhidMockProcess } from '../../helpers/e2e-process.js'
 import { grantDevicePermission, mockIdFor } from '../../helpers/e2e-devices.js'
 import type { DeviceFilter } from '../../helpers/e2e-types.js'
@@ -39,10 +40,9 @@ export const LOSS_COUNT = envInt('BENCHMARK_LOSS_COUNT', 6000)
 /** Console messages that mean the data plane silently degraded to NM. */
 export interface LossFixtures {
   page: Page
-  extension: FirefoxExtension
+  extensions: FirefoxExtensions
   vendorDevice: { process: WebhidMockProcess['process']; ready: Promise<void> }
   httpOrigin: string
-  daemonMode: string
   rdp: FirefoxRDP
 }
 
@@ -157,7 +157,8 @@ export async function benchmarkLoss(
   mode: 'ws' | 'wt' | 'nm',
   opts: { inPage?: boolean } = {}
 ): Promise<LossResult> {
-  const { page, extension, httpOrigin, rdp } = fixtures
+  const extension = getWebHidExtension(fixtures.extensions)
+  const { page, httpOrigin, rdp } = fixtures
   const watch = watchConsole(page)
   const profileDir = process.env.BENCHMARK_PROFILE_DIR
   let profiler: ProfilerCapture | null = null

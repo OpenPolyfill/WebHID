@@ -1,6 +1,7 @@
 import { test, expect } from '../../helpers/e2e.js'
 import { VENDOR } from '../../helpers/e2e-reports.js'
 import { mockDeviceName } from '../../helpers/e2e-devices.js'
+import { getWebHidExtension } from '../../helpers/harness.js'
 
 type FirefoxChromeWindow = typeof globalThis & {
   gBrowser: {
@@ -13,9 +14,10 @@ type FirefoxChromeWindow = typeof globalThis & {
 test('privileged picker renders and grants selection in Firefox chrome', async ({
   page,
   chromePages,
-  extension,
+  extensions,
   vendorDevice
 }) => {
+  const extension = getWebHidExtension(extensions)
   const requesterUrl = page.url()
   const origin = new URL(requesterUrl).origin
   const settingKey = `settings :: ${origin} :: devicePickerMode`

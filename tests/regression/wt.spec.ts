@@ -1,6 +1,7 @@
 import { test, expect } from '../helpers/e2e.js'
 import { grantDevicePermission } from '../helpers/e2e-devices.js'
 import { sendInput, waitForOutputReport } from '../helpers/e2e-process.js'
+import { getWebHidExtension } from '../helpers/harness.js'
 import {
   armInputReport,
   VENDOR,
@@ -11,9 +12,10 @@ import {
 
 test('WebHID report I/O works with the WebTransport dataPlane setting', async ({
   page,
-  extension,
+  extensions,
   vendorDevice
 }) => {
+  const extension = getWebHidExtension(extensions)
   const origin = new URL(page.url()).origin
   const settingKey = `settings :: ${origin} :: dataPlane`
 

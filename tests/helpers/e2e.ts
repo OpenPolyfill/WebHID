@@ -1,9 +1,8 @@
 import type { WorkerFixture } from '@playwright/test'
 import { test as base, expect } from '@playwright/test'
 import { withSharedPage } from '@openpolyfill/firefox-addon-playwright-harness/fixtures'
-import type { FirefoxExtension } from '@openpolyfill/firefox-addon-playwright-harness'
 import { rm } from 'node:fs/promises'
-import { startTestServer } from '../serve.js'
+import { fulfillProjectRoute, PROJECT_ROUTE_PATHS, WEBHID_ORIGIN } from '../serve.js'
 import {
   startDaemon,
   stopDaemon,
@@ -14,7 +13,11 @@ import {
   type WebhidMockProcess
 } from './e2e-process.js'
 import { DEVICES, type DeviceKey } from './e2e-devices.js'
-import { createHarnessFixtures } from './harness.js'
+import {
+  configureDaemonMode,
+  createHarnessFixtures,
+  getWebHidExtension
+} from './harness.js'
 
 interface E2eTestFixtures {
   e2eSetup: void
@@ -34,17 +37,6 @@ interface MockDeviceFixture {
   pid: number
 }
 
-/** Configures the addon to spawn the daemon as its NM host when running in
- * daemon-nm mode (no-op in forwarder mode). */
-export async function configureDaemonMode(
-  extension: FirefoxExtension,
-  daemonMode: string
-): Promise<void> {
-  if (daemonMode !== 'daemon-nm') return
-  await extension.background!.evaluate(() =>
-    browser.storage.local.set({ 'settings :: daemonAsNmHost': true })
-  )
-}
 
 function deviceFixture(
   key: DeviceKey
@@ -78,8 +70,14 @@ const defaultHarnessTest = createHarnessFixtures(base)
 function extendE2eFixtures(testBase: typeof defaultHarnessTest) {
   const e2eTest = testBase.extend<E2eTestFixtures, E2eWorkerFixtures>({
     e2eSetup: [
-      async ({ page, extension, httpOrigin, daemonMode }, use, testInfo) => {
+      async ({ page, extensions, httpOrigin, daemonMode }, use, testInfo) => {
+        const extension = getWebHidExtension(extensions)
         await configureDaemonMode(extension, daemonMode)
+        await page.context().route(
+          (url) =>
+            url.origin === WEBHID_ORIGIN && PROJECT_ROUTE_PATHS.includes(url.pathname),
+          fulfillProjectRoute
+        )
         const benchmarkRuns = (testInfo.project.use as { benchmarkRuns?: number }).benchmarkRuns
         if (benchmarkRuns === undefined) {
           const url = `${httpOrigin}/tests/test-page.html`
@@ -118,9 +116,7 @@ function extendE2eFixtures(testBase: typeof defaultHarnessTest) {
     ...deviceFixtures,
     httpOrigin: [
       async ({}, use) => {
-        const { port, server } = await startTestServer()
-        await use(`http://localhost:${port}`)
-        server.close()
+        await use(WEBHID_ORIGIN)
       },
       { scope: 'worker', auto: true }
     ]

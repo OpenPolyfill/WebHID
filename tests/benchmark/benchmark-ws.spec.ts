@@ -3,16 +3,12 @@ import { benchmarkMode, printResults, skipOnFallback } from './benchmark-utils.j
 
 test('image pipeline benchmark ws', async ({
   page,
-  extension,
+  extensions,
   vendorDevice,
   httpOrigin,
-  daemonMode,
   rdp
 }) => {
-  const result = await benchmarkMode(
-    { page, extension, vendorDevice, httpOrigin, daemonMode, rdp },
-    'ws'
-  )
+  const result = await benchmarkMode({ page, extensions, vendorDevice, httpOrigin, rdp }, 'ws')
   expect(result.runs.length).toBeGreaterThan(0)
   printResults('ws', result)
   skipOnFallback(result, 'ws')

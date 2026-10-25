@@ -1,5 +1,6 @@
 import { test, expect } from '../../helpers/browser.js'
 import type { Page } from '@playwright/test'
+import { getWebHidExtension } from '../../helpers/harness.js'
 
 const WORKER_SETTING = 'settings :: workerPolyfillEnabled'
 
@@ -54,7 +55,8 @@ const wptCases = [
   }
 ] as const
 
-test('WPT WebHID Permissions Policy cases', async ({ extension, page, wptUrl }) => {
+test('WPT WebHID Permissions Policy cases', async ({ extensions, page, wptUrl }) => {
+  const extension = getWebHidExtension(extensions)
   const previousWorkerSetting = await extension.background!.evaluate<{
     exists: boolean
     value: boolean | undefined
@@ -99,11 +101,11 @@ test('WPT WebHID Permissions Policy cases', async ({ extension, page, wptUrl }) 
     const results = await Promise.allSettled(
       wptCases.map(({ name, path }) =>
         test.step(name, async () => {
-          const page = await context.newPage()
+          const wptPage = await context.newPage()
           try {
-            await runWptPage(page, wptUrl(path))
+            await runWptPage(wptPage, wptUrl(path))
           } finally {
-            await page.close()
+            await wptPage.close()
           }
         })
       )

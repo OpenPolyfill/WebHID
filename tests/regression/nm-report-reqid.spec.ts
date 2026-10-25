@@ -1,5 +1,6 @@
 import { test, expect } from '../helpers/e2e.js'
 import { grantDevicePermission, mockIdFor } from '../helpers/e2e-devices.js'
+import { getWebHidExtension } from '../helpers/harness.js'
 import type { Page } from '@playwright/test'
 
 const VENDOR = mockIdFor('vendor')
@@ -16,9 +17,10 @@ async function closeDevice(page: Page): Promise<void> {
 test.describe.serial('NM report request routing', () => {
   test('routes concurrent reports from page contexts independently', async ({
     page,
-    extension,
+    extensions,
     vendorDevice
   }) => {
+    const extension = getWebHidExtension(extensions)
     await vendorDevice.ready
     const origin = new URL(page.url()).origin
     await extension.background!.evaluate(

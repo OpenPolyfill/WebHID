@@ -1,13 +1,15 @@
 import { test, expect } from '../helpers/browser.js'
 import { frameWithId } from '../helpers/browser-utils.js'
+import { getWebHidExtension } from '../helpers/harness.js'
 
 test.describe('OpenPolyfill permissions policy internals', () => {
   test('background preserves distinct opaque settings targets', async ({
     page,
     pageUrl,
     crossUrl,
-    extension
+    extensions
   }) => {
+    const extension = getWebHidExtension(extensions)
     await page.goto(pageUrl('/iframe-parent'), {
       waitUntil: 'domcontentloaded',
       timeout: 15000
@@ -77,8 +79,9 @@ test.describe('OpenPolyfill permissions policy internals', () => {
     page,
     pageUrl,
     crossUrl,
-    extension
+    extensions
   }) => {
+    const extension = getWebHidExtension(extensions)
     await page.goto(pageUrl('/iframe-parent'), {
       waitUntil: 'domcontentloaded',
       timeout: 15000
@@ -124,8 +127,9 @@ test.describe('OpenPolyfill permissions policy internals', () => {
     page,
     pageUrl,
     crossUrl,
-    extension
+    extensions
   }) => {
+    const extension = getWebHidExtension(extensions)
     const settingKey = `settings :: ${new URL(crossUrl('')).origin} :: workerPolyfillEnabled`
     const previous = await extension.background!.evaluate<{
       exists: boolean

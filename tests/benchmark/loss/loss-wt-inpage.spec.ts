@@ -3,14 +3,13 @@ import { benchmarkLoss, printLossResults } from './loss-utils.js'
 
 test('input-report loss benchmark wt in-page (useWorker off) @ 8000Hz', async ({
   page,
-  extension,
+  extensions,
   vendorDevice,
   httpOrigin,
-  daemonMode,
   rdp
 }) => {
   const result = await benchmarkLoss(
-    { page, extension, vendorDevice, httpOrigin, daemonMode, rdp },
+    { page, extensions, vendorDevice, httpOrigin, rdp },
     'wt',
     { inPage: true }
   )

@@ -1,6 +1,8 @@
 import type { TestType } from '@playwright/test'
 import { createFirefoxFixtures } from '@openpolyfill/firefox-addon-playwright-harness/fixtures'
 import type {
+  FirefoxExtension,
+  FirefoxExtensions,
   FirefoxHarnessConfig,
   FirefoxHarnessProjectOptions
 } from '@openpolyfill/firefox-addon-playwright-harness'
@@ -14,13 +16,28 @@ export const EXTENSION_PATH = process.env.EXTENSION_PATH
   ? resolve(process.env.EXTENSION_PATH)
   : resolve(directoryPath, '..', '..', 'addon')
 const EXTENSION_ID = 'webhid@k4zoku.dev'
-
-
+export function getWebHidExtension(extensions: FirefoxExtensions): FirefoxExtension {
+  const extension = extensions.get(EXTENSION_ID)
+  if (!extension) throw new Error(`WebHID extension ${EXTENSION_ID} was not installed`)
+  return extension
+}
+/**
+ * Configures direct daemon hosting when this test project runs in daemon-NM mode.
+ */
+export async function configureDaemonMode(
+  extension: FirefoxExtension,
+  daemonMode: string
+): Promise<void> {
+  if (daemonMode !== 'daemon-nm') return
+  await extension.background!.evaluate(() =>
+    browser.storage.local.set({ 'settings :: daemonAsNmHost': true })
+  )
+}
 function createHarnessConfig(
   contextScope: NonNullable<FirefoxHarnessConfig['contextScope']>
 ): FirefoxHarnessConfig {
   return {
-    extensionPath: EXTENSION_PATH,
+    extensionPaths: [EXTENSION_PATH],
     localMappings: LOCAL_MAPPINGS,
     nativeMessagingHosts: {
       'webhid.daemon_nm_host': {

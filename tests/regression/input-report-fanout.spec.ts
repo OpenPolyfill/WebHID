@@ -2,6 +2,7 @@ import { test, expect } from '../helpers/e2e.js'
 import type { Page } from '@playwright/test'
 import { grantDevicePermission, mockIdFor } from '../helpers/e2e-devices.js'
 import { sendInput } from '../helpers/e2e-process.js'
+import { getWebHidExtension } from '../helpers/harness.js'
 import type { FirefoxExtension } from '@openpolyfill/firefox-addon-playwright-harness'
 
 const VENDOR = mockIdFor('vendor')
@@ -49,9 +50,10 @@ async function prepareFanoutPage(
 test.describe.serial('OpenPolyfill input report fan-out', () => {
   test('worker close leaves the window client operational', async ({
     page,
-    extension,
+    extensions,
     vendorDevice
   }) => {
+    const extension = getWebHidExtension(extensions)
     const origin = new URL(page.url()).origin
     const settingKeys = [
       `settings :: ${origin} :: dataPlane`,
@@ -126,9 +128,10 @@ test.describe.serial('OpenPolyfill input report fan-out', () => {
 
   test('frame replacement and removal do not duplicate parent reports', async ({
     page,
-    extension,
+    extensions,
     vendorDevice
   }) => {
+    const extension = getWebHidExtension(extensions)
     test.setTimeout(60000)
     const origin = new URL(page.url()).origin
     const settingKeys = [

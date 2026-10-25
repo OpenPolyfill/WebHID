@@ -1,6 +1,7 @@
 import { test, expect } from '../helpers/e2e.js'
 import { grantDevicePermission, mockIdFor } from '../helpers/e2e-devices.js'
 import { sendInput } from '../helpers/e2e-process.js'
+import { getWebHidExtension } from '../helpers/harness.js'
 
 const VENDOR = mockIdFor('vendor')
 const PACKET = [0x10, 0x20, 0x30, 0x40, 0x50].concat(new Array(59).fill(0))
@@ -25,9 +26,10 @@ interface BackgroundWebhid {
 test.describe.serial('Exact frame endpoint fanout', () => {
   test('background fanout survives one frame teardown', async ({
     page,
-    extension,
+    extensions,
     vendorDevice
   }) => {
+    const extension = getWebHidExtension(extensions)
     const origin = new URL(page.url()).origin
     const settingKeys = [
       `settings :: ${origin} :: dataPlane`,
@@ -135,9 +137,10 @@ test.describe.serial('Exact frame endpoint fanout', () => {
 
   test('pending open cannot publish after top document replacement', async ({
     page,
-    extension,
+    extensions,
     vendorDevice
   }) => {
+    const extension = getWebHidExtension(extensions)
     const origin = new URL(page.url()).origin
     const settingKey = `settings :: ${origin} :: dataPlane`
     await vendorDevice.ready

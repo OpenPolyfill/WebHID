@@ -1,8 +1,9 @@
 import { test } from '../helpers/e2e.js'
 import { withTimeout } from '../helpers/test-utils.js'
 import { type Page } from '@playwright/test'
-import type { FirefoxExtension } from '@openpolyfill/firefox-addon-playwright-harness'
+import type { FirefoxExtension, FirefoxExtensions } from '@openpolyfill/firefox-addon-playwright-harness'
 import type { FirefoxRDP } from '@openpolyfill/firefox-rdp'
+import { getWebHidExtension } from '../helpers/harness.js'
 import { readFile } from 'node:fs/promises'
 
 import { dirname, join, resolve } from 'node:path'
@@ -44,10 +45,9 @@ type BenchApi = {
 
 interface BenchmarkFixtures {
   page: Page
-  extension: FirefoxExtension
+  extensions: FirefoxExtensions
   vendorDevice: WebhidMockProcess
   httpOrigin: string
-  daemonMode: string
   rdp: FirefoxRDP
 }
 
@@ -354,7 +354,8 @@ export async function benchmarkMode(
   mode: 'ws' | 'wt' | 'nm',
   opts?: { inPage?: boolean }
 ): Promise<BenchmarkResult> {
-  const { page, extension, vendorDevice, httpOrigin, rdp } = fixtures
+  const extension = getWebHidExtension(fixtures.extensions)
+  const { page, vendorDevice, httpOrigin, rdp } = fixtures
   const origin = httpOrigin
   await configurePageSettings(extension, origin, mode, opts)
   await prepareBenchmarkPage(page, origin)

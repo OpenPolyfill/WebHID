@@ -3,14 +3,13 @@ import { benchmarkMode, printResults } from './benchmark-utils.js'
 
 test('image pipeline benchmark wt in-page (useWorker off)', async ({
   page,
-  extension,
+  extensions,
   vendorDevice,
   httpOrigin,
-  daemonMode,
   rdp
 }) => {
   const result = await benchmarkMode(
-    { page, extension, vendorDevice, httpOrigin, daemonMode, rdp },
+    { page, extensions, vendorDevice, httpOrigin, rdp },
     'wt',
     { inPage: true }
   )
