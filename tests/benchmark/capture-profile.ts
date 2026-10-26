@@ -1,4 +1,4 @@
-import type { FirefoxRDP } from '@openpolyfill/firefox-rdp'
+import type { FirefoxRDP } from '@openpolyfill/firefox-addon-playwright-harness'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { gunzipSync } from 'node:zlib'

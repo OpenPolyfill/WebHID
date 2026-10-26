@@ -1,8 +1,11 @@
 import { test } from '../helpers/e2e.js'
 import { withTimeout } from '../helpers/test-utils.js'
 import { type Page } from '@playwright/test'
-import type { FirefoxExtension, FirefoxExtensions } from '@openpolyfill/firefox-addon-playwright-harness'
-import type { FirefoxRDP } from '@openpolyfill/firefox-rdp'
+import type {
+  FirefoxExtension,
+  FirefoxExtensions,
+  FirefoxRDP
+} from '@openpolyfill/firefox-addon-playwright-harness'
 import { getWebHidExtension } from '../helpers/harness.js'
 import { readFile } from 'node:fs/promises'
 

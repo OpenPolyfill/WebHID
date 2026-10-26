@@ -1,7 +1,9 @@
 import { sleep } from '../../helpers/test-utils.js'
 import type { Page } from '@playwright/test'
-import type { FirefoxExtensions } from '@openpolyfill/firefox-addon-playwright-harness'
-import type { FirefoxRDP } from '@openpolyfill/firefox-rdp'
+import type {
+  FirefoxExtensions,
+  FirefoxRDP
+} from '@openpolyfill/firefox-addon-playwright-harness'
 import { getWebHidExtension } from '../../helpers/harness.js'
 import { sendInput, type WebhidMockProcess } from '../../helpers/e2e-process.js'
 import { grantDevicePermission, mockIdFor } from '../../helpers/e2e-devices.js'
