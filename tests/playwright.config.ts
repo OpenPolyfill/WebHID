@@ -1,5 +1,4 @@
 import { defineConfig } from '@playwright/test'
-import { fileURLToPath } from 'node:url'
 type PlaywrightUseOptions = Exclude<Parameters<typeof defineConfig>[0], undefined>['use']
 
 export default defineConfig({
@@ -7,7 +6,6 @@ export default defineConfig({
   expect: { timeout: 10000 },
   fullyParallel: false,
   retries: 0,
-  globalSetup: fileURLToPath(import.meta.resolve('@openpolyfill/firefox-addon-playwright-harness/globalSetup')),
   use: {
     headless: true,
     screenshot: 'only-on-failure',
