@@ -73,16 +73,21 @@ function extendE2eFixtures(testBase: typeof defaultHarnessTest) {
       async ({ page, extensions, httpOrigin, daemonMode }, use, testInfo) => {
         const extension = getWebHidExtension(extensions)
         await configureDaemonMode(extension, daemonMode)
-        await page.context().route(isProjectRoute, fulfillProjectRoute)
-        const benchmarkRuns = (testInfo.project.use as { benchmarkRuns?: number }).benchmarkRuns
-        if (benchmarkRuns === undefined) {
-          const url = `${httpOrigin}/tests/test-page.html`
-          await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 })
-          await page.waitForFunction(() => typeof navigator.hid !== 'undefined', undefined, {
-            timeout: 15000
-          })
+        const context = page.context()
+        await context.route(isProjectRoute, fulfillProjectRoute)
+        try {
+          const benchmarkRuns = (testInfo.project.use as { benchmarkRuns?: number }).benchmarkRuns
+          if (benchmarkRuns === undefined) {
+            const url = `${httpOrigin}/tests/test-page.html`
+            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 })
+            await page.waitForFunction(() => typeof navigator.hid !== 'undefined', undefined, {
+              timeout: 15000
+            })
+          }
+          await use()
+        } finally {
+          await context.unroute(isProjectRoute, fulfillProjectRoute)
         }
-        await use()
       },
       { auto: true }
     ],
