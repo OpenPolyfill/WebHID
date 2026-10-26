@@ -55,14 +55,6 @@ test.describe.serial('OpenPolyfill input report fan-out', () => {
   }) => {
     const extension = getWebHidExtension(extensions)
     const origin = new URL(page.url()).origin
-    const settingKeys = [
-      `settings :: ${origin} :: dataPlane`,
-      `settings :: ${origin} :: workerPolyfillEnabled`
-    ]
-    const previous = await extension.background!.evaluate<Record<string, unknown>>(
-      (keys: string[]) => browser.storage.local.get(keys),
-      [settingKeys]
-    )
     try {
       await prepareFanoutPage(page, extension, true)
       await page.evaluate(() => {
@@ -116,13 +108,6 @@ test.describe.serial('OpenPolyfill input report fan-out', () => {
         undefined,
         { timeout: 15000 }
       )
-      await extension.background!.evaluate<void>(
-        ({ keys, values }: { keys: string[]; values: Record<string, unknown> }) => {
-          const missing = keys.filter((key) => !(key in values))
-          return browser.storage.local.remove(missing).then(() => browser.storage.local.set(values))
-        },
-        [{ keys: settingKeys, values: previous }]
-      )
     }
   })
 
@@ -138,10 +123,6 @@ test.describe.serial('OpenPolyfill input report fan-out', () => {
       `settings :: ${origin} :: dataPlane`,
       `settings :: ${origin} :: workerPolyfillEnabled`
     ]
-    const previous = await extension.background!.evaluate<Record<string, unknown>>(
-      (keys: string[]) => browser.storage.local.get(keys),
-      [settingKeys]
-    )
     await extension.background!.evaluate<void>(
       (keys: string[]) => browser.storage.local.set({ [keys[0]]: 'ws', [keys[1]]: false }),
       [settingKeys]
@@ -228,13 +209,6 @@ test.describe.serial('OpenPolyfill input report fan-out', () => {
         async () => (await navigator.hid.getDevices()).length === 0,
         undefined,
         { timeout: 15000 }
-      )
-      await extension.background!.evaluate<void>(
-        ({ keys, values }: { keys: string[]; values: Record<string, unknown> }) => {
-          const missing = keys.filter((key) => !(key in values))
-          return browser.storage.local.remove(missing).then(() => browser.storage.local.set(values))
-        },
-        [{ keys: settingKeys, values: previous }]
       )
       await page.goto(`${origin}/tests/test-page.html`, { waitUntil: 'domcontentloaded' })
     }

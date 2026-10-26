@@ -170,19 +170,6 @@ export async function benchmarkLoss(
     await profiler.startProfiler()
   }
   const origin = httpOrigin
-  const resetSettings = () =>
-    extension
-      .background!.evaluate(
-        ({ origin }: { origin: string }) =>
-          browser.storage.local.remove([
-            'settings :: useWorker',
-            'settings :: logLevel',
-            `settings :: ${origin} :: useWorker`,
-            `settings :: ${origin} :: logLevel`
-          ]),
-        [{ origin }]
-      )
-      .catch(() => {})
   try {
     await setSiteSettings(extension, origin, { dataPlane: mode })
     if (opts.inPage) {
@@ -285,7 +272,6 @@ export async function benchmarkLoss(
     }
   } finally {
     watch.stop()
-    await resetSettings()
     if (profiler) {
       try {
         const file = join(profileDir!, `loss-${mode}.json`)

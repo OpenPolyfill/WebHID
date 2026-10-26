@@ -57,73 +57,52 @@ const wptCases = [
 
 test('WPT WebHID Permissions Policy cases', async ({ extensions, page, wptUrl }) => {
   const extension = getWebHidExtension(extensions)
-  const previousWorkerSetting = await extension.background!.evaluate<{
-    exists: boolean
-    value: boolean | undefined
-  }>(
-    async (key: string) => {
-      const values = (await browser.storage.local.get(key)) as Record<string, boolean | undefined>
-      return {
-        exists: Object.prototype.hasOwnProperty.call(values, key),
-        value: values[key]
-      }
-    },
-    [WORKER_SETTING]
-  )
-
-  try {
-    await extension.background!.evaluate((key) => browser.storage.local.set({ [key]: true }), [WORKER_SETTING])
-    await page.context().addInitScript(() => {
-      if (window !== window.top) return
-      const currentWindow = window as WptWindow
-      currentWindow.tests = currentWindow.tests || { helper: {}, results: {} }
-      const installCompletionCallback = () => {
-        if (typeof currentWindow.add_completion_callback === 'function') {
-          currentWindow.add_completion_callback((tests, status) => {
-            currentWindow.tests!.results.wpt = {
-              harnessStatus: status.status,
-              harnessMessage: status.message,
-              tests: tests.map((result) => ({
-                name: result.name,
-                status: result.status,
-                message: result.message
-              }))
-            }
-          })
-          return
-        }
-        window.setTimeout(installCompletionCallback, 0)
-      }
-      installCompletionCallback()
-    })
-
-    const context = page.context()
-    const failures: string[] = []
-    for (const { name, path } of wptCases) {
-      try {
-        await test.step(name, async () => {
-          const wptPage = await context.newPage()
-          try {
-            await runWptPage(wptPage, wptUrl(path))
-          } finally {
-            await wptPage.close()
+  // Initialize the extension background before enabling worker-script injection.
+  await extension.background!.evaluate((key) => browser.storage.local.get(key), [
+    WORKER_SETTING
+  ])
+  await extension.background!.evaluate((key) => browser.storage.local.set({ [key]: true }), [
+    WORKER_SETTING
+  ])
+  await page.context().addInitScript(() => {
+    if (window !== window.top) return
+    const currentWindow = window as WptWindow
+    currentWindow.tests = currentWindow.tests || { helper: {}, results: {} }
+    const installCompletionCallback = () => {
+      if (typeof currentWindow.add_completion_callback === 'function') {
+        currentWindow.add_completion_callback((tests, status) => {
+          currentWindow.tests!.results.wpt = {
+            harnessStatus: status.status,
+            harnessMessage: status.message,
+            tests: tests.map((result) => ({
+              name: result.name,
+              status: result.status,
+              message: result.message
+            }))
           }
         })
-      } catch (error) {
-        failures.push(`${name}: ${String(error)}`)
+        return
       }
+      window.setTimeout(installCompletionCallback, 0)
     }
-    expect(failures).toEqual([])
-  } finally {
-    await extension.background!.evaluate(
-      ({ key, previous }: {
-        key: string
-        previous: { exists: boolean; value: boolean | undefined }
-      }) =>
-        previous.exists
-          ? browser.storage.local.set({ [key]: previous.value })
-          : browser.storage.local.remove(key),
-      [{ key: WORKER_SETTING, previous: previousWorkerSetting }]
-    )
+    installCompletionCallback()
+  })
+
+  const context = page.context()
+  const failures: string[] = []
+  for (const { name, path } of wptCases) {
+    try {
+      await test.step(name, async () => {
+        const wptPage = await context.newPage()
+        try {
+          await runWptPage(wptPage, wptUrl(path))
+        } finally {
+          await wptPage.close()
+        }
+      })
+    } catch (error) {
+      failures.push(`${name}: ${String(error)}`)
+    }
   }
+  expect(failures).toEqual([])
 })

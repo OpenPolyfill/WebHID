@@ -72,44 +72,15 @@ export const test = createHarnessFixtures(base).extend<BrowserTestFixtures, Brow
   workerHidPage: async ({ extensions, page, pageUrl }, use) => {
     const extension = getWebHidExtension(extensions)
     const key = `settings :: ${new URL(pageUrl('')).origin} :: workerPolyfillEnabled`
-    const previous = await extension.background!.evaluate<{
-      exists: boolean
-      value: boolean | undefined
-    }>(
-      async (settingKey: string) => {
-        const values = (await browser.storage.local.get(settingKey)) as Record<string, unknown>
-        return {
-          exists: Object.prototype.hasOwnProperty.call(values, settingKey),
-          value: values[settingKey] as boolean | undefined
-        }
-      },
+    await extension.background!.evaluate(
+      (settingKey) => browser.storage.local.set({ [settingKey]: true }),
       [key]
     )
-    try {
-      await extension.background!.evaluate(
-        (settingKey) => browser.storage.local.set({ [settingKey]: true }),
-        [key]
-      )
-      await page.goto(pageUrl('/policy-check'), {
-        waitUntil: 'domcontentloaded',
-        timeout: 15000
-      })
-      await use(page)
-    } finally {
-      await extension.background!.evaluate(
-        ({
-          settingKey,
-          previous
-        }: {
-          settingKey: string
-          previous: { exists: boolean; value: boolean | undefined }
-        }) => {
-          if (previous.exists) return browser.storage.local.set({ [settingKey]: previous.value })
-          return browser.storage.local.remove(settingKey)
-        },
-        [{ settingKey: key, previous }]
-      )
-    }
+    await page.goto(pageUrl('/policy-check'), {
+      waitUntil: 'domcontentloaded',
+      timeout: 15000
+    })
+    await use(page)
   }
 })
 

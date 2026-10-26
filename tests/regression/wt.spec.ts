@@ -19,19 +19,6 @@ test('WebHID report I/O works with the WebTransport dataPlane setting', async ({
   const origin = new URL(page.url()).origin
   const settingKey = `settings :: ${origin} :: dataPlane`
 
-  const previous = await extension.background!.evaluate<{
-    exists: boolean
-    value: string | undefined
-  }>(
-    async (key: string) => {
-      const values = (await browser.storage.local.get(key)) as Record<string, unknown>
-      return {
-        exists: Object.prototype.hasOwnProperty.call(values, key),
-        value: values[key] as string | undefined
-      }
-    },
-    [settingKey]
-  )
 
   try {
     await extension.background!.evaluate<void>(
@@ -81,15 +68,6 @@ test('WebHID report I/O works with the WebTransport dataPlane setting', async ({
       if (device?.opened) await device.close()
     }, VENDOR_CTX)
   } finally {
-    if (previous.exists) {
-      await extension.background!.evaluate<void>(
-        ({ key, value }: { key: string; value: string }) =>
-          browser.storage.local.set({ [key]: value }),
-        [{ key: settingKey, value: previous.value }]
-      )
-    } else {
-      await extension.background!.evaluate((key) => browser.storage.local.remove(key), [settingKey])
-    }
     await page.reload({ waitUntil: 'domcontentloaded' })
   }
 })

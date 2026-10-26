@@ -131,76 +131,46 @@ test.describe('OpenPolyfill permissions policy internals', () => {
   }) => {
     const extension = getWebHidExtension(extensions)
     const settingKey = `settings :: ${new URL(crossUrl('')).origin} :: workerPolyfillEnabled`
-    const previous = await extension.background!.evaluate<{
-      exists: boolean
-      value: boolean | undefined
-    }>(
-      async (key: string) => {
-        const values = (await browser.storage.local.get(key)) as Record<string, unknown>
-        return {
-          exists: Object.prototype.hasOwnProperty.call(values, key),
-          value: values[key] as boolean | undefined
-        }
-      },
-      [settingKey]
+    await extension.background!.evaluate<void>(
+      ({ key, value }: { key: string; value: boolean }) =>
+        browser.storage.local.set({ [key]: value }),
+      [{ key: settingKey, value: true }]
     )
-
-    try {
-      await extension.background!.evaluate<void>(
-        ({ key, value }: { key: string; value: boolean }) =>
-          browser.storage.local.set({ [key]: value }),
-        [{ key: settingKey, value: true }]
-      )
-      await page.goto(pageUrl('/iframe-parent'), {
-        waitUntil: 'domcontentloaded',
-        timeout: 15000
-      })
-      await page.evaluate((src) => {
-        const iframe = document.createElement('iframe')
-        iframe.id = 'policy-worker'
-        iframe.src = src + '/iframe-worker-policy'
-        document.body.appendChild(iframe)
-      }, crossUrl(''))
-      const childFrame = await frameWithId(page, 'policy-worker', '/iframe-worker-policy')
-      await childFrame.waitForFunction(
-        () => {
-          const result = (window as unknown as { tests?: { results?: Record<string, unknown> } })
-            .tests?.results?.workerPolicy
-          return result !== null && typeof result === 'object'
-        },
-        undefined,
-        { timeout: 15000 }
-      )
-      const result = await childFrame.evaluate<{
-        queryHid?: string
-        getDevices?: { ok: boolean; name?: string }
-        error?: string
-      } | null>(() => {
+    await page.goto(pageUrl('/iframe-parent'), {
+      waitUntil: 'domcontentloaded',
+      timeout: 15000
+    })
+    await page.evaluate((src) => {
+      const iframe = document.createElement('iframe')
+      iframe.id = 'policy-worker'
+      iframe.src = src + '/iframe-worker-policy'
+      document.body.appendChild(iframe)
+    }, crossUrl(''))
+    const childFrame = await frameWithId(page, 'policy-worker', '/iframe-worker-policy')
+    await childFrame.waitForFunction(
+      () => {
         const result = (window as unknown as { tests?: { results?: Record<string, unknown> } })
           .tests?.results?.workerPolicy
-        return result && typeof result === 'object' ? result : null
-      })
-      expect(result).not.toBeNull()
-      expect(result!.error).toBeUndefined()
-      expect(result!.queryHid).toBe('denied')
-      expect(result!.getDevices).toEqual(
-        expect.objectContaining({ ok: false, name: 'SecurityError' })
-      )
-    } finally {
-      await extension.background!.evaluate<void>(
-        ({
-          key,
-          previous
-        }: {
-          key: string
-          previous: { exists: boolean; value: boolean | undefined }
-        }) => {
-          if (previous.exists) return browser.storage.local.set({ [key]: previous.value })
-          return browser.storage.local.remove(key)
-        },
-        [{ key: settingKey, previous }]
-      )
-    }
+        return result !== null && typeof result === 'object'
+      },
+      undefined,
+      { timeout: 15000 }
+    )
+    const result = await childFrame.evaluate<{
+      queryHid?: string
+      getDevices?: { ok: boolean; name?: string }
+      error?: string
+    } | null>(() => {
+      const result = (window as unknown as { tests?: { results?: Record<string, unknown> } })
+        .tests?.results?.workerPolicy
+      return result && typeof result === 'object' ? result : null
+    })
+    expect(result).not.toBeNull()
+    expect(result!.error).toBeUndefined()
+    expect(result!.queryHid).toBe('denied')
+    expect(result!.getDevices).toEqual(
+      expect.objectContaining({ ok: false, name: 'SecurityError' })
+    )
   })
 
   test('hostile frame cannot forge sibling delegation through Error.stack', async ({

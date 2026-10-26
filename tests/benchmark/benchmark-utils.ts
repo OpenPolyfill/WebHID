@@ -302,24 +302,6 @@ async function verifyChunkCount(page: Page): Promise<void> {
   }
 }
 
-async function resetBenchmarkSettings(extension: FirefoxExtension, origin: string): Promise<void> {
-  await extension
-    .background!.evaluate(
-      ({ origin }: { origin: string }) =>
-        browser.storage.local.remove([
-          'settings :: dataPlane',
-          'settings :: useWorker',
-          'settings :: logLevel',
-          'settings :: workerSpawnMode',
-          `settings :: ${origin} :: dataPlane`,
-          `settings :: ${origin} :: useWorker`,
-          `settings :: ${origin} :: logLevel`,
-          `settings :: ${origin} :: workerSpawnMode`
-        ]),
-      [{ origin }]
-    )
-    .catch(() => {})
-}
 
 async function startProfiler(rdp: FirefoxRDP): Promise<ProfilerCapture> {
   const profiler = await ProfilerCapture.create(rdp)
@@ -373,13 +355,11 @@ export async function benchmarkMode(
   const profileDir = process.env.BENCHMARK_PROFILE_DIR
   const profiler = profileDir ? await startProfiler(rdp) : null
 
-  return await runBenchmark(page, vendorDevice, { inPage: !!opts?.inPage })
-    .finally(() => resetBenchmarkSettings(extension, origin))
-    .finally(async () => {
-      if (profiler) {
-        await saveProfile(profiler, profileDir!, mode, !!opts?.inPage)
-      }
-    })
+  return await runBenchmark(page, vendorDevice, { inPage: !!opts?.inPage }).finally(async () => {
+    if (profiler) {
+      await saveProfile(profiler, profileDir!, mode, !!opts?.inPage)
+    }
+  })
 }
 
 export async function runBenchmark(
