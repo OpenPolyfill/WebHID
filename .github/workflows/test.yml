@@ -149,13 +149,11 @@ jobs:
           key: npm-${{ hashFiles('package-lock.json') }}
       - name: Install npm dependencies
         run: npm ci
-      - name: Cache Playwright browsers
+      - name: Cache harness Firefox
         uses: actions/cache@v6
         with:
-          path: ~/.cache/ms-playwright
-          key: ms-playwright-${{ hashFiles('package-lock.json') }}
-      - name: Install Playwright browsers
-        run: npx playwright install firefox
+          path: ~/.cache/openpolyfill
+          key: openpolyfill-firefox-${{ hashFiles('package-lock.json') }}
       - name: Download debug binaries
         uses: actions/download-artifact@v8
         with:
@@ -247,13 +245,11 @@ jobs:
           key: npm-${{ hashFiles('package-lock.json') }}
       - name: Install npm dependencies
         run: npm ci
-      - name: Cache Playwright browsers
+      - name: Cache harness Firefox
         uses: actions/cache@v6
         with:
-          path: ~/.cache/ms-playwright
-          key: ms-playwright-${{ hashFiles('package-lock.json') }}
-      - name: Install Playwright browsers
-        run: npx playwright install firefox
+          path: ~/.cache/openpolyfill
+          key: openpolyfill-firefox-${{ hashFiles('package-lock.json') }}
       - name: Download debug binaries
         uses: actions/download-artifact@v8
         with:

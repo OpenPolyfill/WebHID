@@ -27,13 +27,11 @@ RUN curl --proto '=https' --tlsv1.2 --fail --silent --show-error https://sh.rust
 WORKDIR /opt/FF-WebHID
 COPY --chown=node:node package.json package-lock.json .npmrc ./
 USER root
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+ENV OPENPOLYFILL_BROWSERS_PATH=/home/node/.cache/openpolyfill
 
 RUN npm ci --ignore-scripts \
-    && npx playwright install --with-deps firefox \
-    && rm -rf node_modules /root/.npm /var/lib/apt/lists/* \
-    && chmod -R a+rX /ms-playwright \
-    && chown -R node:node /ms-playwright
+    && npx playwright install-deps firefox \
+    && rm -rf node_modules /root/.npm /var/lib/apt/lists/*
 
 USER node
 WORKDIR /workspaces/FF-WebHID

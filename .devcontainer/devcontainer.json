@@ -10,8 +10,8 @@
   "runArgs": ["--userns=keep-id"],
   "containerEnv": {
     "CARGO_HOME": "/home/node/.cargo",
-    "PLAYWRIGHT_BROWSERS_PATH": "/ms-playwright",
+    "OPENPOLYFILL_BROWSERS_PATH": "/home/node/.cache/openpolyfill",
     "npm_config_cache": "/home/node/.npm"
   },
-  "postCreateCommand": "npm ci --ignore-scripts"
+  "postCreateCommand": "npm ci --ignore-scripts && npm rebuild @openpolyfill/firefox-addon-playwright-harness"
 }

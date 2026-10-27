@@ -25,11 +25,11 @@ sudo pacman -S rust systemd pkgconf zip nodejs
 
 ## Dev Container
 
-The repository includes a lightweight Debian `node:22-bookworm-slim` devcontainer, which works with Zed's Dev Container support. Open the repository in Zed and choose the devcontainer environment. Creation runs `npm ci --ignore-scripts`; it does not run a build or test suite.
+The repository includes a lightweight Debian `node:22-bookworm-slim` devcontainer, which works with Zed's Dev Container support. Open the repository in Zed and choose the devcontainer environment. Creation runs `npm ci --ignore-scripts` and applies the harness's approved Playwright patch; it does not run a build or test suite.
 
 The configuration keeps the shell as the non-root `node` user and uses the container runtime's `keep-id` user namespace mapping so mounted files remain writable with rootless Podman, as used by the Zed setup. Use the equivalent host-UID mapping when using another runtime.
 
-The image includes Rust stable with `rustfmt` and `clippy`, Node/npm, the native Linux build dependencies, and Firefox installed through the repository's Playwright dependency. These workflows are supported inside the container:
+The image includes Rust stable with `rustfmt` and `clippy`, Node/npm, and the native Linux build dependencies. The harness downloads and patches its Firefox revision on first launch, which is cached under `/home/node/.cache/openpolyfill` in the devcontainer. These workflows are supported inside the container:
 
 ```sh
 npm run build:rs:debug
@@ -167,9 +167,10 @@ The bridge uses a `SettingsStore` Proxy-based observer. `storage.onChanged` extr
 
 `npm test` runs WebHID conformance checks. WebIDL, Permissions Policy, activation, and Dedicated Worker coverage lives in `tests/conformance/browser/`. The WPT project runs the three upstream WebHID Permissions Policy pages vendored from WPT revision `a99194d` in `tests/conformance/wpt/site/webhid/` concurrently, each in a separate page within one Playwright worker. Playwright serves them locally with project-owned adapters for the shared harness helpers, so these tests do not require network access. The project enables the worker polyfill for these tests. Mock-device scenarios in `tests/conformance/e2e/` cover permission grants, descriptor exposure, device lifecycle, events, input/output report I/O, and errors for unsupported feature-report IDs. `tests/conformance/chromium-internal/` ports externally observable cases from Chromium's `third_party/blink/web_tests/wpt_internal/hid/` and runs them against the Firefox add-on with the repository's `webhid-mock` device.
 
+The harness downloads and patches its Firefox revision on first test launch. It uses `~/.cache/openpolyfill` by default, configurable through `OPENPOLYFILL_BROWSERS_PATH`.
+
 ```sh
 npm ci
-npx playwright install firefox
 npm test
 # Browser checks against the source or built addon:
 npm run test:browser:src
@@ -183,7 +184,7 @@ Tests that inject Chromium Mojo service or connection failures, depend on fake p
 
 The standard Playwright configuration is `tests/playwright.config.ts`. E2E runs use daemon-as-Native-Messaging-host mode and one worker because tests share virtual HID devices. They require the debug binaries (`cargo build --manifest-path crates/Cargo.toml`) and Linux `/dev/uhid` access. The existing Linux setup below installs `manifests/72-webhid-e2e.rules`.
 
-Harness 0.3.0 is paired with Playwright 1.64.1 in this repository. Keep these versions aligned because the harness postinstall and Firefox setup patch Playwright internals.
+Harness 0.5.1 is paired with Playwright 1.64.1 in this repository. Keep these versions aligned because the harness patches Playwright internals and installs the required Firefox revision on first launch.
 
 The Firefox privileged picker is an experimental MV3 build and is intentionally absent from the normal addon manifest. To exercise its native doorhanger with the harness:
 
