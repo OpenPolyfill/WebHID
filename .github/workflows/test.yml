@@ -38,24 +38,64 @@ jobs:
         with:
           packages: libudev-dev
           version: v1
-      - name: Install UHID module
+      - name: Get kernel version
+        id: kernel
+        run: echo "release=$(uname -r)" >> "$GITHUB_OUTPUT"
+      - name: Cache UHID modules
+        id: uhid-modules
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/uhid-modules
+          key: uhid-${{ runner.os }}-${{ runner.arch }}-${{ steps.kernel.outputs.release }}
+      - &install_uhid_module
+        name: Install UHID module
+        env:
+          UHID_CACHE_HIT: ${{ steps.uhid-modules.outputs.cache-hit }}
         run: |
-          sudo apt-get update
+          set -euo pipefail
 
           kernel="$(uname -r)"
-          extra="linux-modules-extra-$kernel"
-          base="linux-modules-$kernel"
+          module_root="/lib/modules/$kernel"
+          cache_dir="$RUNNER_TEMP/uhid-modules"
 
-          if apt-cache show "$extra" >/dev/null 2>&1; then
-            sudo apt-get install -y "$extra"
-          elif apt-cache show "$base" >/dev/null 2>&1; then
-            sudo apt-get install --reinstall -y "$base"
+          if [[ "$UHID_CACHE_HIT" == "true" ]]; then
+            sudo cp -a "$cache_dir/." "$module_root/"
+            sudo depmod -a "$kernel"
           else
-            echo "::error::No matching kernel modules package for $kernel"
-            exit 1
+            sudo apt-get update
+
+            extra="linux-modules-extra-$kernel"
+            base="linux-modules-$kernel"
+
+            if apt-cache show "$extra" >/dev/null 2>&1; then
+              sudo apt-get install -y "$extra"
+            elif apt-cache show "$base" >/dev/null 2>&1; then
+              sudo apt-get install --reinstall -y "$base"
+            else
+              echo "::error::No matching kernel modules package for $kernel"
+              exit 1
+            fi
+
+            sudo depmod -a "$kernel"
+
+            dependencies="$(modprobe --show-depends uhid)"
+            mkdir -p "$cache_dir"
+            uhid_module_found=false
+            while read -r operation module_path _; do
+              [[ "$operation" == "insmod" ]] || continue
+              [[ "$module_path" == "$module_root/"*.ko* ]] || continue
+              relative_path="${module_path#"$module_root"/}"
+              install -D -m 0644 "$module_path" "$cache_dir/$relative_path"
+              if [[ "${module_path##*/}" == uhid.ko* ]]; then
+                uhid_module_found=true
+              fi
+            done <<< "$dependencies"
+            if [[ "$uhid_module_found" != "true" ]]; then
+              echo "::error::modprobe uhid resolved no uhid .ko module"
+              exit 1
+            fi
           fi
 
-          sudo depmod -a "$kernel"
           sudo modprobe uhid
           test -c /dev/uhid
       - name: Cache npm
@@ -122,26 +162,16 @@ jobs:
             libxrandr2
             libxrender1
           version: v1
-      - name: Install UHID module
-        run: |
-          sudo apt-get update
-
-          kernel="$(uname -r)"
-          extra="linux-modules-extra-$kernel"
-          base="linux-modules-$kernel"
-
-          if apt-cache show "$extra" >/dev/null 2>&1; then
-            sudo apt-get install -y "$extra"
-          elif apt-cache show "$base" >/dev/null 2>&1; then
-            sudo apt-get install --reinstall -y "$base"
-          else
-            echo "::error::No matching kernel modules package for $kernel"
-            exit 1
-          fi
-
-          sudo depmod -a "$kernel"
-          sudo modprobe uhid
-          test -c /dev/uhid
+      - name: Get kernel version
+        id: kernel
+        run: echo "release=$(uname -r)" >> "$GITHUB_OUTPUT"
+      - name: Cache UHID modules
+        id: uhid-modules
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/uhid-modules
+          key: uhid-${{ runner.os }}-${{ runner.arch }}-${{ steps.kernel.outputs.release }}
+      - *install_uhid_module
       - name: Cache npm
         uses: actions/cache@v6
         with:
@@ -218,26 +248,16 @@ jobs:
             libxrandr2
             libxrender1
           version: v1
-      - name: Install UHID module
-        run: |
-          sudo apt-get update
-
-          kernel="$(uname -r)"
-          extra="linux-modules-extra-$kernel"
-          base="linux-modules-$kernel"
-
-          if apt-cache show "$extra" >/dev/null 2>&1; then
-            sudo apt-get install -y "$extra"
-          elif apt-cache show "$base" >/dev/null 2>&1; then
-            sudo apt-get install --reinstall -y "$base"
-          else
-            echo "::error::No matching kernel modules package for $kernel"
-            exit 1
-          fi
-
-          sudo depmod -a "$kernel"
-          sudo modprobe uhid
-          test -c /dev/uhid
+      - name: Get kernel version
+        id: kernel
+        run: echo "release=$(uname -r)" >> "$GITHUB_OUTPUT"
+      - name: Cache UHID modules
+        id: uhid-modules
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/uhid-modules
+          key: uhid-${{ runner.os }}-${{ runner.arch }}-${{ steps.kernel.outputs.release }}
+      - *install_uhid_module
       - name: Cache npm
         uses: actions/cache@v6
         with:
