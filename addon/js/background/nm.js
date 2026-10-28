@@ -145,6 +145,7 @@
      */
     handleNativeMessage(message) {
       if (this.tryHostError(message)) return
+      if (this.tryPackedData(message)) return
       if (this.tryControlEvent(message)) return
       if (this.tryPendingResponse(message)) return
       if (this.tryUnmatchedDaemonError(message)) return

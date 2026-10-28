@@ -9,6 +9,7 @@ function loadNativeMessaging({ deferHandshake = false } = {}) {
   const exports = {}
   const ports = []
   const ownership = { cleared: 0, broadcasts: 0 }
+  const packedReports = []
   const context = {
     globalThis: null,
     setTimeout,
@@ -103,8 +104,19 @@ function loadNativeMessaging({ deferHandshake = false } = {}) {
           }
         if (name === 'content-ports') {
           return {
-            postToContentPorts() {
-              return new Set()
+            postToContentPorts(_tabId, message, dataPortName) {
+              if (!message.event) return new Set()
+              const event = message.event
+              packedReports.push({
+                dataPortName,
+                event: {
+                  eventType: event.eventType,
+                  deviceId: event.deviceId,
+                  reportId: event.reportId,
+                  data: Array.from(event.data)
+                }
+              })
+              return new Set([dataPortName])
             },
             postToContentPort() {}
           }
@@ -118,8 +130,27 @@ function loadNativeMessaging({ deferHandshake = false } = {}) {
   }
   context.globalThis = context
   runInNewContext(source, context)
-  return { nativeMessaging: exports.NativeMessaging, ports, ownership }
+  return { nativeMessaging: exports.NativeMessaging, ports, ownership, packedReports }
 }
+
+test('packed NM input reports reach their device data port', () => {
+  const { nativeMessaging, packedReports } = loadNativeMessaging()
+  const frame = Buffer.from([1, 42, 0, 0, 0, 7, 3, 0, 0x11, 0x22, 0x33]).toString('base64')
+
+  nativeMessaging.handleNativeMessage({ d: frame })
+
+  assert.deepEqual(packedReports, [
+    {
+      dataPortName: 'webhid-data:42',
+      event: {
+        eventType: 'input_report',
+        deviceId: 42,
+        reportId: 7,
+        data: [0x11, 0x22, 0x33]
+      }
+    }
+  ])
+})
 
 test('host switch retires authority once and ignores stale disconnect', async () => {
   const { nativeMessaging, ports, ownership } = loadNativeMessaging()
