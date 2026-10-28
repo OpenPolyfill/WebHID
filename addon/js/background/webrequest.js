@@ -227,6 +227,110 @@
   }
 
   /**
+   * Finds the end of a JavaScript directive prologue without treating text in
+   * comments or compound string expressions as directives.
+   * @param {string} source
+   * @param {boolean} eof
+   * @returns {{offset: number, invalid?: boolean}|null}
+   */
+  function workerDirectivePrologue(source, eof) {
+    const isLineTerminator = (char) =>
+      char === '\n' || char === '\r' || char === '\u2028' || char === '\u2029'
+    const skipTrivia = (start) => {
+      let index = start
+      let lineTerminator = false
+      while (index < source.length) {
+        if (/\s/.test(source[index]) || source[index] === '\uFEFF') {
+          if (isLineTerminator(source[index])) lineTerminator = true
+          index++
+          continue
+        }
+        const lineStart = index === 0 || isLineTerminator(source[index - 1])
+        const hashbangStart =
+          source.startsWith('#!', index) &&
+          (index === 0 || (index === 1 && source.charCodeAt(0) === 0xfeff))
+        const htmlCommentStart =
+          lineStart && (source.startsWith('<!--', index) || source.startsWith('-->', index))
+        if (source.startsWith('//', index) || hashbangStart || htmlCommentStart) {
+          const prefixLength = source.startsWith('<!--', index)
+            ? 4
+            : source.startsWith('-->', index)
+              ? 3
+              : 2
+          let end = index + prefixLength
+          while (end < source.length && !isLineTerminator(source[end])) end++
+          if (end === source.length && !eof) return null
+          if (end < source.length) {
+            lineTerminator = true
+            if (source[end] === '\r' && source[end + 1] === '\n') end++
+            index = end + 1
+          } else {
+            index = end
+          }
+          continue
+        }
+        if (source.startsWith('/*', index)) {
+          const end = source.indexOf('*/', index + 2)
+          if (end === -1) return eof ? { invalid: true } : null
+          if (/[\r\n\u2028\u2029]/.test(source.slice(index + 2, end))) {
+            lineTerminator = true
+          }
+          index = end + 2
+          continue
+        }
+        break
+      }
+      return { index, lineTerminator }
+    }
+
+    let index = 0
+    while (true) {
+      const trivia = skipTrivia(index)
+      if (!trivia || trivia.invalid) return trivia
+      const start = trivia.index
+      if (start === source.length) return eof ? { offset: start } : null
+      const quote = source[start]
+      if (quote !== '"' && quote !== "'") return { offset: start }
+
+      let end = start + 1
+      let validString = true
+      while (end < source.length && source[end] !== quote) {
+        if (isLineTerminator(source[end])) {
+          validString = false
+          break
+        }
+        if (source[end] === '\\') {
+          end++
+          if (end === source.length) break
+          if (source[end] === '\r' && source[end + 1] === '\n') end++
+        }
+        end++
+      }
+      if (!validString) return { offset: start }
+      if (end === source.length || source[end] !== quote) {
+        return eof ? { invalid: true } : null
+      }
+
+      const directiveEnd = end + 1
+      const after = skipTrivia(directiveEnd)
+      if (!after || after.invalid) return after
+      if (after.index < source.length && source[after.index] === ';') {
+        index = after.index + 1
+        continue
+      }
+      if (after.index === source.length) {
+        if (!eof) return null
+        return { offset: after.index }
+      }
+      if (after.lineTerminator) {
+        index = directiveEnd
+        continue
+      }
+      return { offset: start }
+    }
+  }
+
+  /**
    * Prefixes the opt-in worker-polyfill bundle into dedicated worker scripts
    * when workerPolyfillEnabled is on. It waits for destination metadata before
    * deciding, since response data can arrive before onBeforeSendHeaders.
@@ -258,52 +362,159 @@
     scriptDest.set(details.requestId, record)
     const filter = browser.webRequest.filterResponseData(details.requestId)
     const enc = new TextEncoder()
-    const dec = new TextDecoder()
-    let firstChunk = true
-    let injectPromise = Promise.resolve()
+    const dec = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
+    const rawChunks = []
+    let sourceText = ''
+    let phase = 'buffering'
+    let ended = false
+    let invalidUtf8 = false
+    let evaluation = Promise.resolve()
+    let setupPromise = null
+
+    /**
+     * Waits for request metadata and resolves whether this response is a worker.
+     * @returns {Promise<{isWorkerScope: boolean, bundle: string|null}>}
+     */
+    function setup() {
+      if (!setupPromise) {
+        setupPromise = (async () => {
+          await record.destinationReady
+          await browserInfoReady
+          const isWorkerScope =
+            record.dest === 'worker' || (record.dest === null && !fetchMetadataSupported)
+          return {
+            isWorkerScope,
+            bundle: isWorkerScope ? await ensureWorkerPolyfillBundle() : null
+          }
+        })()
+      }
+      return setupPromise
+    }
+
+    /** @returns {void} */
+    function writeBuffered() {
+      for (const chunk of rawChunks) filter.write(chunk)
+      rawChunks.length = 0
+      phase = 'passthrough'
+    }
+
+    /**
+     * Checks the buffered source bytes against their decoded prefix.
+     * @param {Uint8Array} expected
+     * @returns {boolean}
+     */
+    function matchesRawPrefix(expected) {
+      let offset = 0
+      for (const chunk of rawChunks) {
+        const count = Math.min(chunk.byteLength, expected.byteLength - offset)
+        for (let i = 0; i < count; i++) {
+          if (chunk[i] !== expected[offset + i]) return false
+        }
+        offset += count
+        if (offset === expected.byteLength) return true
+      }
+      return offset === expected.byteLength
+    }
+
+    /**
+     * Writes the original chunks with the bundle inserted at a byte offset.
+     * @param {number} byteOffset
+     * @param {string} bundle
+     * @returns {void}
+     */
+    function writeWithBundle(byteOffset, bundle) {
+      const bundleBytes = enc.encode('\n;\n' + bundle + '\n;\n')
+      let remaining = byteOffset
+      let inserted = false
+      for (const chunk of rawChunks) {
+        if (!inserted && remaining <= chunk.byteLength) {
+          if (remaining > 0) filter.write(chunk.subarray(0, remaining))
+          filter.write(bundleBytes)
+          if (remaining < chunk.byteLength) filter.write(chunk.subarray(remaining))
+          inserted = true
+        } else if (inserted) {
+          filter.write(chunk)
+        } else {
+          filter.write(chunk)
+          remaining -= chunk.byteLength
+        }
+      }
+      if (!inserted) filter.write(bundleBytes)
+      rawChunks.length = 0
+      phase = 'passthrough'
+    }
+
+    /** @returns {void} */
+    function evaluateBuffered() {
+      evaluation = evaluation
+        .then(async () => {
+          if (phase !== 'buffering') return
+          if (invalidUtf8) {
+            writeBuffered()
+            return
+          }
+          const { isWorkerScope, bundle } = await setup()
+          if (phase !== 'buffering') return
+          if (!isWorkerScope || !bundle) {
+            writeBuffered()
+            return
+          }
+          const prologue = workerDirectivePrologue(sourceText, ended)
+          if (!prologue) return
+          if (prologue.invalid) {
+            writeBuffered()
+            return
+          }
+          const rawPrefix = enc.encode(sourceText.slice(0, prologue.offset))
+          if (!matchesRawPrefix(rawPrefix)) {
+            writeBuffered()
+            return
+          }
+          writeWithBundle(rawPrefix.byteLength, bundle)
+        })
+        .catch((error) => {
+          logger.debug('worker script injection failed; passing through original response', error)
+          if (phase === 'buffering') writeBuffered()
+        })
+    }
+
     filter.ondata = (event) => {
-      if (!firstChunk) {
-        injectPromise = injectPromise.then(() => filter.write(event.data))
+      if (phase === 'passthrough') {
+        filter.write(event.data)
         return
       }
-      firstChunk = false
-      injectPromise = injectPromise.then(async () => {
-        await record.destinationReady
-        await browserInfoReady
-        const isWorkerScope =
-          record.dest === 'worker' || (record.dest === null && !fetchMetadataSupported)
-        const bundle = await ensureWorkerPolyfillBundle()
-        if (!bundle || !isWorkerScope) {
-          filter.write(event.data)
-          return
-        }
-        const str = dec.decode(event.data, { stream: true })
-        const cleaned = str.replace(/\/\/[^\n]*\n/g, '').replace(/\/\*[\s\S]*?\*\//g, '')
-        const hasUseStrict = /^\s*["']use strict["'];?\s*/.test(cleaned)
-        if (hasUseStrict) {
-          const p = str.indexOf('"use strict"')
-          const pos = p >= 0 ? p : str.indexOf("'use strict'")
-          let end = pos + 12
-          if (str[end] === ';') end++
-          while (end < str.length && /\s/.test(str[end])) end++
-          filter.write(enc.encode(str.slice(0, end)))
-          filter.write(enc.encode(bundle))
-          filter.write(enc.encode(str.slice(end)))
-        } else {
-          filter.write(enc.encode(bundle))
-          filter.write(event.data)
-        }
-      })
+      if (phase !== 'buffering') return
+      rawChunks.push(event.data)
+      try {
+        sourceText += dec.decode(event.data, { stream: true })
+      } catch {
+        invalidUtf8 = true
+      }
+      evaluateBuffered()
     }
     filter.onstop = () => {
       resolveScriptDestination(record)
-      injectPromise.then(() => {
-        filter.close()
-        scriptDest.delete(details.requestId)
+      ended = true
+      if (!invalidUtf8) {
+        try {
+          sourceText += dec.decode()
+        } catch {
+          invalidUtf8 = true
+        }
+      }
+      evaluateBuffered()
+      evaluation.then(() => {
+        if (phase === 'buffering') writeBuffered()
+        if (phase !== 'done') {
+          filter.close()
+          phase = 'done'
+          scriptDest.delete(details.requestId)
+        }
       })
     }
     filter.onerror = () => {
       resolveScriptDestination(record)
+      phase = 'done'
       scriptDest.delete(details.requestId)
       try {
         filter.close()
@@ -313,6 +524,7 @@
     }
     return {}
   }
+
 
   /**
    * Rewrites an in-document CSP `<meta>` tag in place when the worker spawn
