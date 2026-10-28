@@ -1,4 +1,8 @@
 use super::*;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+
+use tokio::io::AsyncWrite;
 
 #[tokio::test]
 async fn test_read_frame_normal() {
@@ -87,6 +91,52 @@ async fn test_write_error_frame_empty_message() {
         serde_json::from_slice(&output[4..4 + json_len]).expect("valid JSON");
     assert_eq!(json["s"], 503);
     assert_eq!(json["E"], "");
+}
+
+struct PartialWriter {
+    bytes: Vec<u8>,
+    max_write: usize,
+}
+
+impl AsyncWrite for PartialWriter {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        let count = buf.len().min(self.max_write);
+        self.bytes.extend_from_slice(&buf[..count]);
+        Poll::Ready(Ok(count))
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+}
+
+#[tokio::test]
+async fn forwarders_write_complete_frames_with_partial_writes() {
+    let payload = b"partial writes must preserve framing";
+    let mut frame = (payload.len() as u32).to_le_bytes().to_vec();
+    frame.extend_from_slice(payload);
+
+    let mut to_daemon = PartialWriter {
+        bytes: Vec::new(),
+        max_write: 2,
+    };
+    forward_stdin_to_daemon(&frame[..], &mut to_daemon).await;
+    assert_eq!(to_daemon.bytes, frame);
+
+    let mut to_host = PartialWriter {
+        bytes: Vec::new(),
+        max_write: 1,
+    };
+    forward_daemon_to_stdout(&frame[..], &mut to_host).await;
+    assert_eq!(to_host.bytes, frame);
 }
 
 #[cfg(unix)]

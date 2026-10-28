@@ -251,6 +251,13 @@ where
     Ok(())
 }
 
+async fn write_frame<W: AsyncWrite + Unpin>(writer: &mut W, buf: &[u8]) -> std::io::Result<()> {
+    let len = u32::try_from(buf.len()).unwrap_or(0).to_le_bytes();
+    writer.write_all(&len).await?;
+    writer.write_all(buf).await?;
+    writer.flush().await
+}
+
 /// Forward length-prefixed frames from the NM host's stdin to the daemon.
 async fn forward_stdin_to_daemon<R, W>(mut stdin: R, mut daemon_w: W)
 where
@@ -267,15 +274,8 @@ where
                 break;
             }
         }
-        let len = u32::try_from(buf.len()).unwrap_or(0).to_le_bytes();
-        let len_io = std::io::IoSlice::new(&len);
-        let buf_io = std::io::IoSlice::new(&buf);
-        if let Err(e) = daemon_w.write_vectored(&[len_io, buf_io]).await {
+        if let Err(e) = write_frame(&mut daemon_w, &buf).await {
             log::warn!("daemon write error: {e}");
-            break;
-        }
-        if let Err(e) = daemon_w.flush().await {
-            log::warn!("daemon flush error: {e}");
             break;
         }
     }
@@ -298,15 +298,8 @@ where
                 break;
             }
         }
-        let len = u32::try_from(buf.len()).unwrap_or(0).to_le_bytes();
-        let len_io = std::io::IoSlice::new(&len);
-        let buf_io = std::io::IoSlice::new(&buf);
-        if let Err(e) = stdout.write_vectored(&[len_io, buf_io]).await {
+        if let Err(e) = write_frame(&mut stdout, &buf).await {
             log::warn!("stdout write error: {e}");
-            break;
-        }
-        if let Err(e) = stdout.flush().await {
-            log::warn!("stdout flush error: {e}");
             break;
         }
     }
