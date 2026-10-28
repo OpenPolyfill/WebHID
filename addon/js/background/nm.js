@@ -41,6 +41,7 @@
     port: null,
     nextId: 1,
     pending: new Map(),
+    lateOpenRequests: new Set(),
     reconnectTimer: null,
     reconnectDelay: 1000,
     nmHostName: NM_HOST_FORWARDER,
@@ -62,6 +63,7 @@
       this.lastError = String(message.E)
       for (const [, p] of this.pending) p.resolve(message)
       this.pending.clear()
+      this.lateOpenRequests.clear()
       return true
     },
 
@@ -94,9 +96,33 @@
     tryPendingResponse(message) {
       if (message.n === undefined) return false
       const p = this.pending.get(message.n)
-      if (!p) return false
+      if (!p) return this.tryLateOpenResponse(message)
       this.pending.delete(message.n)
       p.resolve(message)
+      return true
+    },
+
+    /**
+     * Closes a successful response for an open request that already timed out.
+     * @param {object} message
+     * @returns {boolean}
+     */
+    tryLateOpenResponse(message) {
+      if (!Number.isSafeInteger(message.n) || !this.lateOpenRequests.delete(message.n)) {
+        return false
+      }
+      if (
+        message.s !== 201 ||
+        !Number.isSafeInteger(message.i) ||
+        typeof message.t !== 'string' ||
+        message.t.length === 0
+      ) {
+        return false
+      }
+      logger.warn('late successful open response; closing orphan session')
+      this.closeDevice(message.i, message.t).catch((e) =>
+        logger.warn('orphan session close failed', e)
+      )
       return true
     },
 
@@ -119,7 +145,6 @@
      */
     handleNativeMessage(message) {
       if (this.tryHostError(message)) return
-      if (this.tryPackedData(message)) return
       if (this.tryControlEvent(message)) return
       if (this.tryPendingResponse(message)) return
       if (this.tryUnmatchedDaemonError(message)) return
@@ -171,6 +196,7 @@
       this.handshakePort = null
       for (const [, p] of this.pending) p.resolve({ s: 503 })
       this.pending.clear()
+      this.lateOpenRequests.clear()
       clearAuthorityOwnership()
       broadcastGlobalReset(broadcastExactGlobalReset)
       return true
@@ -204,7 +230,7 @@
       this.reconnectDelay = Math.min(this.reconnectDelay * 2, 10000)
     },
 
-    sendFrame(buildMessage, describe) {
+    sendFrame(buildMessage, describe, trackLateOpen = false) {
       return new Promise((resolve, reject) => {
         if (!this.port) {
           this.connect().catch((e) => logger.debug('speculative reconnect failed', e))
@@ -216,6 +242,7 @@
         // background (and its pending map) forever.
         const timer = setTimeout(() => {
           if (this.pending.delete(id)) {
+            if (trackLateOpen) this.lateOpenRequests.add(id)
             logger.warn('NM request n=' + id + ' timed out')
             reject(new Error('NM request timed out'))
           }
@@ -245,7 +272,8 @@
     sendRequest(request) {
       return this.sendFrame(
         (id) => ({ ...request, n: id }),
-        (msg, id) => 'sendRequest a=' + (msg.a || 'packed') + ' n=' + id
+        (msg, id) => 'sendRequest a=' + (msg.a || 'packed') + ' n=' + id,
+        request.a === ACT.open
       )
     },
 

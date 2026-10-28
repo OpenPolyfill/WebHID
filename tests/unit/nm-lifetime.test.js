@@ -58,7 +58,7 @@ function loadNativeMessaging({ deferHandshake = false } = {}) {
         if (name === 'decodeDeviceCollections') return () => {}
         if (name === 'bgPacked') {
           return {
-            ACT: {},
+            ACT: { hs: 8, open: 2, close: 3 },
             PKG_INPUT_REPORT: 1,
             PKG_SEND_REPORT: 2,
             PKG_SEND_FEATURE_REPORT: 4,
@@ -131,10 +131,12 @@ test('host switch retires authority once and ignores stale disconnect', async ()
       pendingResult = value
     }
   })
+  nativeMessaging.lateOpenRequests.add(99)
 
   nativeMessaging.reconnectWithNewHost()
 
   assert.equal(nativeMessaging.port, ports[1].port)
+  assert.equal(nativeMessaging.lateOpenRequests.size, 0)
   assert.equal(pendingResult.s, 503)
   assert.equal(ownership.cleared, 1)
   assert.equal(ownership.broadcasts, 1)
@@ -176,4 +178,43 @@ test('handshake after port replacement uses the new port', async () => {
   assert.equal(ports[1].port.handshakeCalls, 1)
   ports[1].port.respondHandshake()
   assert.deepEqual(await second, { n: 2, s: 200, w: 123, N: 'nonce' })
+})
+
+test('late successful response to a timed-out open closes its orphan session', async () => {
+  const { nativeMessaging } = loadNativeMessaging()
+  const requests = []
+  nativeMessaging.port = {
+    postMessage(message) {
+      requests.push(message)
+    }
+  }
+  nativeMessaging.REQUEST_TIMEOUT_MS = 1
+  const opening = nativeMessaging.openDevice(42)
+  await assert.rejects(opening, /NM request timed out/)
+  assert.equal(nativeMessaging.pending.size, 0)
+  assert.equal(nativeMessaging.lateOpenRequests.has(requests[0].n), true)
+
+  const closed = []
+  nativeMessaging.closeDevice = async (deviceId, token) => {
+    closed.push({ deviceId, token })
+    return { s: 204 }
+  }
+  nativeMessaging.handleNativeMessage({
+    n: requests[0].n,
+    s: 201,
+    i: 42,
+    t: 'late-session'
+  })
+  await Promise.resolve()
+
+  assert.deepEqual(closed, [{ deviceId: 42, token: 'late-session' }])
+  assert.equal(nativeMessaging.lateOpenRequests.has(requests[0].n), false)
+  nativeMessaging.handleNativeMessage({
+    n: requests[0].n + 1,
+    s: 201,
+    i: 42,
+    t: 'not-a-timed-out-open'
+  })
+  await Promise.resolve()
+  assert.equal(closed.length, 1)
 })
