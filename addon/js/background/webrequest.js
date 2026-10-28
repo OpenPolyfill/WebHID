@@ -324,20 +324,74 @@
   function handleMetaCsp(details, settings) {
     const filter = browser.webRequest.filterResponseData(details.requestId)
     const enc = new TextEncoder()
-    const dec = new TextDecoder()
+    const scanDecoder = new TextDecoder('utf-8', { ignoreBOM: true })
     const rawChunks = []
+    const pendingChunks = []
     let scanText = ''
     let gaveUp = false
     let processed = false
+    let disconnected = false
 
     const origin = urlOrigin(details.url)
-
     const modePromise = resolveSiteSpawnMode(origin, settings)
 
+    /**
+     * Writes each buffered chunk to the response filter.
+     * @param {Uint8Array[]} chunks
+     * @returns {void}
+     */
+    function writeChunks(chunks) {
+      for (const chunk of chunks) filter.write(chunk)
+    }
+
     /** @returns {void} */
-    function passthrough() {
-      for (const buf of rawChunks) filter.write(buf)
+    function disconnectWithBufferedData() {
+      if (disconnected) return
+      disconnected = true
+      writeChunks(rawChunks)
+      writeChunks(pendingChunks)
+      rawChunks.length = 0
+      pendingChunks.length = 0
       filter.disconnect()
+    }
+
+    /**
+     * Checks that a decoded prefix matches the original response bytes.
+     * @param {Uint8Array[]} chunks
+     * @param {Uint8Array} expected
+     * @returns {boolean}
+     */
+    function rawPrefixMatches(chunks, expected) {
+      let offset = 0
+      for (const chunk of chunks) {
+        const count = Math.min(chunk.byteLength, expected.byteLength - offset)
+        for (let i = 0; i < count; i++) {
+          if (chunk[i] !== expected[offset + i]) return false
+        }
+        offset += count
+        if (offset === expected.byteLength) return true
+      }
+      return offset === expected.byteLength
+    }
+
+    /**
+     * Writes a rewritten head followed by the untouched response bytes.
+     * @param {string} rewrittenHead
+     * @param {number} sourcePrefixLength
+     * @param {Uint8Array[]} chunks
+     * @returns {void}
+     */
+    function writeRewrittenHead(rewrittenHead, sourcePrefixLength, chunks) {
+      filter.write(enc.encode(rewrittenHead))
+      let remaining = sourcePrefixLength
+      for (const chunk of chunks) {
+        if (remaining >= chunk.byteLength) {
+          remaining -= chunk.byteLength
+          continue
+        }
+        filter.write(chunk.subarray(remaining))
+        remaining = 0
+      }
     }
 
     /**
@@ -345,91 +399,121 @@
      * @returns {Promise<void>}
      */
     async function process(eof) {
-      if (processed) return
-      const headEnd = scanText.toLowerCase().indexOf('</head>')
+      if (processed || disconnected) return
+      const headEnd = scanText.search(/<\/head>/i)
       if (headEnd === -1 && !eof && !gaveUp) return
       processed = true
-      const mode = await modePromise
-      const scriptHashToken = isMv2 ? await mv2ScriptHashToken() : null
-      const html = scanText + dec.decode()
-      const end = headEnd === -1 ? html.length : headEnd
-      const head = html.slice(0, end)
-      const metaInfos = []
-      let anyChange = false
-      const rewrittenHead = head.replace(/<meta\s[^>]*>/gi, (tag) => {
-        if (!/http-equiv\s*=\s*["']?\s*content-security-policy\s*["']?/i.test(tag)) return tag
-        const contentMatch = tag.match(/\bcontent\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))/i)
-        if (!contentMatch) return tag
-        const quote = contentMatch[2] !== undefined ? '"' : contentMatch[3] !== undefined ? "'" : ''
-        const csp = contentMatch[2] ?? contentMatch[3] ?? contentMatch[4] ?? ''
-        const info = parseCspForWorkerSpawn([csp], mode, origin)
-        if (!info) return tag
-        metaInfos.push(info)
-        let value = csp
-        let changed = false
-        if (mode === 'blob' && info.needsBlobFallback) {
-          const { value: v, modified } = rewriteCspValue(value, info)
-          if (modified) {
-            value = v
-            changed = true
-          }
-        }
-        if (scriptHashToken) {
-          const v = allowInlineScript(value, scriptHashToken)
-          if (v !== null) {
-            value = v
-            changed = true
-          }
-        }
-        if (!changed) return tag
-        anyChange = true
-        return tag.replace(contentMatch[0], 'content=' + (quote || '"') + value + (quote || '"'))
-      })
-
-      if (metaInfos.length) {
-        const key = `csp:${frameKey(details.tabId, details.frameId, origin)}`
-        browser.storage.session
-          .get(key)
-          .then((r) => {
-            const existing = r[key]
-            const merged = {
-              workerSrc: metaInfos[0].workerSrc ?? existing?.workerSrc,
-              connectSrc: metaInfos[0].connectSrc ?? existing?.connectSrc,
-              workerSrcBlocked:
-                metaInfos.some((i) => i.workerSrcBlocked) || !!existing?.workerSrcBlocked,
-              connectSrcBlocked:
-                metaInfos.some((i) => i.connectSrcBlocked) || !!existing?.connectSrcBlocked,
-              hasTrustedTypesRequire:
-                metaInfos.some((i) => i.hasTrustedTypesRequire) ||
-                !!existing?.hasTrustedTypesRequire,
-              shadowBlocked: metaInfos.some((i) => i.shadowBlocked) || !!existing?.shadowBlocked,
-              metaShadowBlocked:
-                metaInfos.some((i) => i.shadowBlocked) || !!existing?.metaShadowBlocked,
-              headerShadowBlocked: !!existing?.headerShadowBlocked,
-              needsBlobFallback:
-                metaInfos.some((i) => i.needsBlobFallback) || !!existing?.needsBlobFallback
-            }
-            browser.storage.session.set({ [key]: merged }).catch(() => {})
-          })
-          .catch(() => {})
-      }
-
-      if (!anyChange) {
-        passthrough()
+      if (headEnd === -1 && gaveUp) {
+        disconnectWithBufferedData()
         return
       }
-      filter.write(enc.encode(rewrittenHead + html.slice(end)))
-      filter.close()
+      try {
+        const mode = await modePromise
+        const scriptHashToken = isMv2 ? await mv2ScriptHashToken() : null
+        const chunks = rawChunks.concat(pendingChunks)
+        const decoder = new TextDecoder('utf-8', { ignoreBOM: true })
+        let html = ''
+        for (const chunk of chunks) html += decoder.decode(chunk, { stream: true })
+        html += decoder.decode()
+        const matchedHeadEnd = html.search(/<\/head>/i)
+        const end = matchedHeadEnd === -1 ? html.length : matchedHeadEnd
+        const head = html.slice(0, end)
+        const metaInfos = []
+        let anyChange = false
+        const rewrittenHead = head.replace(/<meta\s[^>]*>/gi, (tag) => {
+          if (!/http-equiv\s*=\s*["']?\s*content-security-policy\s*["']?/i.test(tag)) return tag
+          const contentMatch = tag.match(/\bcontent\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))/i)
+          if (!contentMatch) return tag
+          const quote =
+            contentMatch[2] !== undefined ? '"' : contentMatch[3] !== undefined ? "'" : ''
+          const csp = contentMatch[2] ?? contentMatch[3] ?? contentMatch[4] ?? ''
+          const info = parseCspForWorkerSpawn([csp], mode, origin)
+          if (!info) return tag
+          metaInfos.push(info)
+          let value = csp
+          let changed = false
+          if (mode === 'blob' && info.needsBlobFallback) {
+            const { value: v, modified } = rewriteCspValue(value, info)
+            if (modified) {
+              value = v
+              changed = true
+            }
+          }
+          if (scriptHashToken) {
+            const v = allowInlineScript(value, scriptHashToken)
+            if (v !== null) {
+              value = v
+              changed = true
+            }
+          }
+          if (!changed) return tag
+          anyChange = true
+          return tag.replace(contentMatch[0], 'content=' + (quote || '"') + value + (quote || '"'))
+        })
+
+        if (metaInfos.length) {
+          const key = `csp:${frameKey(details.tabId, details.frameId, origin)}`
+          browser.storage.session
+            .get(key)
+            .then((r) => {
+              const existing = r[key]
+              const merged = {
+                workerSrc: metaInfos[0].workerSrc ?? existing?.workerSrc,
+                connectSrc: metaInfos[0].connectSrc ?? existing?.connectSrc,
+                workerSrcBlocked:
+                  metaInfos.some((i) => i.workerSrcBlocked) || !!existing?.workerSrcBlocked,
+                connectSrcBlocked:
+                  metaInfos.some((i) => i.connectSrcBlocked) || !!existing?.connectSrcBlocked,
+                hasTrustedTypesRequire:
+                  metaInfos.some((i) => i.hasTrustedTypesRequire) ||
+                  !!existing?.hasTrustedTypesRequire,
+                shadowBlocked: metaInfos.some((i) => i.shadowBlocked) || !!existing?.shadowBlocked,
+                metaShadowBlocked:
+                  metaInfos.some((i) => i.shadowBlocked) || !!existing?.metaShadowBlocked,
+                headerShadowBlocked: !!existing?.headerShadowBlocked,
+                needsBlobFallback:
+                  metaInfos.some((i) => i.needsBlobFallback) || !!existing?.needsBlobFallback
+              }
+              browser.storage.session.set({ [key]: merged }).catch(() => {})
+            })
+            .catch(() => {})
+        }
+
+        if (!anyChange) {
+          disconnectWithBufferedData()
+          return
+        }
+        const sourcePrefix = enc.encode(html.slice(0, end))
+        if (!rawPrefixMatches(chunks, sourcePrefix)) {
+          disconnectWithBufferedData()
+          return
+        }
+        disconnected = true
+        writeRewrittenHead(rewrittenHead, sourcePrefix.byteLength, chunks)
+        rawChunks.length = 0
+        pendingChunks.length = 0
+        filter.disconnect()
+      } catch {
+        disconnectWithBufferedData()
+      }
     }
 
-    filter.ondata = (e) => {
-      rawChunks.push(e.data)
-      if (processed) return
-      if (scanText.length < 262144) scanText += dec.decode(e.data, { stream: true })
-      else gaveUp = true
+    filter.ondata = (event) => {
+      if (disconnected) return
+      if (processed) {
+        pendingChunks.push(event.data)
+        return
+      }
+      rawChunks.push(event.data)
+      if (scanText.length < 262144) {
+        scanText += scanDecoder.decode(event.data, { stream: true })
+      } else {
+        gaveUp = true
+      }
       process(false)
     }
     filter.onstop = () => {
+      if (!processed) scanText += scanDecoder.decode()
       process(true)
     }
     filter.onerror = () => {
