@@ -45,6 +45,9 @@ async function prepareFanoutPage(
   await page.goto(`${origin}/tests/pages/input-report-fanout.html`, {
     waitUntil: 'domcontentloaded'
   })
+  await page.waitForFunction(() => typeof navigator.hid !== 'undefined', undefined, {
+    timeout: 15000
+  })
 }
 
 test.describe.serial('OpenPolyfill input report fan-out', () => {
