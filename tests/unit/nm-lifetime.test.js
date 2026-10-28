@@ -2,6 +2,13 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { runInNewContext } from 'node:vm'
+import { Buffer } from 'node:buffer'
+
+class TestUint8Array extends Uint8Array {
+  static fromBase64(base64) {
+    return new TestUint8Array(Buffer.from(base64, 'base64'))
+  }
+}
 
 const source = readFileSync(new URL('../../addon/js/background/nm.js', import.meta.url), 'utf8')
 
@@ -14,6 +21,7 @@ function loadNativeMessaging({ deferHandshake = false } = {}) {
     globalThis: null,
     setTimeout,
     clearTimeout,
+    Uint8Array: TestUint8Array,
     browser: {
       runtime: {
         connectNative(name) {
