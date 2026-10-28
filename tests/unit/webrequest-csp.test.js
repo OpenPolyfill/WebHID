@@ -18,8 +18,8 @@ test('meta CSP rewrite disconnects after preserving chunks received during async
     '<html><head><meta http-equiv="Content-Security-Policy" content="script-src \'self\'"></head>'
   )
   const rest = new TextEncoder().encode('<body>the response tail remains intact</body></html>')
-  filter.ondata({ data: first })
-  filter.ondata({ data: rest })
+  filter.ondata({ data: first.buffer })
+  filter.ondata({ data: rest.buffer })
   setting.resolve({})
   await filter.done
 

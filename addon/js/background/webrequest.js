@@ -484,9 +484,10 @@
         return
       }
       if (phase !== 'buffering') return
-      rawChunks.push(event.data)
+      const chunk = new Uint8Array(event.data)
+      rawChunks.push(chunk)
       try {
-        sourceText += dec.decode(event.data, { stream: true })
+        sourceText += dec.decode(chunk, { stream: true })
       } catch {
         invalidUtf8 = true
       }
@@ -712,13 +713,14 @@
 
     filter.ondata = (event) => {
       if (disconnected) return
+      const chunk = new Uint8Array(event.data)
       if (processed) {
-        pendingChunks.push(event.data)
+        pendingChunks.push(chunk)
         return
       }
-      rawChunks.push(event.data)
+      rawChunks.push(chunk)
       if (scanText.length < 262144) {
-        scanText += scanDecoder.decode(event.data, { stream: true })
+        scanText += scanDecoder.decode(chunk, { stream: true })
       } else {
         gaveUp = true
       }

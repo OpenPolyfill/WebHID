@@ -164,7 +164,10 @@ export function sendWorkerScript(harness, chunks) {
     requestHeaders: [{ name: 'Sec-Fetch-Dest', value: 'worker' }]
   })
   const filter = harness.filters.get(details.requestId)
-  for (const chunk of chunks) filter.ondata({ data: chunk })
+  for (const chunk of chunks) {
+    const data = chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength)
+    filter.ondata({ data })
+  }
   filter.onstop()
   return filter
 }
