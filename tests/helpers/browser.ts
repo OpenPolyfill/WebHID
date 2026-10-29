@@ -22,6 +22,9 @@ interface BrowserWorkerFixtures {
   crossUrl: (path: string) => string
   wptUrl: (path: string) => string
 }
+interface BackgroundModuleLoader {
+  import(name: 'bgState'): { workerPolyfillSites: Set<string> }
+}
 
 export const test = createHarnessFixtures(base).extend<BrowserTestFixtures, BrowserWorkerFixtures>({
   pageUrl: [
@@ -80,7 +83,12 @@ export const test = createHarnessFixtures(base).extend<BrowserTestFixtures, Brow
       .poll(
         () =>
           extension.background!.evaluate(
-            (origin) => webhid.import('bgState').workerPolyfillSites.has(origin),
+            (origin) => {
+              const background = globalThis as unknown as {
+                webhid: BackgroundModuleLoader
+              }
+              return background.webhid.import('bgState').workerPolyfillSites.has(origin)
+            },
             [new URL(pageUrl('')).origin]
           ),
         { timeout: 15000, message: 'worker polyfill site setting should be ready' }
