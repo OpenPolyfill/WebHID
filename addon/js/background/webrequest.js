@@ -326,6 +326,23 @@
         const nextToken = source.slice(after.index)
         const nextChar = nextToken[0]
         const nextPair = nextToken.slice(0, 2)
+        const wordMayContinue = /^[A-Za-z_$][\w$]*$/.test(nextToken)
+        const htmlCommentMayContinue =
+          (after.index === 0 || isLineTerminator(source[after.index - 1])) &&
+          '<!--'.startsWith(nextToken)
+        if (
+          !eof &&
+          (nextToken === '/' ||
+            nextToken === '+' ||
+            nextToken === '-' ||
+            nextToken === '=' ||
+            nextToken === '!' ||
+            (wordMayContinue &&
+              ('in'.startsWith(nextToken) || 'instanceof'.startsWith(nextToken))) ||
+            htmlCommentMayContinue)
+        ) {
+          return null
+        }
         const expressionContinues =
           (nextChar === '+' && nextPair !== '++') ||
           (nextChar === '-' && nextPair !== '--') ||
@@ -393,10 +410,8 @@
           await browserInfoReady
           const isWorkerScope =
             record.dest === 'worker' || (record.dest === null && !fetchMetadataSupported)
-          return {
-            isWorkerScope,
-            bundle: isWorkerScope ? await ensureWorkerPolyfillBundle() : null
-          }
+          const bundle = isWorkerScope ? await ensureWorkerPolyfillBundle() : null
+          return { isWorkerScope, bundle }
         })()
       }
       return setupPromise

@@ -148,7 +148,7 @@ export function listenerFor(listeners, name, type) {
   return listeners.get(name).find(({ filter }) => filter.types.includes(type)).listener
 }
 
-export function sendWorkerScript(harness, chunks) {
+export async function sendWorkerScript(harness, chunks) {
   const details = {
     requestId: 'worker-request',
     type: 'script',
@@ -167,6 +167,7 @@ export function sendWorkerScript(harness, chunks) {
   for (const chunk of chunks) {
     const data = chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength)
     filter.ondata({ data })
+    await new Promise((resolve) => setTimeout(resolve, 0))
   }
   filter.onstop()
   return filter

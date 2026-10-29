@@ -15,7 +15,7 @@ test('worker strict directive split across UTF-8 chunks remains first', async ()
     bytes.slice(splitDirective)
   ]
   const harness = loadWebRequest()
-  const filter = sendWorkerScript(harness, chunks)
+  const filter = await sendWorkerScript(harness, chunks)
   await filter.done
 
   const output = filter.output()
@@ -30,7 +30,7 @@ test('worker strict directive split across UTF-8 chunks remains first', async ()
 test('worker injection ignores strict-looking text in a leading comment', async () => {
   const script = '/* "use strict" */\n"use strict";\nrunWorker();'
   const harness = loadWebRequest()
-  const filter = sendWorkerScript(harness, [new TextEncoder().encode(script)])
+  const filter = await sendWorkerScript(harness, [new TextEncoder().encode(script)])
   await filter.done
 
   const output = new TextDecoder().decode(filter.output())
@@ -45,7 +45,7 @@ test('worker string expressions continued on the next line are not directives', 
   assert.doesNotThrow(() => new Script(script))
 
   const harness = loadWebRequest()
-  const filter = sendWorkerScript(harness, [new TextEncoder().encode(script)])
+  const filter = await sendWorkerScript(harness, [new TextEncoder().encode(script)])
   await filter.done
 
   const output = new TextDecoder().decode(filter.output())
@@ -53,3 +53,83 @@ test('worker string expressions continued on the next line are not directives', 
   assert.doesNotThrow(() => new Script(output))
   assert.ok(output.endsWith(script))
 })
+
+test('worker comment opener split after slash waits for the next chunk', async () => {
+  const script = '"use strict"\n/* comment */\nrunWorker();'
+  const encoder = new TextEncoder()
+  const bytes = encoder.encode(script)
+  const commentStart = script.indexOf('/*')
+  const harness = loadWebRequest()
+  const filter = await sendWorkerScript(harness, [
+    bytes.slice(0, commentStart + 1),
+    bytes.slice(commentStart + 1)
+  ])
+  await filter.done
+
+  const output = new TextDecoder().decode(filter.output())
+  assert.ok(output.startsWith('"use strict"\n/* comment */'))
+  assert.ok(output.indexOf('/* worker polyfill */') > output.indexOf('/* comment */'))
+  assert.doesNotThrow(() => new Script(output))
+  assert.ok(output.endsWith('runWorker();'))
+})
+
+test('worker in keyword split across chunks does not become a directive', async () => {
+  const script = '"use strict"\nin globalThis;\nwith ({}) {}'
+  assert.doesNotThrow(() => new Script(script))
+  const encoder = new TextEncoder()
+  const bytes = encoder.encode(script)
+  const inStart = script.indexOf('\nin') + 1
+  const harness = loadWebRequest()
+  const filter = await sendWorkerScript(harness, [
+    bytes.slice(0, inStart + 1),
+    bytes.slice(inStart + 1)
+  ])
+  await filter.done
+
+  const output = new TextDecoder().decode(filter.output())
+  assert.ok(output.indexOf('/* worker polyfill */') < output.indexOf('"use strict"'))
+  assert.doesNotThrow(() => new Script(output))
+  assert.ok(output.endsWith(script))
+})
+
+for (const operator of ['++', '--']) {
+  test(`worker ${operator} token split across chunks preserves the directive`, async () => {
+    const script = `"use strict"\n${operator}globalThis.__workerCounter;\nrunWorker();`
+    assert.doesNotThrow(() => new Script(script))
+    const encoder = new TextEncoder()
+    const bytes = encoder.encode(script)
+    const operatorStart = script.indexOf(operator)
+    const harness = loadWebRequest()
+    const filter = await sendWorkerScript(harness, [
+      bytes.slice(0, operatorStart + 1),
+      bytes.slice(operatorStart + 1)
+    ])
+    await filter.done
+
+    const output = new TextDecoder().decode(filter.output())
+    assert.ok(output.indexOf('/* worker polyfill */') > output.indexOf('"use strict"'))
+    assert.doesNotThrow(() => new Script(output))
+    assert.ok(output.endsWith(`${operator}globalThis.__workerCounter;\nrunWorker();`))
+  })
+}
+
+for (const operator of ['==', '!=']) {
+  test(`worker ${operator} token split across chunks stays in the expression`, async () => {
+    const script = `"use strict"\n${operator}globalThis.__workerValue;\nwith ({}) {}`
+    assert.doesNotThrow(() => new Script(script))
+    const encoder = new TextEncoder()
+    const bytes = encoder.encode(script)
+    const operatorStart = script.indexOf(operator)
+    const harness = loadWebRequest()
+    const filter = await sendWorkerScript(harness, [
+      bytes.slice(0, operatorStart + 1),
+      bytes.slice(operatorStart + 1)
+    ])
+    await filter.done
+
+    const output = new TextDecoder().decode(filter.output())
+    assert.ok(output.indexOf('/* worker polyfill */') < output.indexOf('"use strict"'))
+    assert.doesNotThrow(() => new Script(output))
+    assert.ok(output.endsWith(script))
+  })
+}
