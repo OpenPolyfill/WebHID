@@ -323,6 +323,17 @@
         return { offset: after.index }
       }
       if (after.lineTerminator) {
+        const nextToken = source.slice(after.index)
+        const nextChar = nextToken[0]
+        const nextPair = nextToken.slice(0, 2)
+        const expressionContinues =
+          (nextChar === '+' && nextPair !== '++') ||
+          (nextChar === '-' && nextPair !== '--') ||
+          '*/%<>&|^?,.[(`'.includes(nextChar) ||
+          nextPair === '==' ||
+          nextPair === '!=' ||
+          /^(?:in|instanceof)\b/.test(nextToken)
+        if (expressionContinues) return { offset: start }
         index = directiveEnd
         continue
       }

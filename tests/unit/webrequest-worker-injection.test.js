@@ -39,3 +39,17 @@ test('worker injection ignores strict-looking text in a leading comment', async 
   assert.doesNotThrow(() => new Script(output))
   assert.ok(output.endsWith('runWorker();'))
 })
+
+test('worker string expressions continued on the next line are not directives', async () => {
+  const script = '"use strict"\n+1;\nwith ({}) {}'
+  assert.doesNotThrow(() => new Script(script))
+
+  const harness = loadWebRequest()
+  const filter = sendWorkerScript(harness, [new TextEncoder().encode(script)])
+  await filter.done
+
+  const output = new TextDecoder().decode(filter.output())
+  assert.ok(output.indexOf('/* worker polyfill */') < output.indexOf('"use strict"'))
+  assert.doesNotThrow(() => new Script(output))
+  assert.ok(output.endsWith(script))
+})
