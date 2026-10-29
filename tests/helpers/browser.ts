@@ -76,10 +76,6 @@ export const test = createHarnessFixtures(base).extend<BrowserTestFixtures, Brow
       (settingKey) => browser.storage.local.set({ [settingKey]: true }),
       [key]
     )
-    await page.goto(pageUrl('/policy-check'), {
-      waitUntil: 'domcontentloaded',
-      timeout: 15000
-    })
     await use(page)
   }
 })
