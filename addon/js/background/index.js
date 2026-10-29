@@ -190,19 +190,25 @@
     NativeMessaging.reconnectWithNewHost()
   })
 
+  let workerPolyfillSitesRevision = 0
+
   /**
    * Rebuilds the set of origins that have worker polyfill enabled.
    * @returns {Promise<void>}
    */
   async function refreshWorkerPolyfillSites() {
-    workerPolyfillSites.clear()
+    const revision = workerPolyfillSitesRevision
     const all = await browser.storage.local.get(null)
+    if (revision !== workerPolyfillSitesRevision) return
+    const enabledSites = new Set()
     for (const [key, val] of Object.entries(all)) {
       const parsed = parseSettingsKey(key)
       if (parsed && parsed.scope === 'site' && parsed.name === 'workerPolyfillEnabled' && val) {
-        workerPolyfillSites.add(parsed.origin)
+        enabledSites.add(parsed.origin)
       }
     }
+    workerPolyfillSites.clear()
+    for (const origin of enabledSites) workerPolyfillSites.add(origin)
   }
   refreshWorkerPolyfillSites()
 
@@ -273,9 +279,14 @@
         patch[parsed.name] = change.newValue
       } else if (parsed.scope === 'site' && parsed.name === 'workerPolyfillEnabled') {
         hasSiteChange = true
+        if (change.newValue) workerPolyfillSites.add(parsed.origin)
+        else workerPolyfillSites.delete(parsed.origin)
       }
     }
-    if (hasSiteChange) refreshWorkerPolyfillSites()
+    if (hasSiteChange) {
+      workerPolyfillSitesRevision++
+      refreshWorkerPolyfillSites()
+    }
     if (Object.keys(patch).length === 0) return
     settings.set(patch)
     if ('hidePageAction' in patch) {
