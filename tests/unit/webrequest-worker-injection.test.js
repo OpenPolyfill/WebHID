@@ -189,3 +189,13 @@ test('worker injection preserves directives after use strict', async () => {
   assert.ok(output.indexOf('/* worker polyfill */') < output.indexOf('runWorker();'))
   assert.doesNotThrow(() => new Script(output))
 })
+
+test('worker injection passes through invalid directive prefixes', async () => {
+  const script = '"use strict" /* unfinished'
+  const bytes = new TextEncoder().encode(script)
+  const harness = loadWebRequest()
+  const filter = await sendWorkerScript(harness, [bytes])
+  await filter.done
+
+  assert.deepEqual([...filter.output()], [...bytes])
+})

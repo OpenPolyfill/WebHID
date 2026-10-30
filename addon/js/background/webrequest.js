@@ -354,13 +354,13 @@
             writeBuffered()
             return
           }
-          const { insertionOffset } = parseWorkerSource(sourceText, ended)
-          if (insertionOffset === null) return
-          if (insertionOffset === undefined) {
+          const parsed = parseWorkerSource(sourceText, ended)
+          if (parsed.state === 'pending') return
+          if (parsed.state === 'invalid') {
             writeBuffered()
             return
           }
-          const rawPrefix = enc.encode(sourceText.slice(0, insertionOffset))
+          const rawPrefix = enc.encode(sourceText.slice(0, parsed.insertionOffset))
           if (!matchesRawPrefix(rawPrefix)) {
             writeBuffered()
             return

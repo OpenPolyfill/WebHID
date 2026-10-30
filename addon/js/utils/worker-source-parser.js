@@ -2,15 +2,32 @@
   const webhid = globalThis.webhid
 
   /**
+   * Failure reasons returned while parsing a worker source prefix.
+   * @typedef {'unterminated-comment'|'unterminated-string'|'invalid-escape'|'invalid-syntax'|'unsupported-syntax'} WorkerSourceParseReason
+   */
+
+  /**
+   * Result of parsing a cumulative worker source buffer.
+   * @typedef {{state: 'ready', insertionOffset: number}|{state: 'pending'}|{state: 'invalid', reason: WorkerSourceParseReason}} WorkerSourceParseResult
+   */
+
+  /**
    * Finds a safe insertion offset after the worker script's directive prologue.
    * @param {string} source
    * @param {boolean} [eof=true]
-   * @returns {{insertionOffset: number|null|undefined}}
+   * @returns {WorkerSourceParseResult}
    */
   function parseWorkerSource(source, eof = true) {
-    const pending = { insertionOffset: null }
-    const invalid = { insertionOffset: undefined }
+    const pending = { state: 'pending' }
+    const invalid = (reason) => ({ state: 'invalid', reason })
+    const ready = (insertionOffset) => ({ state: 'ready', insertionOffset })
     const isLineBreak = (ch) => ch === '\n' || ch === '\r' || ch === '\u2028' || ch === '\u2029'
+    const isHexDigit = (ch) => {
+      if (ch === undefined) return false
+      const code = ch.charCodeAt(0)
+      return (code >= 48 && code <= 57) || (code >= 65 && code <= 70) || (code >= 97 && code <= 102)
+    }
+    const isUnsupportedSyntax = (ch) => ch === '@' || ch === '#'
 
     const skipTrivia = (start) => {
       let index = start
@@ -40,7 +57,7 @@
 
         if (source.startsWith('/*', index)) {
           const end = source.indexOf('*/', index + 2)
-          if (end === -1) return eof ? { invalid: true } : { pending: true }
+          if (end === -1) return eof ? invalid('unterminated-comment') : pending
           for (let cursor = index + 2; cursor < end; cursor++) {
             if (isLineBreak(source[cursor])) newline = lineStart = true
           }
@@ -57,27 +74,74 @@
               ch === '#' &&
               index + 1 === source.length))
         ) {
-          return { pending: true }
+          return pending
         }
         break
       }
 
-      if (!eof && index === source.length) return { pending: true }
+      if (!eof && index === source.length) return pending
       return { index, newline }
     }
 
     const readStringLiteral = (start) => {
       const quote = source[start]
       if (quote !== '"' && quote !== "'") return null
+
       for (let index = start + 1; index < source.length; index++) {
         if (source[index] === quote) return index + 1
-        if (isLineBreak(source[index])) return 'invalid'
-        if (source[index] === '\\') {
-          index++
-          if (source[index] === '\r' && source[index + 1] === '\n') index++
+        if (isLineBreak(source[index])) return invalid('invalid-syntax')
+        if (source[index] !== '\\') continue
+
+        const escapeIndex = index + 1
+        const escaped = source[escapeIndex]
+        if (escaped === undefined) return eof ? invalid('unterminated-string') : pending
+
+        if (escaped === 'x') {
+          for (let cursor = escapeIndex + 1; cursor < escapeIndex + 3; cursor++) {
+            if (cursor >= source.length) return eof ? invalid('invalid-escape') : pending
+            if (!isHexDigit(source[cursor])) return invalid('invalid-escape')
+          }
+          index = escapeIndex + 2
+          continue
         }
+
+        if (escaped === 'u') {
+          const brace = escapeIndex + 1
+          if (source[brace] === '{') {
+            let cursor = brace + 1
+            let digits = 0
+            let codePoint = 0
+            while (cursor < source.length && isHexDigit(source[cursor])) {
+              digits++
+              codePoint = codePoint * 16 + Number.parseInt(source[cursor], 16)
+              cursor++
+            }
+            if (cursor === source.length) return eof ? invalid('invalid-escape') : pending
+            if (source[cursor] !== '}' || digits === 0 || digits > 6 || codePoint > 0x10ffff) {
+              return invalid('invalid-escape')
+            }
+            index = cursor
+            continue
+          }
+
+          for (let cursor = brace; cursor < brace + 4; cursor++) {
+            if (cursor >= source.length) return eof ? invalid('invalid-escape') : pending
+            if (!isHexDigit(source[cursor])) return invalid('invalid-escape')
+          }
+          index = brace + 3
+          continue
+        }
+
+        if (isLineBreak(escaped)) {
+          index =
+            escaped === '\r' && source[escapeIndex + 1] === '\n' ? escapeIndex + 1 : escapeIndex
+          continue
+        }
+
+        index = escapeIndex
       }
-      return eof ? 'invalid' : 'pending'
+
+      return eof ? invalid('unterminated-string') : pending
     }
 
     const isIdentifierPart = (ch) => {
@@ -99,13 +163,13 @@
 
     const scanAfterLiteral = (start) => {
       const next = skipTrivia(start)
-      if (next.pending) return { kind: 'pending' }
-      if (next.invalid) return { kind: 'invalid' }
+      if (next.state) return next
       const { index, newline } = next
       const ch = source[index]
       if (ch === undefined) return { kind: 'eof', index }
       if (ch === ';') return { kind: 'semicolon', index }
       if (ch === '}') return { kind: 'right-brace', index }
+      if (isUnsupportedSyntax(ch)) return invalid('unsupported-syntax')
 
       if (!eof && newline) {
         const remainder = source.slice(index)
@@ -116,21 +180,21 @@
           'in'.startsWith(remainder) ||
           'instanceof'.startsWith(remainder)
         ) {
-          return { kind: 'pending' }
+          return pending
         }
-        if (remainder === 'in' || remainder === 'instanceof') {
-          return { kind: 'pending' }
-        }
+        if (remainder === 'in' || remainder === 'instanceof') return pending
       }
+
+      if (!eof && ch === '!' && index + 1 === source.length) return pending
 
       const pair = source.slice(index, index + 2)
       let kind = 'other'
       if (pair === '++' || pair === '--') {
-        kind = newline ? 'other' : 'continuation'
+        if (!newline) return invalid('invalid-syntax')
       } else if (ch === '!') {
         if (source[index + 1] === '=') kind = 'continuation'
       } else if (pair === '=>') {
-        kind = 'other'
+        return invalid('invalid-syntax')
       } else if (
         ch === '+' ||
         ch === '-' ||
@@ -159,16 +223,15 @@
 
     const expressionStatement = (start) => {
       const literalEnd = readStringLiteral(start)
-      if (literalEnd === 'pending') return 'pending'
-      if (literalEnd === 'invalid') return 'invalid'
-      if (literalEnd === null) return null
+      if (literalEnd === null || literalEnd.state) return literalEnd
+
       const token = scanAfterLiteral(literalEnd)
-      if (token.kind === 'pending') return 'pending'
-      if (token.kind === 'invalid') return 'invalid'
+      if (token.state) return token
       if (token.kind === 'continuation') return null
       if (token.kind === 'semicolon') {
         return { literalEnd, statementEnd: token.index + 1 }
       }
+      if (token.kind === 'other' && !token.newline) return invalid('invalid-syntax')
       if (token.kind === 'eof' || token.kind === 'right-brace' || token.newline) {
         return { literalEnd, statementEnd: literalEnd }
       }
@@ -178,15 +241,16 @@
     let index = 0
     while (true) {
       const next = skipTrivia(index)
-      if (next.pending) return pending
-      if (next.invalid) return invalid
-      if (next.index >= source.length) {
-        return { insertionOffset: next.index }
-      }
+      if (next.state) return next
+      if (next.index >= source.length) return ready(next.index)
+
       const statement = expressionStatement(next.index)
-      if (statement === 'pending') return pending
-      if (statement === 'invalid') return invalid
-      if (!statement) return { insertionOffset: next.index }
+      if (statement === null) {
+        return isUnsupportedSyntax(source[next.index])
+          ? invalid('unsupported-syntax')
+          : ready(next.index)
+      }
+      if (statement.state) return statement
       index = statement.statementEnd
     }
   }

@@ -148,7 +148,7 @@ export function loadWebRequest({ siteSettings = Promise.resolve({}) } = {}) {
     workerPolyfillEnabled: true,
     workerSpawnMode: 'blob'
   })
-  return { listeners, filters, workerPolyfillSites }
+  return { listeners, filters, workerPolyfillSites, parseWorkerSource: exports.parseWorkerSource }
 }
 
 export function listenerFor(listeners, name, type) {
