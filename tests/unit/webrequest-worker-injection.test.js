@@ -68,7 +68,7 @@ test('worker comment opener split after slash waits for the next chunk', async (
 
   const output = new TextDecoder().decode(filter.output())
   assert.ok(output.startsWith('"use strict"\n/* comment */'))
-  assert.ok(output.indexOf('/* worker polyfill */') > output.indexOf('/* comment */'))
+  assert.ok(output.indexOf('/* comment */') < output.indexOf('/* worker polyfill */'))
   assert.doesNotThrow(() => new Script(output))
   assert.ok(output.endsWith('runWorker();'))
 })
@@ -133,3 +133,59 @@ for (const operator of ['==', '!=']) {
     assert.ok(output.endsWith(script))
   })
 }
+
+test('worker injection preserves a leading hashbang without a strict directive', async () => {
+  const script = '#!/usr/bin/env node\nrunWorker();'
+  const harness = loadWebRequest()
+  const filter = await sendWorkerScript(harness, [new TextEncoder().encode(script)])
+  await filter.done
+
+  const output = new TextDecoder().decode(filter.output())
+  assert.ok(output.startsWith('#!/usr/bin/env node\n'))
+  assert.ok(output.indexOf('/* worker polyfill */') < output.indexOf('runWorker();'))
+  assert.doesNotThrow(() => new Script(output))
+  assert.ok(output.endsWith(script.slice(script.indexOf('runWorker();'))))
+})
+
+test('worker injection retains preceding directives and comments before use strict', async () => {
+  const script = '\'custom\';\n// before strict\n"use strict" /* before semicolon */;\nrunWorker();'
+  const strictStart = script.indexOf('"use strict"')
+  const strictEnd = script.indexOf(';', strictStart) + 1
+  const harness = loadWebRequest()
+  const filter = await sendWorkerScript(harness, [new TextEncoder().encode(script)])
+  await filter.done
+
+  const output = new TextDecoder().decode(filter.output())
+  assert.ok(output.startsWith(script.slice(0, strictEnd)))
+  assert.ok(output.indexOf('/* worker polyfill */') > output.indexOf('"use strict";'))
+  assert.doesNotThrow(() => new Script(output))
+  assert.ok(output.endsWith('runWorker();'))
+})
+
+test('worker injection preserves custom directives without use strict', async () => {
+  const script = '"use asm";\n"custom";\nrunWorker();'
+  const directiveEnd = script.indexOf('"custom";') + '"custom";'.length
+  const harness = loadWebRequest()
+  const filter = await sendWorkerScript(harness, [new TextEncoder().encode(script)])
+  await filter.done
+
+  const output = new TextDecoder().decode(filter.output())
+  assert.ok(output.startsWith(script.slice(0, directiveEnd)))
+  assert.ok(output.indexOf('"custom";') < output.indexOf('/* worker polyfill */'))
+  assert.ok(output.indexOf('/* worker polyfill */') < output.indexOf('runWorker();'))
+  assert.doesNotThrow(() => new Script(output))
+})
+
+test('worker injection preserves directives after use strict', async () => {
+  const script = '"use strict";\n"custom";\nrunWorker();'
+  const prologueEnd = script.indexOf('runWorker();')
+  const harness = loadWebRequest()
+  const filter = await sendWorkerScript(harness, [new TextEncoder().encode(script)])
+  await filter.done
+
+  const output = new TextDecoder().decode(filter.output())
+  assert.ok(output.startsWith(script.slice(0, prologueEnd)))
+  assert.ok(output.indexOf('"custom";') < output.indexOf('/* worker polyfill */'))
+  assert.ok(output.indexOf('/* worker polyfill */') < output.indexOf('runWorker();'))
+  assert.doesNotThrow(() => new Script(output))
+})

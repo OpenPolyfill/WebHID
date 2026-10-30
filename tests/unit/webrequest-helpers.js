@@ -5,6 +5,10 @@ const source = readFileSync(
   new URL('../../addon/js/background/webrequest.js', import.meta.url),
   'utf8'
 )
+const parserSource = readFileSync(
+  new URL('../../addon/js/utils/worker-source-parser.js', import.meta.url),
+  'utf8'
+)
 
 export function deferred() {
   let resolve
@@ -56,7 +60,8 @@ export function loadWebRequest({ siteSettings = Promise.resolve({}) } = {}) {
           disconnected: false,
           done,
           write(data) {
-            this.writes.push(Uint8Array.from(data))
+            const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : Uint8Array.from(data)
+            this.writes.push(bytes)
           },
           close() {
             this.closed = true
@@ -117,8 +122,9 @@ export function loadWebRequest({ siteSettings = Promise.resolve({}) } = {}) {
   }
   const webhid = {
     import(name) {
-      if (!(name in imports)) throw new Error('unexpected import: ' + name)
-      return imports[name]
+      if (name in imports) return imports[name]
+      if (name in exports) return exports[name]
+      throw new Error('unexpected import: ' + name)
     },
     export(name, value) {
       exports[name] = value
@@ -136,6 +142,7 @@ export function loadWebRequest({ siteSettings = Promise.resolve({}) } = {}) {
     Promise
   }
   context.globalThis = context
+  runInNewContext(parserSource, context)
   runInNewContext(source, context)
   exports.registerWebRequestHandlers({
     workerPolyfillEnabled: true,

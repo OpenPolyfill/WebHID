@@ -15,6 +15,7 @@
     allowInlineScript
   } = webhid.import('bgCsp')
   const loadSiteSettings = webhid.import('loadSiteSettings')
+  const parseWorkerSource = webhid.import('parseWorkerSource')
   const bundleFiles = webhid.import('bundleFiles')
 
   const isMv2 = browser.runtime.getManifest().manifest_version === 2
@@ -227,138 +228,6 @@
   }
 
   /**
-   * Finds the end of a JavaScript directive prologue without treating text in
-   * comments or compound string expressions as directives.
-   * @param {string} source
-   * @param {boolean} eof
-   * @returns {{offset: number, invalid?: boolean}|null}
-   */
-  function workerDirectivePrologue(source, eof) {
-    const isLineTerminator = (char) =>
-      char === '\n' || char === '\r' || char === '\u2028' || char === '\u2029'
-    const skipTrivia = (start) => {
-      let index = start
-      let lineTerminator = false
-      while (index < source.length) {
-        if (/\s/.test(source[index]) || source[index] === '\uFEFF') {
-          if (isLineTerminator(source[index])) lineTerminator = true
-          index++
-          continue
-        }
-        const lineStart = index === 0 || isLineTerminator(source[index - 1])
-        const hashbangStart =
-          source.startsWith('#!', index) &&
-          (index === 0 || (index === 1 && source.charCodeAt(0) === 0xfeff))
-        const htmlCommentStart =
-          lineStart && (source.startsWith('<!--', index) || source.startsWith('-->', index))
-        if (source.startsWith('//', index) || hashbangStart || htmlCommentStart) {
-          const prefixLength = source.startsWith('<!--', index)
-            ? 4
-            : source.startsWith('-->', index)
-              ? 3
-              : 2
-          let end = index + prefixLength
-          while (end < source.length && !isLineTerminator(source[end])) end++
-          if (end === source.length && !eof) return null
-          if (end < source.length) {
-            lineTerminator = true
-            if (source[end] === '\r' && source[end + 1] === '\n') end++
-            index = end + 1
-          } else {
-            index = end
-          }
-          continue
-        }
-        if (source.startsWith('/*', index)) {
-          const end = source.indexOf('*/', index + 2)
-          if (end === -1) return eof ? { invalid: true } : null
-          if (/[\r\n\u2028\u2029]/.test(source.slice(index + 2, end))) {
-            lineTerminator = true
-          }
-          index = end + 2
-          continue
-        }
-        break
-      }
-      return { index, lineTerminator }
-    }
-
-    let index = 0
-    while (true) {
-      const trivia = skipTrivia(index)
-      if (!trivia || trivia.invalid) return trivia
-      const start = trivia.index
-      if (start === source.length) return eof ? { offset: start } : null
-      const quote = source[start]
-      if (quote !== '"' && quote !== "'") return { offset: start }
-
-      let end = start + 1
-      let validString = true
-      while (end < source.length && source[end] !== quote) {
-        if (isLineTerminator(source[end])) {
-          validString = false
-          break
-        }
-        if (source[end] === '\\') {
-          end++
-          if (end === source.length) break
-          if (source[end] === '\r' && source[end + 1] === '\n') end++
-        }
-        end++
-      }
-      if (!validString) return { offset: start }
-      if (end === source.length || source[end] !== quote) {
-        return eof ? { invalid: true } : null
-      }
-
-      const directiveEnd = end + 1
-      const after = skipTrivia(directiveEnd)
-      if (!after || after.invalid) return after
-      if (after.index < source.length && source[after.index] === ';') {
-        index = after.index + 1
-        continue
-      }
-      if (after.index === source.length) {
-        if (!eof) return null
-        return { offset: after.index }
-      }
-      if (after.lineTerminator) {
-        const nextToken = source.slice(after.index)
-        const nextChar = nextToken[0]
-        const nextPair = nextToken.slice(0, 2)
-        const wordMayContinue = /^[A-Za-z_$][\w$]*$/.test(nextToken)
-        const htmlCommentMayContinue =
-          (after.index === 0 || isLineTerminator(source[after.index - 1])) &&
-          '<!--'.startsWith(nextToken)
-        if (
-          !eof &&
-          (nextToken === '/' ||
-            nextToken === '+' ||
-            nextToken === '-' ||
-            nextToken === '=' ||
-            nextToken === '!' ||
-            (wordMayContinue &&
-              ('in'.startsWith(nextToken) || 'instanceof'.startsWith(nextToken))) ||
-            htmlCommentMayContinue)
-        ) {
-          return null
-        }
-        const expressionContinues =
-          (nextChar === '+' && nextPair !== '++') ||
-          (nextChar === '-' && nextPair !== '--') ||
-          '*/%<>&|^?,.[(`'.includes(nextChar) ||
-          nextPair === '==' ||
-          nextPair === '!=' ||
-          /^(?:in|instanceof)\b/.test(nextToken)
-        if (expressionContinues) return { offset: start }
-        index = directiveEnd
-        continue
-      }
-      return { offset: start }
-    }
-  }
-
-  /**
    * Prefixes the opt-in worker-polyfill bundle into dedicated worker scripts
    * when workerPolyfillEnabled is on. It waits for destination metadata before
    * deciding, since response data can arrive before onBeforeSendHeaders.
@@ -485,13 +354,13 @@
             writeBuffered()
             return
           }
-          const prologue = workerDirectivePrologue(sourceText, ended)
-          if (!prologue) return
-          if (prologue.invalid) {
+          const { insertionOffset } = parseWorkerSource(sourceText, ended)
+          if (insertionOffset === null) return
+          if (insertionOffset === undefined) {
             writeBuffered()
             return
           }
-          const rawPrefix = enc.encode(sourceText.slice(0, prologue.offset))
+          const rawPrefix = enc.encode(sourceText.slice(0, insertionOffset))
           if (!matchesRawPrefix(rawPrefix)) {
             writeBuffered()
             return
@@ -551,7 +420,6 @@
     }
     return {}
   }
-
 
   /**
    * Rewrites an in-document CSP `<meta>` tag in place when the worker spawn
@@ -882,9 +750,7 @@
     if (a.kind === 'all') return b
     if (b.kind === 'all') return a
     const origins = a.origins.filter((o) => b.origins.includes(o))
-    return origins.length
-      ? { kind: 'list', origins }
-      : { kind: 'none', origins: [] }
+    return origins.length ? { kind: 'list', origins } : { kind: 'none', origins: [] }
   }
 
   /**
