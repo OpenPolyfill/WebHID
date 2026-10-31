@@ -21,7 +21,15 @@ export default defineConfig({
       name: 'firefox-conformance-wpt',
       testDir: './conformance/wpt',
       workers: 1,
-      use: { browserName: 'firefox' }
+      use: {
+        browserName: 'firefox',
+        launchOptions: {
+          firefoxUserPrefs: {
+            'browser.cache.disk.enable': false,
+            'browser.cache.memory.enable': false
+          }
+        }
+      }
     },
     {
       name: 'firefox-conformance-chromium-internal',
