@@ -95,7 +95,46 @@ export const test = createHarnessFixtures(base).extend<BrowserTestFixtures, Brow
           [settingKey]
         )
       }
-      await use()
+      if (workerPolyfillEnabled) {
+        await extension.background!.evaluate(() => {
+          const scope = globalThis as unknown as {
+            webhid: {
+              import(name: string): {
+                applyLevel(level: number): void
+                debug(...args: unknown[]): void
+              }
+            }
+            __workerPolyfillDiagnostics?: unknown[][]
+          }
+          const logger = scope.webhid.import('logger')
+          const diagnostics: unknown[][] = []
+          scope.__workerPolyfillDiagnostics = diagnostics
+          logger.applyLevel(3)
+          const originalDebug = logger.debug.bind(logger)
+          logger.debug = (...args) => {
+            if (typeof args[0] === 'string' && args[0].startsWith('worker ')) {
+              diagnostics.push(args)
+            }
+            originalDebug(...args)
+          }
+        })
+      }
+      try {
+        await use()
+      } finally {
+        if (workerPolyfillEnabled) {
+          const diagnostics = await extension.background!.evaluate(() => {
+            return (
+              globalThis as unknown as {
+                __workerPolyfillDiagnostics?: unknown[][]
+              }
+            ).__workerPolyfillDiagnostics
+          })
+          if (diagnostics?.length) {
+            console.log('WPT worker polyfill diagnostics', JSON.stringify(diagnostics))
+          }
+        }
+      }
     },
     { auto: true }
   ],

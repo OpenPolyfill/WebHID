@@ -244,7 +244,16 @@
     } catch {
       void 0
     }
-    if (!settings.workerPolyfillEnabled && (!origin || !workerPolyfillSites.has(origin))) return
+    const siteEnabled = origin !== null && workerPolyfillSites.has(origin)
+    if (!settings.workerPolyfillEnabled && !siteEnabled) {
+      logger.debug('worker polyfill skipped because disabled', {
+        url: details.url,
+        origin,
+        workerPolyfillEnabled: settings.workerPolyfillEnabled,
+        siteEnabled
+      })
+      return
+    }
 
     let resolveDestination
     const destinationReady = new Promise((resolve) => {
@@ -349,6 +358,14 @@
             return
           }
           const { isWorkerScope, bundle } = await setup()
+          logger.debug('worker polyfill setup decision', {
+            url: details.url,
+            destination: record.dest,
+            workerPolyfillEnabled: settings.workerPolyfillEnabled,
+            siteEnabled: origin !== null && workerPolyfillSites.has(origin),
+            isWorkerScope,
+            bundleAvailable: Boolean(bundle)
+          })
           if (phase !== 'buffering') return
           if (!isWorkerScope || !bundle) {
             writeBuffered()
@@ -370,6 +387,11 @@
             writeBuffered()
             return
           }
+          logger.debug('worker polyfill inserted', {
+            url: details.url,
+            destination: record.dest,
+            insertionOffset: parsed.insertionOffset
+          })
           writeWithBundle(rawPrefix.byteLength, bundle)
         })
         .catch((error) => {

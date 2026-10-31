@@ -151,6 +151,7 @@
   }
 
   const settings = createSettingsStore(GLOBAL_DEFAULTS)
+  logger.bindSettings(settings)
 
   /**
    * Returns the NM host name based on the daemonAsNmHost setting.
