@@ -2,7 +2,7 @@
 
 rustPlatform.buildRustPackage (finalAttrs: {
   pname = "webhid";
-  version = "3.3.0";
+  version = "3.3.1";
 
   # Release tarball pinned by its SHA-256; refresh with
   # `npm run refresh:pins` after each release.

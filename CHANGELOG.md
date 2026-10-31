@@ -2,12 +2,51 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
-## Unreleased
+## [3.3.1](https://github.com/OpenPolyfill/WebHID/compare/v3.3.0...v3.3.1) (2026-10-31)
+
+### Features
+
+* priviledge device picker ([d9ce53e](https://github.com/OpenPolyfill/WebHID/commit/d9ce53e2b6ce5050a078dbe59388f0e10ed596fd))
 
 ### Bug Fixes
 
-* **addon:** wait for worker script destination before injecting the worker polyfill
+* **addon:** accept Unicode line separators in worker strings ([f0f070c](https://github.com/OpenPolyfill/WebHID/commit/f0f070c6ee8c49a33ca7d8083fc636b183eed436))
+* **addon:** guard stale scriptDest cleanup ([35d0b42](https://github.com/OpenPolyfill/WebHID/commit/35d0b42c77e8c3276210e6f8c35542cdeb6e13f1))
+* **addon:** preserve worker directive prologues ([8326893](https://github.com/OpenPolyfill/WebHID/commit/8326893ad5734d0fe74f4b97b88b428aa5208a6e))
+* **addon:** update worker site settings synchronously ([78c28c3](https://github.com/OpenPolyfill/WebHID/commit/78c28c3ca5fe95980519f8e3ff0ecb9285597925))
+* cargo deny ([57065ed](https://github.com/OpenPolyfill/WebHID/commit/57065ed44ff8e35df7c4ca958f647a4274f1cd53))
+* close sessions from timed-out opens ([0c19d7b](https://github.com/OpenPolyfill/WebHID/commit/0c19d7b6ab1262e30b789b46a4866ac8ec31e7dc))
+* defer incomplete worker prologue tokens ([ed6dad0](https://github.com/OpenPolyfill/WebHID/commit/ed6dad03dcd4117766df06607f1e2f690bca3d1e))
+* handle ArrayBuffer response chunks ([f06dc4a](https://github.com/OpenPolyfill/WebHID/commit/f06dc4a4ea9225bade6f3be0a3f750baafd5cf72))
+* **nm:** write complete forwarded frames ([b39f62f](https://github.com/OpenPolyfill/WebHID/commit/b39f62fda4855b6338dd7c584b48d4d31847342b))
+* preserve continued worker string expressions ([3ad660d](https://github.com/OpenPolyfill/WebHID/commit/3ad660dea564cce16f9665fcf737b92c384fdf40))
+* preserve CSP response tail ([0d06cf6](https://github.com/OpenPolyfill/WebHID/commit/0d06cf691b19175f4c31f3d3437238ff186a1c77))
+* preserve worker source during injection ([a320cac](https://github.com/OpenPolyfill/WebHID/commit/a320caceb651c569c2119758d0ff59998d72be98))
+* restore packed report dispatch ([ea13c3c](https://github.com/OpenPolyfill/WebHID/commit/ea13c3cabd29d0f207386ad5b6f191b3aa6abfa3))
+* stabilize worker polyfill routing under Local Mode ([ce20af7](https://github.com/OpenPolyfill/WebHID/commit/ce20af76beb0edee42681fce93a4cf6f3cda1e3f))
 
+### Code Refactoring
+
+* **addon:** discriminate worker parser results ([c15a764](https://github.com/OpenPolyfill/WebHID/commit/c15a764c4ae8de5e412477c6c94c928b155960e0))
+* **tests:** simplify Playwright helpers ([af3d00d](https://github.com/OpenPolyfill/WebHID/commit/af3d00d6cde15e159dd3551289f86d041dda3f96))
+* **tests:** unify static response fixtures ([097f773](https://github.com/OpenPolyfill/WebHID/commit/097f773fb9817e358eb5b0a2529ebaaf63459cc6))
+* **tests:** use harness 0.3.1 evaluators ([3d3348b](https://github.com/OpenPolyfill/WebHID/commit/3d3348b2ddcf51cab4b04680c91168a386a86061))
+* **tests:** use harness native messaging hosts ([0d4d369](https://github.com/OpenPolyfill/WebHID/commit/0d4d369b452fbc6ac5709add1ac6161c4d9cb52f))
+
+### CI/CD
+
+* cache UHID kernel modules ([a35e83c](https://github.com/OpenPolyfill/WebHID/commit/a35e83cb7829500b85890d67dbd9d298b66111a2))
+* fix 3000 chars limit ([26c355a](https://github.com/OpenPolyfill/WebHID/commit/26c355afa26b5cad90007dbb2998bae7b18fdf06))
+
+### Chores
+
+* **addon:** add worker injection diagnostics ([44e1527](https://github.com/OpenPolyfill/WebHID/commit/44e152701771fe44a0b95f96feaabc31af30b713))
+* **addon:** default enable worker polyfill ([13ea375](https://github.com/OpenPolyfill/WebHID/commit/13ea375034597220c6bf6b275fb57fdd53708cd8))
+* **addon:** log invalid worker parser failures ([3367440](https://github.com/OpenPolyfill/WebHID/commit/336744017ab8707f500d80c5f3faae81146327b6))
+* **addon:** trace scriptDest record generations ([da79f62](https://github.com/OpenPolyfill/WebHID/commit/da79f62e75a7f1efb3e823e6311c9177d6992e32))
+* **addon:** trace worker destination events ([74cbb76](https://github.com/OpenPolyfill/WebHID/commit/74cbb762398a4abcd364ded9f2ff86934de85e56))
+* **tests:** remove Chromium benchmark infrastructure ([2198f0c](https://github.com/OpenPolyfill/WebHID/commit/2198f0c3be6588eff393ea6238b91b6cc050c0a0))
+* upgrade to harness v0.5.1 ([16544e8](https://github.com/OpenPolyfill/WebHID/commit/16544e86bba3c19f2b4bbc8a2ddb9d4b6d089d68))
 ## [3.3.0](https://github.com/OpenPolyfill/WebHID/compare/v3.2.0...v3.3.0) (2026-10-22)
 
 ### Features
