@@ -113,7 +113,7 @@
   }
 
   /**
-   * Logs and removes the record currently keyed by requestId.
+   * Logs a deletion attempt and removes the record only if it is still current.
    * @param {string} requestId
    * @param {object|undefined} record
    * @param {string} reason
@@ -122,6 +122,7 @@
    */
   function deleteScriptDest(requestId, record, reason, url) {
     const current = scriptDest.get(requestId)
+    const recordMatches = Boolean(record) && current === record
     if (logger.level >= 3) {
       logger.debug('worker scriptDest delete', {
         requestId,
@@ -129,10 +130,11 @@
         reason,
         generation: record ? record.generation : null,
         currentGeneration: current ? current.generation : null,
-        recordMatches: Boolean(record) && current === record
+        recordMatches,
+        deleted: recordMatches
       })
     }
-    scriptDest.delete(requestId)
+    if (recordMatches) scriptDest.delete(requestId)
   }
 
   /** True when Firefox sends Fetch Metadata request headers. */

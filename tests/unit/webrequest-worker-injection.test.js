@@ -303,7 +303,7 @@ test('worker request diagnostics distinguish headers arriving after filter.onsto
   assert.equal(diagnostics[2][1].secFetchDest, 'worker')
 })
 
-test('scriptDest generations log stale filter cleanup attempts', async () => {
+test('stale filter.onerror cannot delete a newer scriptDest generation', async () => {
   const harness = loadWebRequest()
   const details = {
     requestId: 'reused-request',
@@ -311,20 +311,27 @@ test('scriptDest generations log stale filter cleanup attempts', async () => {
     url: 'https://example.test/worker.js'
   }
   const onBeforeRequest = harness.listeners.get('onBeforeRequest')[0].listener
+  const onBeforeSendHeaders = harness.listeners.get('onBeforeSendHeaders')[0].listener
   onBeforeRequest(details)
   const oldFilter = harness.filters.get(details.requestId)
   onBeforeRequest(details)
+  const currentFilter = harness.filters.get(details.requestId)
 
   const setLogs = harness.debugLogs.filter(([message]) => message === 'worker scriptDest set')
   assert.equal(setLogs.length, 2)
   const oldGeneration = setLogs[0][1].generation
-  const newGeneration = setLogs[1][1].generation
-  assert.notEqual(oldGeneration, newGeneration)
+  const currentGeneration = setLogs[1][1].generation
+  assert.notEqual(oldGeneration, currentGeneration)
   assert.equal(setLogs[0][1].reason, 'handleInjection')
   assert.equal(setLogs[1][1].replacedGeneration, oldGeneration)
 
   oldFilter.onerror()
   await oldFilter.done
+  onBeforeSendHeaders({
+    requestId: details.requestId,
+    url: details.url,
+    requestHeaders: [{ name: 'Sec-Fetch-Dest', value: 'worker' }]
+  })
 
   const staleDelete = harness.debugLogs.find(
     ([message, data]) =>
@@ -333,6 +340,16 @@ test('scriptDest generations log stale filter cleanup attempts', async () => {
       data.generation === oldGeneration
   )
   assert.ok(staleDelete)
-  assert.equal(staleDelete[1].currentGeneration, newGeneration)
+  assert.equal(staleDelete[1].currentGeneration, currentGeneration)
   assert.equal(staleDelete[1].recordMatches, false)
+  assert.equal(staleDelete[1].deleted, false)
+
+  const headerDiagnostic = harness.debugLogs.find(
+    ([message]) => message === 'worker request onBeforeSendHeaders'
+  )
+  assert.equal(headerDiagnostic[1].recordGeneration, currentGeneration)
+  assert.equal(headerDiagnostic[1].recordFound, true)
+
+  currentFilter.onerror()
+  await currentFilter.done
 })
