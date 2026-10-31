@@ -17,6 +17,30 @@
   const frameEndpoints = new Map()
   const workerPolyfillSites = new Set()
   const shadowArms = new Map()
+
+  /** `${tabId}:${frameId}` -> the current CSP navigation request. */
+  const cspFrameNavigations = new Map()
+  /** Serializes CSP storage operations for each tab. */
+  const cspStorageQueues = new Map()
+  const cspNavigationGenerationField = '__webhidNavigationGeneration'
+  const cspNavigationDocumentIdField = '__webhidDocumentId'
+
+  /**
+   * Runs CSP session-storage operations in order for a tab.
+   * @param {number} tabId
+   * @param {() => Promise<*>} operation
+   * @returns {Promise<*>}
+   */
+  function enqueueCspStorage(tabId, operation) {
+    const previous = cspStorageQueues.get(tabId) || Promise.resolve()
+    const current = previous.catch(() => {}).then(operation)
+    cspStorageQueues.set(tabId, current)
+    const clear = () => {
+      if (cspStorageQueues.get(tabId) === current) cspStorageQueues.delete(tabId)
+    }
+    current.then(clear, clear)
+    return current
+  }
   const pageActionVisibility = {
     hidePageAction: false,
     usedTabs: new Set(),
@@ -87,6 +111,11 @@
     pageActionVisibility,
     pendingPicker,
     workerPolyfillSites,
-    shadowArms
+    shadowArms,
+    cspFrameNavigations,
+    cspStorageQueues,
+    cspNavigationGenerationField,
+    cspNavigationDocumentIdField,
+    enqueueCspStorage
   })
 })()

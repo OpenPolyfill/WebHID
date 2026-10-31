@@ -2,8 +2,16 @@
   const webhid = globalThis.webhid
   const logger = webhid.import('logger')
   const isChromium = webhid.import('isChromium')
-  const { workerPolyfillSites, permissionsPolicy, frameDelegations, shadowArms } =
-    webhid.import('bgState')
+  const {
+    workerPolyfillSites,
+    permissionsPolicy,
+    frameDelegations,
+    shadowArms,
+    cspFrameNavigations,
+    enqueueCspStorage,
+    cspNavigationGenerationField,
+    cspNavigationDocumentIdField
+  } = webhid.import('bgState')
   const { ensureWorkerBundle, ensureWorkerPolyfillBundle } = webhid.import('bgBundle')
   const {
     parseCspForWorkerSpawn,
@@ -141,6 +149,93 @@
   let fetchMetadataSupported = true
   /** Resolves after the current Firefox version is known. */
   let browserInfoReady = Promise.resolve()
+
+  /**
+   * @param {object} details
+   * @returns {string}
+   */
+  function cspFrameNavigationKey(details) {
+    return `${details.tabId}:${details.frameId}`
+  }
+
+  /**
+   * @param {object} details
+   * @returns {{requestId: string, url: string, generation: number, documentId: string|null}}
+   */
+  function beginCspNavigation(details) {
+    const key = cspFrameNavigationKey(details)
+    const previous = cspFrameNavigations.get(key)
+    const navigation = {
+      requestId: details.requestId,
+      url: details.url,
+      generation: (previous ? previous.generation : 0) + 1,
+      documentId: null
+    }
+    cspFrameNavigations.set(key, navigation)
+    return navigation
+  }
+
+  /**
+   * @param {object} details
+   * @returns {{requestId: string, url: string, generation: number, documentId: string|null}|null}
+   */
+  function currentCspNavigation(details) {
+    if (details.tabId === undefined || details.frameId === undefined) return null
+    const navigation = cspFrameNavigations.get(cspFrameNavigationKey(details))
+    return navigation &&
+      navigation.requestId === details.requestId &&
+      navigation.url === details.url
+      ? navigation
+      : null
+  }
+
+  /**
+   * @param {object} details
+   * @param {{requestId: string, url: string, generation: number, documentId: string|null}|null} navigation
+   * @returns {boolean}
+   */
+  function isCurrentCspNavigation(details, navigation) {
+    return (
+      navigation != null &&
+      navigation.requestId === details.requestId &&
+      navigation.url === details.url &&
+      cspFrameNavigations.get(cspFrameNavigationKey(details)) === navigation
+    )
+  }
+
+  /**
+   * Starts tracking a response when the background began observing after its
+   * onBeforeRequest event. Never replace an already-tracked, different request.
+   * @param {object} details
+   * @returns {{requestId: string, url: string, generation: number, documentId: string|null}|null}
+   */
+  function navigationForResponse(details) {
+    if (details.tabId === undefined || details.frameId === undefined) return null
+    const current = currentCspNavigation(details)
+    if (current) return current
+    const key = cspFrameNavigationKey(details)
+    if (cspFrameNavigations.has(key)) return null
+    const navigation = beginCspNavigation(details)
+    clearFrameCspSession(details, navigation).catch(() => {})
+    return navigation
+  }
+
+  /**
+   * Clears CSP entries from older documents in one frame.
+   * @param {object} details
+   * @param {{requestId: string, url: string, generation: number, documentId: string|null}} navigation
+   * @returns {Promise<void>}
+   */
+  function clearFrameCspSession(details, navigation) {
+    const prefix = `csp:${details.tabId}:${details.frameId}:`
+    return enqueueCspStorage(details.tabId, async () => {
+      if (!isCurrentCspNavigation(details, navigation)) return
+      const all = await browser.storage.session.get(null)
+      if (!isCurrentCspNavigation(details, navigation)) return
+      const keys = Object.keys(all).filter((key) => key.startsWith(prefix))
+      if (keys.length) await browser.storage.session.remove(keys)
+    })
+  }
 
   /**
    * Resolves a script's destination metadata once request headers are available.
@@ -513,9 +608,10 @@
    * needs a blob fallback, and records the analyzed policy for the bridge.
    * @param {object} details
    * @param {{workerSpawnMode: string}} settings
+   * @param {{requestId: string, url: string, generation: number, documentId: string|null}|null} navigation
    * @returns {void}
    */
-  function handleMetaCsp(details, settings) {
+  function handleMetaCsp(details, settings, navigation) {
     const filter = browser.webRequest.filterResponseData(details.requestId)
     const enc = new TextEncoder()
     const scanDecoder = new TextDecoder('utf-8', { ignoreBOM: true })
@@ -645,32 +741,41 @@
           return tag.replace(contentMatch[0], 'content=' + (quote || '"') + value + (quote || '"'))
         })
 
-        if (metaInfos.length) {
+        if (metaInfos.length && navigation) {
           const key = `csp:${frameKey(details.tabId, details.frameId, origin)}`
-          browser.storage.session
-            .get(key)
-            .then((r) => {
-              const existing = r[key]
-              const merged = {
-                workerSrc: metaInfos[0].workerSrc ?? existing?.workerSrc,
-                connectSrc: metaInfos[0].connectSrc ?? existing?.connectSrc,
-                workerSrcBlocked:
-                  metaInfos.some((i) => i.workerSrcBlocked) || !!existing?.workerSrcBlocked,
-                connectSrcBlocked:
-                  metaInfos.some((i) => i.connectSrcBlocked) || !!existing?.connectSrcBlocked,
-                hasTrustedTypesRequire:
-                  metaInfos.some((i) => i.hasTrustedTypesRequire) ||
-                  !!existing?.hasTrustedTypesRequire,
-                shadowBlocked: metaInfos.some((i) => i.shadowBlocked) || !!existing?.shadowBlocked,
-                metaShadowBlocked:
-                  metaInfos.some((i) => i.shadowBlocked) || !!existing?.metaShadowBlocked,
-                headerShadowBlocked: !!existing?.headerShadowBlocked,
-                needsBlobFallback:
-                  metaInfos.some((i) => i.needsBlobFallback) || !!existing?.needsBlobFallback
-              }
-              browser.storage.session.set({ [key]: merged }).catch(() => {})
-            })
-            .catch(() => {})
+          enqueueCspStorage(details.tabId, async () => {
+            if (!isCurrentCspNavigation(details, navigation)) return
+            const result = await browser.storage.session.get(key)
+            if (!isCurrentCspNavigation(details, navigation)) return
+            const stored = result[key]
+            const existing =
+              stored &&
+              stored[cspNavigationGenerationField] === navigation.generation &&
+              (navigation.documentId == null ||
+                stored[cspNavigationDocumentIdField] === navigation.documentId)
+                ? stored
+                : null
+            const merged = {
+              workerSrc: metaInfos[0].workerSrc ?? existing?.workerSrc,
+              connectSrc: metaInfos[0].connectSrc ?? existing?.connectSrc,
+              workerSrcBlocked:
+                metaInfos.some((i) => i.workerSrcBlocked) || !!existing?.workerSrcBlocked,
+              connectSrcBlocked:
+                metaInfos.some((i) => i.connectSrcBlocked) || !!existing?.connectSrcBlocked,
+              hasTrustedTypesRequire:
+                metaInfos.some((i) => i.hasTrustedTypesRequire) ||
+                !!existing?.hasTrustedTypesRequire,
+              shadowBlocked: metaInfos.some((i) => i.shadowBlocked) || !!existing?.shadowBlocked,
+              metaShadowBlocked:
+                metaInfos.some((i) => i.shadowBlocked) || !!existing?.metaShadowBlocked,
+              headerShadowBlocked: !!existing?.headerShadowBlocked,
+              needsBlobFallback:
+                metaInfos.some((i) => i.needsBlobFallback) || !!existing?.needsBlobFallback,
+              [cspNavigationGenerationField]: navigation.generation,
+              [cspNavigationDocumentIdField]: navigation.documentId
+            }
+            await browser.storage.session.set({ [key]: merged })
+          }).catch(() => {})
         }
 
         if (!anyChange) {
@@ -751,6 +856,10 @@
 
     const origin = urlOrigin(details.url)
     const key = `csp:${frameKey(details.tabId, details.frameId, origin)}`
+    const navigation = navigationForResponse(details)
+    if (navigation && typeof details.documentId === 'string') {
+      navigation.documentId = details.documentId
+    }
 
     const siteSpawnMode = await resolveSiteSpawnMode(origin, settings)
 
@@ -775,12 +884,24 @@
       }
       if (!modified && headers !== details.responseHeaders) modified = headers
     }
-    if (cspInfo) {
-      browser.storage.session
-        .set({ [key]: cspInfo })
-        .catch((e) => logger.debug('csp session store failed', e))
-    } else {
-      browser.storage.session.remove(key).catch(() => {})
+    if (navigation) {
+      try {
+        await enqueueCspStorage(details.tabId, async () => {
+          if (!isCurrentCspNavigation(details, navigation)) return
+          if (cspInfo) {
+            const stored = {
+              ...cspInfo,
+              [cspNavigationGenerationField]: navigation.generation,
+              [cspNavigationDocumentIdField]: navigation.documentId
+            }
+            await browser.storage.session.set({ [key]: stored })
+          } else {
+            await browser.storage.session.remove(key)
+          }
+        })
+      } catch (e) {
+        logger.debug('csp session store failed', e)
+      }
     }
     return modified
   }
@@ -1074,7 +1195,14 @@
     browser.webRequest.onBeforeRequest.addListener(
       (details) => {
         if (details.type !== 'main_frame' && details.type !== 'sub_frame') return
-        handleMetaCsp(details, settings)
+        let navigation = null
+        if (details.tabId !== undefined && details.frameId !== undefined) {
+          navigation = beginCspNavigation(details)
+          if (details.type === 'main_frame') clearPolicyTab(details.tabId)
+          else clearPolicyFrame(details.tabId, details.frameId)
+          clearFrameCspSession(details, navigation).catch(() => {})
+        }
+        handleMetaCsp(details, settings, navigation)
       },
       { urls: ['<all_urls>'], types: ['main_frame', 'sub_frame'] },
       ['blocking']
@@ -1120,23 +1248,6 @@
       },
       { urls: ['<all_urls>'], types: ['main_frame', 'sub_frame'] },
       ['blocking', 'responseHeaders']
-    )
-
-    browser.webRequest.onBeforeRequest.addListener(
-      (details) => {
-        if (details.tabId === undefined || details.frameId === undefined) return
-        if (details.type === 'main_frame') clearPolicyTab(details.tabId)
-        else clearPolicyFrame(details.tabId, details.frameId)
-        const key = `${details.tabId}:${details.frameId}`
-        browser.storage.session
-          .get(null)
-          .then((all) => {
-            const keys = Object.keys(all).filter((k) => k.startsWith(`csp:${key}:`))
-            if (keys.length) browser.storage.session.remove(keys).catch(() => {})
-          })
-          .catch(() => {})
-      },
-      { urls: ['<all_urls>'], types: ['main_frame', 'sub_frame'] }
     )
   }
 

@@ -12,8 +12,14 @@
   const saveGlobalSetting = webhid.import('saveGlobalSetting')
   logger.initLogger('bg')
 
-  const { workerPolyfillSites, pendingPicker, shadowArms, pageActionVisibility } =
-    webhid.import('bgState')
+  const {
+    workerPolyfillSites,
+    pendingPicker,
+    shadowArms,
+    pageActionVisibility,
+    cspFrameNavigations,
+    enqueueCspStorage
+  } = webhid.import('bgState')
   const { openDb, txDone } = webhid.import('bgStorage')
   const { purgeTab, retryOrphanCleanup } = webhid.import('bgStateOps')
   const NativeMessaging = webhid.import('NativeMessaging')
@@ -299,10 +305,19 @@
 
   browser.tabs.onRemoved.addListener((tabId) => {
     pageActionVisibility.clearTab(tabId)
-    browser.storage.session.get(null).then((all) => {
-      const keys = Object.keys(all).filter((k) => k.startsWith(`csp:${tabId}:`))
-      if (keys.length) browser.storage.session.remove(keys).catch(() => {})
-    })
+    const framePrefix = `${tabId}:`
+    for (const key of cspFrameNavigations.keys()) {
+      if (key.startsWith(framePrefix)) cspFrameNavigations.delete(key)
+    }
+    enqueueCspStorage(tabId, async () => {
+      const hasCurrentFrames = () =>
+        [...cspFrameNavigations.keys()].some((key) => key.startsWith(framePrefix))
+      if (hasCurrentFrames()) return
+      const all = await browser.storage.session.get(null)
+      if (hasCurrentFrames()) return
+      const keys = Object.keys(all).filter((key) => key.startsWith(`csp:${tabId}:`))
+      if (keys.length) await browser.storage.session.remove(keys)
+    }).catch(() => {})
   })
 
   registerWebRequestHandlers(settings)

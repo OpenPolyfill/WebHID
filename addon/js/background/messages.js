@@ -14,7 +14,11 @@
     permissionsPolicy,
     frameDelegations,
     frameEndpoints,
-    pageActionVisibility
+    pageActionVisibility,
+    cspFrameNavigations,
+    enqueueCspStorage,
+    cspNavigationGenerationField,
+    cspNavigationDocumentIdField
   } = webhid.import('bgState')
   const {
     saveDeviceInfoBatch,
@@ -1400,11 +1404,50 @@
       sendResponse(null)
       return false
     }
-    const key = `csp:${frameKey(tabId, sender.frameId ?? 0, documentUrlOrigin)}`
-    browser.storage.session
-      .get(key)
-      .then((r) => sendResponse(r[key] ?? null))
-      .catch(() => sendResponse(null))
+    const frameId = sender.frameId ?? 0
+    const navigationKey = `${tabId}:${frameId}`
+    const navigation = cspFrameNavigations.get(navigationKey) || null
+    const senderDocumentId =
+      typeof sender.documentId === 'string' && sender.documentId ? sender.documentId : null
+    if (navigation?.documentId && senderDocumentId && navigation.documentId !== senderDocumentId) {
+      sendResponse(null)
+      return false
+    }
+    const key = `csp:${frameKey(tabId, frameId, documentUrlOrigin)}`
+    enqueueCspStorage(tabId, async () => {
+      if ((cspFrameNavigations.get(navigationKey) || null) !== navigation) {
+        sendResponse(null)
+        return
+      }
+      const result = await browser.storage.session.get(key)
+      if ((cspFrameNavigations.get(navigationKey) || null) !== navigation) {
+        sendResponse(null)
+        return
+      }
+      const stored = result[key]
+      if (!stored) {
+        sendResponse(null)
+        return
+      }
+      if (navigation && stored[cspNavigationGenerationField] !== navigation.generation) {
+        sendResponse(null)
+        return
+      }
+      if (
+        senderDocumentId &&
+        stored[cspNavigationDocumentIdField] &&
+        senderDocumentId !== stored[cspNavigationDocumentIdField]
+      ) {
+        sendResponse(null)
+        return
+      }
+      const {
+        [cspNavigationGenerationField]: _generation,
+        [cspNavigationDocumentIdField]: _documentId,
+        ...cspInfo
+      } = stored
+      sendResponse(cspInfo)
+    }).catch(() => sendResponse(null))
     return true
   }
 
