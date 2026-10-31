@@ -224,3 +224,81 @@ for (const separator of ['\u2028', '\u2029']) {
     assert.doesNotThrow(() => new Script(output))
   })
 }
+test('worker request diagnostics capture the request, headers, and stop state', async () => {
+  const harness = loadWebRequest()
+  const filter = await sendWorkerScript(harness, [new TextEncoder().encode('runWorker();')])
+  await filter.done
+
+  const diagnostics = harness.debugLogs.filter(([message]) => message.startsWith('worker request '))
+  assert.deepEqual(
+    diagnostics.map(([message]) => message),
+    [
+      'worker request onBeforeRequest',
+      'worker request onBeforeSendHeaders',
+      'worker request filter.onstop'
+    ]
+  )
+  assert.equal(diagnostics[0][1].requestId, 'worker-request')
+  assert.equal(diagnostics[0][1].url, 'https://example.test/worker.js')
+  assert.equal(diagnostics[1][1].requestId, 'worker-request')
+  assert.equal(diagnostics[1][1].url, 'https://example.test/worker.js')
+  assert.equal(diagnostics[1][1].recordFound, true)
+  assert.equal(diagnostics[1][1].secFetchDest, 'worker')
+  assert.equal(diagnostics[2][1].destinationResolved, true)
+  assert.equal(diagnostics[2][1].dest, 'worker')
+})
+
+test('worker request diagnostics record a missing request record', () => {
+  const harness = loadWebRequest()
+  const details = {
+    requestId: 'missing-record',
+    url: 'https://example.test/worker.js',
+    requestHeaders: [{ name: 'Sec-Fetch-Dest', value: 'worker' }]
+  }
+  const listener = harness.listeners.get('onBeforeSendHeaders')[0].listener
+
+  listener(details)
+
+  const diagnostic = harness.debugLogs.find(
+    ([message]) => message === 'worker request onBeforeSendHeaders'
+  )
+  assert.equal(diagnostic[1].requestId, 'missing-record')
+  assert.equal(diagnostic[1].url, 'https://example.test/worker.js')
+  assert.equal(diagnostic[1].recordFound, false)
+  assert.equal(diagnostic[1].secFetchDest, 'worker')
+})
+
+test('worker request diagnostics distinguish headers arriving after filter.onstop', async () => {
+  const harness = loadWebRequest()
+  const details = {
+    requestId: 'late-headers',
+    type: 'script',
+    url: 'https://example.test/worker.js'
+  }
+  const onBeforeRequest = harness.listeners.get('onBeforeRequest')[0].listener
+  const onBeforeSendHeaders = harness.listeners.get('onBeforeSendHeaders')[0].listener
+  onBeforeRequest(details)
+  const filter = harness.filters.get(details.requestId)
+
+  filter.onstop()
+  onBeforeSendHeaders({
+    requestId: details.requestId,
+    url: details.url,
+    requestHeaders: [{ name: 'Sec-Fetch-Dest', value: 'worker' }]
+  })
+  await filter.done
+
+  const diagnostics = harness.debugLogs.filter(([message]) => message.startsWith('worker request '))
+  assert.deepEqual(
+    diagnostics.map(([message]) => message),
+    [
+      'worker request onBeforeRequest',
+      'worker request filter.onstop',
+      'worker request onBeforeSendHeaders'
+    ]
+  )
+  assert.equal(diagnostics[1][1].destinationResolved, false)
+  assert.equal(diagnostics[1][1].dest, null)
+  assert.equal(diagnostics[2][1].recordFound, true)
+  assert.equal(diagnostics[2][1].secFetchDest, 'worker')
+})

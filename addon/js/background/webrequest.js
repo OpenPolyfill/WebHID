@@ -416,6 +416,14 @@
       evaluateBuffered()
     }
     filter.onstop = () => {
+      if (logger.level >= 3) {
+        logger.debug('worker request filter.onstop', {
+          requestId: details.requestId,
+          url: details.url,
+          destinationResolved: record.destinationResolved,
+          dest: record.dest
+        })
+      }
       resolveScriptDestination(record)
       ended = true
       if (!invalidUtf8) {
@@ -938,11 +946,20 @@
     browser.webRequest.onBeforeSendHeaders.addListener(
       (details) => {
         const record = scriptDest.get(details.requestId)
-        if (!record) return
         const header = (details.requestHeaders || []).find(
           (h) => h.name.toLowerCase() === 'sec-fetch-dest'
         )
-        record.dest = header && header.value ? header.value : null
+        const secFetchDest = header && header.value ? header.value : null
+        if (logger.level >= 3) {
+          logger.debug('worker request onBeforeSendHeaders', {
+            requestId: details.requestId,
+            url: details.url,
+            recordFound: Boolean(record),
+            secFetchDest
+          })
+        }
+        if (!record) return
+        record.dest = secFetchDest
         resolveScriptDestination(record)
         if (!record.shadow || record.dest !== 'worker') return
         const headers = details.requestHeaders || (details.requestHeaders = [])
@@ -972,6 +989,12 @@
       (details) => {
         if (details.type !== 'script') return
         const urlKey = stripFragment(details.url)
+        if (logger.level >= 3) {
+          logger.debug('worker request onBeforeRequest', {
+            requestId: details.requestId,
+            url: details.url
+          })
+        }
         if (shadowRedirectTargets.has(urlKey)) {
           shadowRedirectTargets.delete(urlKey)
           return handleShadowUrl(details)

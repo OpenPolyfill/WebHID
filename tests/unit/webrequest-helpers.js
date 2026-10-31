@@ -90,6 +90,7 @@ export function loadWebRequest({ siteSettings = Promise.resolve({}) } = {}) {
   }
   const imports = {
     logger: {
+      level: 3,
       debug(...args) {
         debugLogs.push(args)
       },
@@ -181,6 +182,7 @@ export async function sendWorkerScript(harness, chunks) {
     'script'
   )({
     requestId: details.requestId,
+    url: details.url,
     requestHeaders: [{ name: 'Sec-Fetch-Dest', value: 'worker' }]
   })
   const filter = harness.filters.get(details.requestId)
