@@ -357,6 +357,11 @@
           const parsed = parseWorkerSource(sourceText, ended)
           if (parsed.state === 'pending') return
           if (parsed.state === 'invalid') {
+            logger.debug('worker source parser rejected an invalid prefix', {
+              reason: parsed.reason,
+              sourceSnippet: sourceText.slice(0, 512),
+              truncated: sourceText.length > 512
+            })
             writeBuffered()
             return
           }
