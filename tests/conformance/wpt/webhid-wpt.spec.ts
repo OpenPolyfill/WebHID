@@ -27,6 +27,9 @@ interface WptWindow extends Window {
 
 async function runWptPage(page: Page, url: string): Promise<void> {
   await page.goto(url, { waitUntil: 'load', timeout: 30000 })
+  await page.waitForFunction(() => typeof navigator.hid !== 'undefined', null, {
+    timeout: 15000
+  })
   await page.waitForFunction(() => window.tests?.results.wpt !== undefined, null, {
     timeout: 90000
   })
