@@ -199,3 +199,21 @@ test('worker injection passes through invalid directive prefixes', async () => {
 
   assert.deepEqual([...filter.output()], [...bytes])
 })
+
+for (const separator of ['\u2028', '\u2029']) {
+  test(`worker injection preserves literal line separator ${separator.codePointAt(0).toString(16)}`, async () => {
+    const literal = `"hello${separator}world";`
+    const script = `"use strict";\n${literal}\nrunWorker();`
+    const prologueEnd = script.indexOf('runWorker();')
+    const harness = loadWebRequest()
+    const filter = await sendWorkerScript(harness, [new TextEncoder().encode(script)])
+    await filter.done
+
+    const output = new TextDecoder().decode(filter.output())
+    const bundleIndex = output.indexOf('/* worker polyfill */')
+    assert.ok(output.startsWith(script.slice(0, prologueEnd)))
+    assert.ok(output.indexOf(literal) < bundleIndex)
+    assert.ok(bundleIndex < output.indexOf('runWorker();'))
+    assert.doesNotThrow(() => new Script(output))
+  })
+}

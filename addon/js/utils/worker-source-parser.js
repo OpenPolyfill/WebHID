@@ -89,7 +89,7 @@
 
       for (let index = start + 1; index < source.length; index++) {
         if (source[index] === quote) return index + 1
-        if (isLineBreak(source[index])) return invalid('invalid-syntax')
+        if (source[index] === '\n' || source[index] === '\r') return invalid('invalid-syntax')
         if (source[index] !== '\\') continue
 
         const escapeIndex = index + 1
