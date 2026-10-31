@@ -52,7 +52,7 @@
     daemonAsNmHost: false,
     hidePageAction: false,
     devicePickerMode: 'modal',
-    workerPolyfillEnabled: false,
+    workerPolyfillEnabled: true,
     workerSpawnMode: isChromium || isMv2 ? 'blob' : 'shadow',
     useWorker: true,
     allowActivationlessRequestDevice: false
