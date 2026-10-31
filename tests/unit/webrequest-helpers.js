@@ -23,7 +23,20 @@ export function loadWebRequest({ siteSettings = Promise.resolve({}) } = {}) {
   const listeners = new Map()
   const filters = new Map()
   const workerPolyfillSites = new Set()
+  const cspFrameNavigations = new Map()
+  const cspStorageQueues = new Map()
+  const sessionStore = new Map()
   const debugLogs = []
+  const enqueueCspStorage = (tabId, operation) => {
+    const previous = cspStorageQueues.get(tabId) || Promise.resolve()
+    const current = previous.catch(() => {}).then(operation)
+    cspStorageQueues.set(tabId, current)
+    const clear = () => {
+      if (cspStorageQueues.get(tabId) === current) cspStorageQueues.delete(tabId)
+    }
+    current.then(clear, clear)
+    return current
+  }
   const addListener = (name) => ({
     addListener(listener, filter) {
       const entries = listeners.get(name) || []
@@ -39,9 +52,23 @@ export function loadWebRequest({ siteSettings = Promise.resolve({}) } = {}) {
     },
     storage: {
       session: {
-        get: () => Promise.resolve({}),
-        set: () => Promise.resolve(),
-        remove: () => Promise.resolve()
+        get(keys) {
+          if (keys == null) return Promise.resolve(Object.fromEntries(sessionStore))
+          const requested = Array.isArray(keys) ? keys : [keys]
+          const result = {}
+          for (const key of requested) {
+            if (sessionStore.has(key)) result[key] = sessionStore.get(key)
+          }
+          return Promise.resolve(result)
+        },
+        set(values) {
+          for (const [key, value] of Object.entries(values)) sessionStore.set(key, value)
+          return Promise.resolve()
+        },
+        remove(keys) {
+          for (const key of Array.isArray(keys) ? keys : [keys]) sessionStore.delete(key)
+          return Promise.resolve()
+        }
       }
     },
     webRequest: {
@@ -102,7 +129,12 @@ export function loadWebRequest({ siteSettings = Promise.resolve({}) } = {}) {
       workerPolyfillSites,
       permissionsPolicy: new Map(),
       frameDelegations: new Map(),
-      shadowArms: new Map()
+      shadowArms: new Map(),
+      cspFrameNavigations,
+      cspStorageQueues,
+      cspNavigationGenerationField: '__webhidNavigationGeneration',
+      cspNavigationDocumentIdField: '__webhidDocumentId',
+      enqueueCspStorage
     },
     bgBundle: {
       ensureWorkerBundle: () => Promise.resolve(''),
@@ -125,7 +157,8 @@ export function loadWebRequest({ siteSettings = Promise.resolve({}) } = {}) {
       documentFrameKey: () => '',
       allowInlineScript: () => null
     },
-    loadSiteSettings: () => siteSettings,
+    loadSiteSettings: (origin) =>
+      typeof siteSettings === 'function' ? siteSettings(origin) : siteSettings,
     bundleFiles: { mv2MainWorld: [] }
   }
   const webhid = {
@@ -160,6 +193,8 @@ export function loadWebRequest({ siteSettings = Promise.resolve({}) } = {}) {
     listeners,
     filters,
     workerPolyfillSites,
+    cspFrameNavigations,
+    sessionStore,
     parseWorkerSource: exports.parseWorkerSource,
     debugLogs
   }
