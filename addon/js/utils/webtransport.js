@@ -80,40 +80,56 @@
     /** @type {boolean} */
     let failed = false
 
+    /** @type {number} */
+    let connectionGeneration = 0
+
     /**
-     * Marks the transport failed (write/attach error), tears it down, and
-     * forces a clean reconnect. The worker's onClosed handler rejects all
-     * pending requests, so a send that already reported success cannot
-     * leave the page hanging.
+     * @param {WebTransport} connection
+     * @param {number} generation
+     * @returns {boolean}
+     */
+    function isCurrentConnection(connection, generation) {
+      return connectionGeneration === generation && wt === connection
+    }
+
+    /**
+     * Marks the current connection failed (write/attach error), tears it down,
+     * and forces a clean reconnect.
      * @param {string} reason
+     * @param {WebTransport} connection
+     * @param {number} generation
      * @returns {void}
      */
-    function failTransport(reason) {
-      if (failed || !connectMsg) return
+    function failTransport(reason, connection, generation) {
+      if (!isCurrentConnection(connection, generation) || failed || !connectMsg) return
       failed = true
       log('warn', 'WT transport failed: ' + reason)
-      if (wt) {
-        try {
-          webTransportOps.close(wt)
-        } catch (e) {
-          log('debug', 'WT close after failure failed', e)
-        }
-        wt = null
+      if (authTimer) {
+        clearTimeout(authTimer)
+        authTimer = null
       }
+      wt = null
       open = false
       streamWriter = null
       streamReader = null
       closedHandled = true
+      try {
+        webTransportOps.close(connection)
+      } catch (e) {
+        log('debug', 'WT close after failure failed', e)
+      }
       if (opts.onClosed) opts.onClosed({ willReconnect: true })
-      scheduleReconnect()
+      scheduleReconnect(generation)
     }
 
     /**
+     * @param {WebTransport} connection
+     * @param {number} generation
      * @param {string|undefined} reason
      * @returns {void}
      */
-    function handleClosed(reason) {
-      if (closedHandled || !wt) return
+    function handleClosed(connection, generation, reason) {
+      if (!isCurrentConnection(connection, generation) || closedHandled) return
       closedHandled = true
       const authPending = authTimer !== null
       if (authTimer) {
@@ -134,32 +150,44 @@
       } else {
         log('debug', 'WT closed (reason=' + (reason || 'unknown') + ')')
         opts.onClosed && opts.onClosed({ willReconnect: true })
-        scheduleReconnect()
+        scheduleReconnect(generation)
       }
     }
 
-    /** @returns {void} */
-    function scheduleReconnect() {
-      if (!connectMsg || reconnectTimer) return
+    /**
+     * @param {number} generation
+     * @returns {void}
+     */
+    function scheduleReconnect(generation) {
+      if (!connectMsg || reconnectTimer || connectionGeneration !== generation || wt) return
       log('debug', 'scheduling WT reconnect in ' + reconnectDelay + 'ms')
-      reconnectTimer = setTimeout(() => {
+      const timer = setTimeout(() => {
+        if (reconnectTimer !== timer) return
         reconnectTimer = null
+        if (!connectMsg || connectionGeneration !== generation) return
         doConnect()
       }, reconnectDelay)
+      reconnectTimer = timer
       reconnectDelay = nativeMathMin(reconnectDelay * 2, 5000)
     }
 
     /**
      * @param {ReadableStream} stream
+     * @param {WebTransport} connection
+     * @param {number} generation
      * @returns {Promise<void>}
      */
-    async function readFrames(stream) {
+    async function readFrames(stream, connection, generation) {
+      let reader = null
       try {
-        const reader = readableStreamOps.getReader(stream.readable)
+        if (!isCurrentConnection(connection, generation)) return
+        reader = readableStreamOps.getReader(stream.readable)
+        if (!isCurrentConnection(connection, generation)) return
         streamReader = reader
         let buf = new Uint8Array(0)
         while (true) {
           const { value, done } = await readerOps.read(reader)
+          if (!isCurrentConnection(connection, generation)) return
           if (done) break
           if (!value) continue
           buf = concatBytes(buf, value instanceof Uint8Array ? value : new Uint8Array(value))
@@ -173,36 +201,63 @@
           }
         }
       } catch (e) {
-        log('debug', 'WT stream read error: ' + (e.message || e))
+        if (isCurrentConnection(connection, generation))
+          log('debug', 'WT stream read error: ' + (e.message || e))
       } finally {
-        streamReader = null
+        if (reader && streamReader === reader) streamReader = null
       }
     }
 
     /**
+     * @param {WebTransport} connection
+     * @param {number} generation
      * @returns {Promise<void>}
      */
-    async function attachStream() {
-      if (!wt) return
+    async function attachStream(connection, generation) {
+      if (!isCurrentConnection(connection, generation)) return
       try {
-        const stream = await webTransportOps.createBidirectionalStream(wt)
-        if (!wt) return
+        const stream = await webTransportOps.createBidirectionalStream(connection)
+        if (!isCurrentConnection(connection, generation)) return
         if (authTimer) {
           clearTimeout(authTimer)
           authTimer = null
         }
         streamWriter = writableStreamOps.getWriter(stream.writable)
         log('debug', 'WT persistent stream attached')
-        readFrames(stream)
+        readFrames(stream, connection, generation)
         opts.onReady && opts.onReady()
       } catch (e) {
-        failTransport('stream attach failed: ' + (e.message || e))
+        if (isCurrentConnection(connection, generation))
+          failTransport('stream attach failed: ' + (e.message || e), connection, generation)
       }
     }
 
     /** @returns {void} */
     function doConnect() {
       if (!connectMsg) return
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer)
+        reconnectTimer = null
+      }
+      const generation = ++connectionGeneration
+      const previous = wt
+      wt = null
+      open = false
+      streamWriter = null
+      streamReader = null
+      closedHandled = true
+      failed = false
+      if (authTimer) {
+        clearTimeout(authTimer)
+        authTimer = null
+      }
+      if (previous) {
+        try {
+          webTransportOps.close(previous)
+        } catch (e) {
+          log('debug', 'WT close before reconnect failed', e)
+        }
+      }
       const url = 'https://127.0.0.1:' + connectMsg.wtPort + '/' + connectMsg.token
       log('debug', 'WT connecting to ' + url)
       const wtOpts = {}
@@ -211,41 +266,50 @@
           { algorithm: 'sha-256', value: hexToBytes(connectMsg.wtCertHash) }
         ]
       }
-      closedHandled = false
-      failed = false
+      let connection
       try {
-        wt = new WebTransport(url, wtOpts)
+        connection = new WebTransport(url, wtOpts)
       } catch (e) {
         log('error', 'WT constructor threw: ' + (e.message || e))
-        wt = null
         closedHandled = true
         opts.onClosed && opts.onClosed()
         return
       }
-      const ready = webTransportGetters.ready(wt)
+      wt = connection
+      closedHandled = false
+      const ready = webTransportGetters.ready(connection)
       const readyHandled = promiseOps.then(ready, () => {
-        if (!wt) return
+        if (!isCurrentConnection(connection, generation)) return
         open = true
         reconnectDelay = 500
         log('debug', 'WT connected')
-        authTimer = setTimeout(() => {
+        const timer = setTimeout(() => {
+          if (!isCurrentConnection(connection, generation) || authTimer !== timer) return
           authTimer = null
         }, 1000)
-        attachStream()
+        authTimer = timer
+        attachStream(connection, generation)
       })
       promiseOps.catch(readyHandled, (e) => {
+        if (!isCurrentConnection(connection, generation)) return
         log('warn', 'WT ready rejected: ' + (e.message || e))
         closedHandled = true
         open = false
         wt = null
         streamWriter = null
         streamReader = null
+        if (authTimer) {
+          clearTimeout(authTimer)
+          authTimer = null
+        }
         opts.onAuthFailed && opts.onAuthFailed(0)
       })
-      const closed = webTransportGetters.closed(wt)
+      const closed = webTransportGetters.closed(connection)
       promiseOps.catch(
-        promiseOps.then(closed, (info) => handleClosed(info && info.reason)),
-        (e) => handleClosed(e && e.message)
+        promiseOps.then(closed, (info) =>
+          handleClosed(connection, generation, info && info.reason)
+        ),
+        (e) => handleClosed(connection, generation, e && e.message)
       )
     }
 
@@ -264,14 +328,17 @@
        * @returns {boolean}
        */
       send(frame) {
-        if (!wt || !open || !streamWriter) return false
+        const connection = wt
+        const generation = connectionGeneration
+        const writer = streamWriter
+        if (!connection || !open || !writer) return false
         const data = frame instanceof Uint8Array ? frame : new TextEncoder().encode(frame)
         const header = new Uint8Array(4)
         dataViewOps.setUint32(new DataView(header.buffer), 0, data.length, true)
         const onWriteError = (e) =>
-          failTransport('send failed: ' + (e && e.message ? e.message : e))
-        promiseOps.catch(writerOps.write(streamWriter, header), onWriteError)
-        promiseOps.catch(writerOps.write(streamWriter, data), onWriteError)
+          failTransport('send failed: ' + (e && e.message ? e.message : e), connection, generation)
+        promiseOps.catch(writerOps.write(writer, header), onWriteError)
+        promiseOps.catch(writerOps.write(writer, data), onWriteError)
         return true
       },
       /** @returns {boolean} */
@@ -283,6 +350,17 @@
         if (reconnectTimer) {
           clearTimeout(reconnectTimer)
           reconnectTimer = null
+        }
+        connectionGeneration++
+        const connection = wt
+        wt = null
+        open = false
+        closedHandled = true
+        failed = true
+        connectMsg = null
+        if (authTimer) {
+          clearTimeout(authTimer)
+          authTimer = null
         }
         if (streamReader) {
           try {
@@ -300,18 +378,13 @@
           }
           streamWriter = null
         }
-        if (authTimer) {
-          clearTimeout(authTimer)
-          authTimer = null
+        if (connection) {
+          try {
+            webTransportOps.close(connection)
+          } catch (e) {
+            log('debug', 'WT close during disconnect failed', e)
+          }
         }
-        if (wt) {
-          webTransportOps.close(wt)
-          wt = null
-        }
-        open = false
-        closedHandled = true
-        failed = true
-        connectMsg = null
         log('debug', 'disconnected by caller')
       }
     }
