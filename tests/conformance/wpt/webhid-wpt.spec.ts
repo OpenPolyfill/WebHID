@@ -1,8 +1,7 @@
 import { test, expect } from '../../helpers/browser.js'
 import type { Page } from '@playwright/test'
-import { getWebHidExtension } from '../../helpers/harness.js'
 
-const WORKER_SETTING = 'settings :: workerPolyfillEnabled'
+test.use({ workerPolyfillEnabled: true })
 
 interface WptTestResult {
   name: string
@@ -58,15 +57,7 @@ const wptCases = [
   }
 ] as const
 
-test('WPT WebHID Permissions Policy cases', async ({ extensions, page, wptUrl }) => {
-  const extension = getWebHidExtension(extensions)
-  // Initialize the extension background before enabling worker-script injection.
-  await extension.background!.evaluate((key) => browser.storage.local.get(key), [
-    WORKER_SETTING
-  ])
-  await extension.background!.evaluate((key) => browser.storage.local.set({ [key]: true }), [
-    WORKER_SETTING
-  ])
+test('WPT WebHID Permissions Policy cases', async ({ page, wptUrl }) => {
   await page.context().addInitScript(() => {
     if (window !== window.top) return
     const currentWindow = window as WptWindow

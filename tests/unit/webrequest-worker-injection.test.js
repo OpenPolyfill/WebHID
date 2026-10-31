@@ -190,7 +190,7 @@ test('worker injection preserves directives after use strict', async () => {
   assert.doesNotThrow(() => new Script(output))
 })
 
-test('worker injection passes through invalid directive prefixes', async () => {
+test('worker injection passes through invalid directive prefixes and logs the reason', async () => {
   const script = '"use strict" /* unfinished'
   const bytes = new TextEncoder().encode(script)
   const harness = loadWebRequest()
@@ -198,6 +198,13 @@ test('worker injection passes through invalid directive prefixes', async () => {
   await filter.done
 
   assert.deepEqual([...filter.output()], [...bytes])
+  const diagnostic = harness.debugLogs.find(
+    ([message]) => message === 'worker source parser rejected an invalid prefix'
+  )
+  assert.ok(diagnostic)
+  assert.equal(diagnostic[1].reason, 'unterminated-comment')
+  assert.equal(diagnostic[1].sourceSnippet, script)
+  assert.equal(diagnostic[1].truncated, false)
 })
 
 for (const separator of ['\u2028', '\u2029']) {

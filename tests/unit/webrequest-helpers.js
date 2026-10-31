@@ -23,6 +23,7 @@ export function loadWebRequest({ siteSettings = Promise.resolve({}) } = {}) {
   const listeners = new Map()
   const filters = new Map()
   const workerPolyfillSites = new Set()
+  const debugLogs = []
   const addListener = (name) => ({
     addListener(listener, filter) {
       const entries = listeners.get(name) || []
@@ -88,7 +89,13 @@ export function loadWebRequest({ siteSettings = Promise.resolve({}) } = {}) {
     }
   }
   const imports = {
-    logger: { debug() {}, warn() {}, error() {} },
+    logger: {
+      debug(...args) {
+        debugLogs.push(args)
+      },
+      warn() {},
+      error() {}
+    },
     isChromium: false,
     bgState: {
       workerPolyfillSites,
@@ -148,7 +155,13 @@ export function loadWebRequest({ siteSettings = Promise.resolve({}) } = {}) {
     workerPolyfillEnabled: true,
     workerSpawnMode: 'blob'
   })
-  return { listeners, filters, workerPolyfillSites, parseWorkerSource: exports.parseWorkerSource }
+  return {
+    listeners,
+    filters,
+    workerPolyfillSites,
+    parseWorkerSource: exports.parseWorkerSource,
+    debugLogs
+  }
 }
 
 export function listenerFor(listeners, name, type) {

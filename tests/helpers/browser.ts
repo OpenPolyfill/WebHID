@@ -18,12 +18,14 @@ interface BrowserTestFixtures {
 }
 
 interface BrowserWorkerFixtures {
+  workerPolyfillEnabled: boolean
   pageUrl: (path: string) => string
   crossUrl: (path: string) => string
   wptUrl: (path: string) => string
 }
 
 export const test = createHarnessFixtures(base).extend<BrowserTestFixtures, BrowserWorkerFixtures>({
+  workerPolyfillEnabled: [false, { scope: 'worker', option: true }],
   pageUrl: [
     async ({}, use) => {
       await use((path: string) => `${POLICY_ORIGIN}${path}`)
@@ -43,8 +45,9 @@ export const test = createHarnessFixtures(base).extend<BrowserTestFixtures, Brow
     { scope: 'worker' }
   ],
   browserSetup: [
-    async ({ extensions, page, context, pageUrl }, use) => {
-      await configureDaemonMode(getWebHidExtension(extensions), 'daemon-nm')
+    async ({ extensions, page, context, pageUrl, workerPolyfillEnabled }, use) => {
+      const extension = getWebHidExtension(extensions)
+      await configureDaemonMode(extension, 'daemon-nm')
       await context.route(
         (url) =>
           (url.origin === POLICY_ORIGIN || url.origin === CROSS_POLICY_ORIGIN) &&
@@ -65,6 +68,33 @@ export const test = createHarnessFixtures(base).extend<BrowserTestFixtures, Brow
         timeout: 15000
       })
       await waitForPermResult(page)
+      if (workerPolyfillEnabled) {
+        const settingKey = 'settings :: workerPolyfillEnabled'
+        await extension.background!.evaluate(
+          async (key: string) => {
+            const stored = (await browser.storage.local.get(key)) as Record<string, unknown>
+            const waitForValue = (value: boolean) =>
+              new Promise<void>((resolve, reject) => {
+                const onChanged = (
+                  changes: Record<string, { newValue?: unknown }>,
+                  area: string
+                ) => {
+                  if (area !== 'local' || changes[key]?.newValue !== value) return
+                  browser.storage.onChanged.removeListener(onChanged)
+                  resolve()
+                }
+                browser.storage.onChanged.addListener(onChanged)
+                browser.storage.local.set({ [key]: value }).catch((error: unknown) => {
+                  browser.storage.onChanged.removeListener(onChanged)
+                  reject(error instanceof Error ? error : new Error(String(error)))
+                })
+              })
+            if (stored[key] === true) await waitForValue(false)
+            await waitForValue(true)
+          },
+          [settingKey]
+        )
+      }
       await use()
     },
     { auto: true }
