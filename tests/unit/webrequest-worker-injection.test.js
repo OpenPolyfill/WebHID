@@ -302,3 +302,37 @@ test('worker request diagnostics distinguish headers arriving after filter.onsto
   assert.equal(diagnostics[2][1].recordFound, true)
   assert.equal(diagnostics[2][1].secFetchDest, 'worker')
 })
+
+test('scriptDest generations log stale filter cleanup attempts', async () => {
+  const harness = loadWebRequest()
+  const details = {
+    requestId: 'reused-request',
+    type: 'script',
+    url: 'https://example.test/worker.js'
+  }
+  const onBeforeRequest = harness.listeners.get('onBeforeRequest')[0].listener
+  onBeforeRequest(details)
+  const oldFilter = harness.filters.get(details.requestId)
+  onBeforeRequest(details)
+
+  const setLogs = harness.debugLogs.filter(([message]) => message === 'worker scriptDest set')
+  assert.equal(setLogs.length, 2)
+  const oldGeneration = setLogs[0][1].generation
+  const newGeneration = setLogs[1][1].generation
+  assert.notEqual(oldGeneration, newGeneration)
+  assert.equal(setLogs[0][1].reason, 'handleInjection')
+  assert.equal(setLogs[1][1].replacedGeneration, oldGeneration)
+
+  oldFilter.onerror()
+  await oldFilter.done
+
+  const staleDelete = harness.debugLogs.find(
+    ([message, data]) =>
+      message === 'worker scriptDest delete' &&
+      data.reason === 'filter.onerror' &&
+      data.generation === oldGeneration
+  )
+  assert.ok(staleDelete)
+  assert.equal(staleDelete[1].currentGeneration, newGeneration)
+  assert.equal(staleDelete[1].recordMatches, false)
+})

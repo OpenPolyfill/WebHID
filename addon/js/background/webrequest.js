@@ -79,6 +79,7 @@
   const shadowRedirectTargets = new Set()
 
   /** @type {Map<number, {
+   * generation: number,
    * dest: string|null,
    * shadow?: boolean,
    * destinationReady?: Promise<void>,
@@ -86,6 +87,54 @@
    * resolveDestination?: () => void
    * }>} */
   const scriptDest = new Map()
+  let nextScriptDestGeneration = 0
+
+  /**
+   * Stores a script destination record with a unique generation.
+   * @param {string} requestId
+   * @param {object} record
+   * @param {string} reason
+   * @param {string} url
+   * @returns {void}
+   */
+  function setScriptDest(requestId, record, reason, url) {
+    const previous = scriptDest.get(requestId)
+    record.generation = ++nextScriptDestGeneration
+    scriptDest.set(requestId, record)
+    if (logger.level >= 3) {
+      logger.debug('worker scriptDest set', {
+        requestId,
+        url,
+        reason,
+        generation: record.generation,
+        replacedGeneration: previous ? previous.generation : null
+      })
+    }
+  }
+
+  /**
+   * Logs and removes the record currently keyed by requestId.
+   * @param {string} requestId
+   * @param {object|undefined} record
+   * @param {string} reason
+   * @param {string} url
+   * @returns {void}
+   */
+  function deleteScriptDest(requestId, record, reason, url) {
+    const current = scriptDest.get(requestId)
+    if (logger.level >= 3) {
+      logger.debug('worker scriptDest delete', {
+        requestId,
+        url,
+        reason,
+        generation: record ? record.generation : null,
+        currentGeneration: current ? current.generation : null,
+        recordMatches: Boolean(record) && current === record
+      })
+    }
+    scriptDest.delete(requestId)
+  }
+
   /** True when Firefox sends Fetch Metadata request headers. */
   let fetchMetadataSupported = true
   /** Resolves after the current Firefox version is known. */
@@ -204,13 +253,13 @@
    */
   function handleShadowUrl(details) {
     const record = { dest: null, shadow: true }
-    scriptDest.set(details.requestId, record)
+    setScriptDest(details.requestId, record, 'handleShadowUrl', details.url)
     const filter = browser.webRequest.filterResponseData(details.requestId)
     const enc = new TextEncoder()
     filter.onstart = () => {
       if (record.dest !== null && record.dest !== 'worker') {
         filter.disconnect()
-        scriptDest.delete(details.requestId)
+        deleteScriptDest(details.requestId, record, 'shadow-non-worker', details.url)
         return
       }
       consumeShadowArm(details)
@@ -221,7 +270,7 @@
             enc.encode("self.postMessage({ type: 'error', error: 'worker bundle not ready' });")
           )
         filter.close()
-        scriptDest.delete(details.requestId)
+        deleteScriptDest(details.requestId, record, 'shadow-response-complete', details.url)
       })
     }
     return {}
@@ -265,7 +314,7 @@
       destinationResolved: false,
       resolveDestination
     }
-    scriptDest.set(details.requestId, record)
+    setScriptDest(details.requestId, record, 'handleInjection', details.url)
     const filter = browser.webRequest.filterResponseData(details.requestId)
     const enc = new TextEncoder()
     const dec = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
@@ -420,6 +469,7 @@
         logger.debug('worker request filter.onstop', {
           requestId: details.requestId,
           url: details.url,
+          recordGeneration: record.generation,
           destinationResolved: record.destinationResolved,
           dest: record.dest
         })
@@ -439,14 +489,14 @@
         if (phase !== 'done') {
           filter.close()
           phase = 'done'
-          scriptDest.delete(details.requestId)
+          deleteScriptDest(details.requestId, record, 'filter.onstop', details.url)
         }
       })
     }
     filter.onerror = () => {
       resolveScriptDestination(record)
       phase = 'done'
-      scriptDest.delete(details.requestId)
+      deleteScriptDest(details.requestId, record, 'filter.onerror', details.url)
       try {
         filter.close()
       } catch {
@@ -954,6 +1004,7 @@
           logger.debug('worker request onBeforeSendHeaders', {
             requestId: details.requestId,
             url: details.url,
+            recordGeneration: record ? record.generation : null,
             recordFound: Boolean(record),
             secFetchDest
           })
@@ -979,7 +1030,7 @@
         const record = scriptDest.get(details.requestId)
         if (!record || !record.shadow || !details.redirectUrl) return
         if (stripFragment(details.redirectUrl) === stripFragment(details.url)) return
-        scriptDest.delete(details.requestId)
+        deleteScriptDest(details.requestId, record, 'onBeforeRedirect', details.url)
         shadowRedirectTargets.add(stripFragment(details.redirectUrl))
       },
       { urls: ['<all_urls>'], types: ['script'] }
@@ -1013,7 +1064,7 @@
       (details) => {
         const record = scriptDest.get(details.requestId)
         resolveScriptDestination(record)
-        scriptDest.delete(details.requestId)
+        deleteScriptDest(details.requestId, record, 'onErrorOccurred', details.url)
       },
       { urls: ['<all_urls>'], types: ['script'] }
     )
