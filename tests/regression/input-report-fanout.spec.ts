@@ -114,6 +114,90 @@ test.describe.serial('OpenPolyfill input report fan-out', () => {
     }
   })
 
+  test('terminated worker releases its device session', async ({
+    page,
+    extensions,
+    vendorDevice
+  }) => {
+    const extension = getWebHidExtension(extensions)
+    const origin = new URL(page.url()).origin
+
+    try {
+      await prepareFanoutPage(page, extension, true)
+      await page.evaluate(async () => {
+        const worker = new Worker('/tests/pages/worker-open-session.js')
+        const testWindow = window as Window & {
+          cleanupWorker?: Worker
+          cleanupWorkerReportCount?: number
+        }
+        testWindow.cleanupWorker = worker
+        testWindow.cleanupWorkerReportCount = 0
+        const { promise, resolve, reject } = Promise.withResolvers<void>()
+        const timer = setTimeout(() => reject(new Error('worker did not open its device')), 15000)
+        worker.onmessage = (event: MessageEvent<{ type: string; message?: string }>) => {
+          if (event.data.type === 'ready') {
+            clearTimeout(timer)
+            resolve()
+          } else if (event.data.type === 'report') {
+            testWindow.cleanupWorkerReportCount = (testWindow.cleanupWorkerReportCount || 0) + 1
+          } else if (event.data.type === 'error') {
+            clearTimeout(timer)
+            reject(new Error(event.data.message || 'worker failed to open its device'))
+          }
+        }
+        worker.onerror = (event) => {
+          clearTimeout(timer)
+          reject(new Error(event.message))
+        }
+        worker.postMessage({ type: 'open' })
+        await promise
+      })
+      sendInput(vendorDevice, 1, PACKET)
+      await page.waitForFunction(
+        () =>
+          (window as Window & { cleanupWorkerReportCount?: number }).cleanupWorkerReportCount === 1,
+        undefined,
+        { timeout: 15000 }
+      )
+      await page.evaluate(() => {
+        const worker = (window as Window & { cleanupWorker?: Worker }).cleanupWorker
+        if (!worker) throw new Error('worker handle missing')
+        worker.terminate()
+      })
+      await expect
+        .poll(
+          () =>
+            extension.background!.evaluate(async () => {
+              const tabs = await browser.tabs.query({ active: true, currentWindow: true })
+              const tab = tabs[0]
+              if (!tab || tab.id == null) return []
+              const response = (await browser.tabs.sendMessage(tab.id, {
+                action: 'getOpenDeviceIds'
+              })) as { ids?: string[] } | null
+              return response?.ids || []
+            }),
+          { timeout: 15000 }
+        )
+        .toEqual([])
+    } finally {
+      await page.goto(`${origin}/tests/test-page.html`, { waitUntil: 'domcontentloaded' })
+      await page.waitForFunction(() => typeof navigator.hid !== 'undefined', undefined, {
+        timeout: 15000
+      })
+      await page.evaluate(async () => {
+        for (const device of await navigator.hid.getDevices()) {
+          if (device.opened) await device.close()
+          await device.forget()
+        }
+      })
+      await page.waitForFunction(
+        async () => (await navigator.hid.getDevices()).length === 0,
+        undefined,
+        { timeout: 15000 }
+      )
+    }
+  })
+
   test('frame replacement and removal do not duplicate parent reports', async ({
     page,
     extensions,

@@ -2509,7 +2509,15 @@
   async function handleWorkerPortRequest(data, ports, requestPort) {
     const p = ports && ports[0]
     const context = frameContextForPort(requestPort)
-    if (!p || !context) return
+    if (!p || !context) {
+      try {
+        if (p) p.close()
+      } catch (e) {
+        logger.debug('unregistered worker port cleanup failed', e)
+      }
+      replyToPage({ type: 'response', id: data.id, result: { s: 503 } })
+      return
+    }
     frameContextByPort.set(p, context)
     clientSessions.set(p, new Map())
     const clientKey = 'worker-' + ++nextFrameGeneration
@@ -2522,7 +2530,7 @@
     workerPorts.add(p)
     p.onmessage = (event) => dispatchPortMessage(p, event, null)
     if (typeof p.start === 'function') p.start()
-    requestPort.postMessage({
+    replyToPage({
       type: 'response',
       id: data.id,
       result: { ok: true, clientKey }
@@ -3145,35 +3153,34 @@
   /**
    * Cleans up sessions owned by a terminated worker client.
    * @param {object} data
+   * @param {MessagePort[]} _ports
    * @param {MessagePort} requestPort
    * @returns {Promise<void>}
    */
-  async function handleWorkerClientDestroyed(data, requestPort) {
+  async function handleWorkerClientDestroyed(data, _ports, requestPort) {
+    const respond = () => {
+      try {
+        replyToPage({ type: 'response', id: data.id, result: { s: 200 } })
+      } catch (e) {
+        logger.debug('worker client cleanup response failed', e)
+      }
+    }
     const context = frameContextForPort(requestPort)
     const clientKey = data.payload && data.payload.clientKey
-    if (!context || typeof clientKey !== 'string') return
+    if (!context || typeof clientKey !== 'string') {
+      respond()
+      return
+    }
     const workerPort = [...clientKeysByPort.entries()].find(
       ([port, key]) => key === clientKey && frameContextByPort.get(port) === context
     )?.[0]
-    if (!workerPort) return
-    const sessions = clientSessions.get(workerPort)
-    if (sessions) {
-      for (const [deviceId, token] of sessions) {
-        await sendBackgroundRequest(
-          {
-            action: 'close',
-            deviceId,
-            T: token,
-            origin: context.origin,
-            frameKey: context.key,
-            clientKey
-          },
-          context
-        ).catch(() => {})
-        await despawnDataPlane(context, deviceId, { clientKey })
-      }
-      sessions.clear()
+    if (!workerPort) {
+      respond()
+      return
     }
+    const sessions = clientSessions.get(workerPort)
+    const ownedSessions = sessions ? [...sessions] : []
+    if (sessions) sessions.clear()
     for (const [id, port] of requestPortMap) {
       if (port === workerPort) requestPortMap.delete(id)
     }
@@ -3190,6 +3197,25 @@
     if (workerPorts) {
       workerPorts.delete(workerPort)
       if (workerPorts.size === 0) workerPagePorts.delete(context)
+    }
+    respond()
+    for (const [deviceId, token] of ownedSessions) {
+      await sendBackgroundRequest(
+        {
+          action: 'close',
+          deviceId,
+          T: token,
+          origin: context.origin,
+          frameKey: context.key,
+          clientKey
+        },
+        context
+      ).catch((e) => logger.debug('worker session cleanup failed', e))
+      try {
+        await despawnDataPlane(context, deviceId, { clientKey, clientPort: workerPort })
+      } catch (e) {
+        logger.debug('worker data plane cleanup failed', e)
+      }
     }
   }
   /** @type {object} */

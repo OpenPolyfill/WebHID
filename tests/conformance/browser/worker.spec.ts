@@ -44,3 +44,46 @@ test('Dedicated Worker exposes WebHID APIs without requestDevice', async ({ work
     illegalConstructor: { ok: false, name: 'TypeError' }
   })
 })
+
+test('Terminating an unrelated dedicated Worker cleans up without a timeout warning', async ({
+  workerHidPage
+}) => {
+  const warnings: string[] = []
+  const onConsole = (message: { type: () => string; text: () => string }) => {
+    if (
+      message.type() === 'warning' &&
+      message.text().includes('sendRequest timeout: workerClientDestroyed')
+    ) {
+      warnings.push(message.text())
+    }
+  }
+  workerHidPage.on('console', onConsole)
+  try {
+    const result = await workerHidPage.evaluate(async () => {
+      const worker = new Worker(`/plain-worker.js?_=${Date.now()}`)
+      try {
+        const { promise, resolve, reject } = Promise.withResolvers<{
+          ready: boolean
+          hasNavigatorHid: boolean
+        }>()
+        const timer = setTimeout(() => reject(new Error('plain worker did not respond')), 5000)
+        worker.onmessage = (event: MessageEvent<{ ready: boolean; hasNavigatorHid: boolean }>) => {
+          clearTimeout(timer)
+          resolve(event.data)
+        }
+        worker.onerror = (event) => {
+          clearTimeout(timer)
+          reject(new Error(event.message))
+        }
+        return await promise
+      } finally {
+        worker.terminate()
+      }
+    })
+    expect(result).toEqual({ ready: true, hasNavigatorHid: true })
+    await workerHidPage.waitForTimeout(750)
+    expect(warnings).toEqual([])
+  } finally {
+    workerHidPage.off('console', onConsole)
+  }
+})
