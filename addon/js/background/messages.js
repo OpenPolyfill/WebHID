@@ -4,7 +4,6 @@
   const pristine = webhid.import('pristine')
   const http = webhid.import('http')
   const logger = webhid.import('logger')
-  const isChromium = webhid.import('isChromium')
   const decodeDeviceCollections = webhid.import('decodeDeviceCollections')
   const loadEffectiveSettings = webhid.import('loadEffectiveSettings')
   const persistentSiteScope = webhid.import('persistentSiteScope')
@@ -1309,7 +1308,7 @@
    */
   function handleShowPageAction(request, sender, sendResponse) {
     const tabId = sender.tab != null ? sender.tab.id : undefined
-    if (isChromium || !browser.pageAction || tabId == null) {
+    if (!browser.pageAction || tabId == null) {
       sendResponse({})
       return false
     }
@@ -1536,7 +1535,7 @@
    * @returns {void}
    */
   function restorePageAction(tabId) {
-    if (isChromium || !browser.pageAction || tabId == null) return
+    if (!browser.pageAction || tabId == null) return
     Promise.all([
       pageActionVisibility.reconcile(tabId),
       browser.pageAction.setIcon({ tabId, path: 'icons/gamepad.svg' }),
@@ -1556,7 +1555,6 @@
    * @returns {void}
    */
   function openPickerPageAction(tabId, origin) {
-    if (isChromium) return
     pageActionVisibility
       .reconcile(tabId)
       .then(() =>
@@ -1929,7 +1927,7 @@
     if (tabId == null && pendingPicker.size > 0) tabId = [...pendingPicker.keys()][0]
     const req = tabId != null ? pendingPicker.get(tabId) : null
     if (tabId != null) pendingPicker.delete(tabId)
-    if (req?.mode === 'pageAction' && !isChromium) {
+    if (req?.mode === 'pageAction') {
       restorePageAction(tabId)
       if (browser.notifications) browser.notifications.clear('webhid-picker').catch(() => {})
     }

@@ -10,22 +10,15 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const SRC = join(__dirname, '..', 'addon')
 const DIST = join(__dirname, '..', 'dist', 'addon')
 const EXPERIMENTAL_DIST = join(__dirname, '..', 'dist', 'addon-experimental')
-const CHROMIUM_DIST = join(__dirname, '..', 'dist', 'chromium')
 
 const args = parseArgs({
   args: process.argv.slice(2),
   options: {
     'manifest-version': { type: 'string', alias: 'mv' },
-    target: { type: 'string', alias: 't' },
     experimental: { type: 'boolean' }
   }
 })
 const MANIFEST_VERSION = args.values['manifest-version'] || process.env.MV || '3'
-const TARGET = args.values.target || process.env.TARGET || 'firefox'
-if (!['firefox', 'chromium'].includes(TARGET)) {
-  console.error(`Unknown TARGET '${TARGET}'; expected 'firefox' or 'chromium'`)
-  process.exit(1)
-}
 
 const TERSER_OPTS = {
   compress: true,
@@ -294,85 +287,7 @@ async function packageXpi() {
   console.log(`Created ${join(distRoot, xpiName)}`)
 }
 
-async function buildChromium() {
-  const srcManifest = JSON.parse(readFileSync(join(SRC, 'manifest.json'), 'utf-8'))
-  const mainEntry = srcManifest.content_scripts.find((e) => e.world === 'MAIN')
-  const isolatedEntry = srcManifest.content_scripts.find((e) => e.world === 'ISOLATED')
-  if (!mainEntry || !isolatedEntry) {
-    throw new Error(
-      'manifest.json needs MAIN and ISOLATED content script entries for the chromium build'
-    )
-  }
-  const worlds = [
-    { name: 'background.js', list: srcManifest.background.scripts, shim: true },
-    { name: 'main-world.js', list: mainEntry.js, shim: mainEntry.world !== 'MAIN' },
-    { name: 'isolated-world.js', list: isolatedEntry.js, shim: isolatedEntry.world !== 'MAIN' }
-  ]
-
-  const chromiumManifestPath = join(SRC, 'manifest.chromium.json')
-  if (!existsSync(chromiumManifestPath)) {
-    console.error('manifest.chromium.json not found in addon/')
-    process.exit(1)
-  }
-
-  const manifestFiles = collectManifestFiles(chromiumManifestPath)
-  const allowedFiles = collectAllFiles(manifestFiles)
-  const pickerPage = 'js/internal/pages/picker/index.html'
-  allowedFiles.add(pickerPage)
-  for (const asset of scanHtmlAssets(join(SRC, pickerPage))) {
-    const resolved = resolveAsset(pickerPage, asset)
-    if (resolved && existsSync(join(SRC, resolved))) allowedFiles.add(resolved)
-  }
-  const devicesPage = 'js/internal/pages/devices/index.html'
-  allowedFiles.add(devicesPage)
-  for (const asset of scanHtmlAssets(join(SRC, devicesPage))) {
-    const resolved = resolveAsset(devicesPage, asset)
-    if (resolved && existsSync(join(SRC, resolved))) allowedFiles.add(resolved)
-  }
-  allowedFiles.add('js/utils/browser-shim.js')
-  console.log(`Chromium manifest references ${allowedFiles.size} files`)
-  await writeDistFiles(allowedFiles, chromiumManifestPath, CHROMIUM_DIST)
-
-  for (const rel of allowedFiles) {
-    if (!rel.endsWith('.html')) continue
-    const outPath = join(CHROMIUM_DIST, rel)
-    if (!existsSync(outPath)) continue
-    const relShim = relative(dirname(rel), 'js/utils/browser-shim.js').replace(/\\/g, '/')
-    const html = await readFile(outPath, 'utf-8')
-    const injected = html.replace(/<script/i, `<script src="${relShim}"></script><script`)
-    await writeFile(outPath, injected, 'utf-8')
-  }
-
-  for (const { name, list, shim } of worlds) {
-    const files = shim ? ['js/utils/browser-shim.js', ...list] : list
-    const sources = []
-    for (const rel of files) {
-      const fullPath = join(SRC, rel)
-      if (!existsSync(fullPath)) {
-        throw new Error(`Missing file for chromium bundle ${name}: ${rel}`)
-      }
-      sources.push(readFileSync(fullPath, 'utf-8'))
-    }
-    const result = await minify(sources.join(';\n'), TERSER_OPTS)
-    if (result.error) {
-      throw new Error(`terser failed on ${name}: ${result.error}`)
-    }
-    await writeFile(join(CHROMIUM_DIST, name), result.code ?? '', 'utf-8')
-    console.log(`Built dist/chromium/${name} (${files.length} files bundled)`)
-  }
-
-  console.log('Built dist/chromium/ (unpacked, ready for --load-extension)')
-}
-
 async function build() {
-  if (TARGET === 'chromium') {
-    if (MANIFEST_VERSION !== '3') {
-      console.warn(`TARGET=chromium always builds MV3; ignoring MV=${MANIFEST_VERSION}`)
-    }
-    await buildChromium()
-    return
-  }
-
   await lintAddon()
 
   const srcName = MANIFEST_VERSION === '2' ? 'manifest.v2.json' : 'manifest.json'

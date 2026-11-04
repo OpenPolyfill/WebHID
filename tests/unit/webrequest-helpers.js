@@ -124,7 +124,6 @@ export function loadWebRequest({ siteSettings = Promise.resolve({}) } = {}) {
       warn() {},
       error() {}
     },
-    isChromium: false,
     bgState: {
       workerPolyfillSites,
       permissionsPolicy: new Map(),

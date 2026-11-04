@@ -8,7 +8,6 @@
   const Map = NativeMap
   const Set = NativeSet
   const Proxy = NativeProxy
-  const isChromium = webhid.import('isChromium')
   const isMv2 =
     typeof browser !== 'undefined' &&
     browser.runtime != null &&
@@ -53,7 +52,7 @@
     hidePageAction: false,
     devicePickerMode: 'modal',
     workerPolyfillEnabled: true,
-    workerSpawnMode: isChromium || isMv2 ? 'blob' : 'shadow',
+    workerSpawnMode: isMv2 ? 'blob' : 'shadow',
     useWorker: true,
     allowActivationlessRequestDevice: false
   }

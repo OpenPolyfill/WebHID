@@ -46,7 +46,6 @@ function loadSettings() {
           }
         }
       }
-      if (name === 'isChromium') return false
       throw new Error('unexpected import: ' + name)
     },
     export(name, value) {

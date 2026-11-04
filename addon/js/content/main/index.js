@@ -16,7 +16,6 @@
   }
 
   const http = webhid.import('http')
-  const isChromium = webhid.import('isChromium')
   const GLOBAL_DEFAULTS = webhid.import('GLOBAL_DEFAULTS')
   const createSettingsStore = webhid.import('createSettingsStore')
   const isValidFilter = webhid.import('isValidFilter')
@@ -66,14 +65,10 @@
   const messageEventDataDescriptor = types.MessageEvent
     ? types.MessageEvent.getDescriptor('data')
     : null
-  const messageEventSourceDescriptor = types.MessageEvent
-    ? types.MessageEvent.getDescriptor('source')
-    : null
   const messageEventPortsDescriptor = types.MessageEvent
     ? types.MessageEvent.getDescriptor('ports')
     : null
   const nativeMessageEventData = messageEventDataDescriptor && messageEventDataDescriptor.get
-  const nativeMessageEventSource = messageEventSourceDescriptor && messageEventSourceDescriptor.get
   const nativeMessageEventPorts = messageEventPortsDescriptor && messageEventPortsDescriptor.get
   const nativeWorkerPostMessage = types.Worker
     ? types.Worker.getDescriptor('postMessage').value
@@ -83,7 +78,6 @@
     : null
   const nativeWorkerTerminate = types.Worker ? types.Worker.getDescriptor('terminate').value : null
   const nativeWindowAddEventListener = host.windowAddEventListener
-  const nativeWindowRemoveEventListener = host.windowRemoveEventListener
   const nativeCreateObjectURL = host.url.createObjectURL
   const nativeRevokeObjectURL = host.url.revokeObjectURL
   const nativeCryptoRandomUUID = host.cryptoRandomUUID
@@ -132,8 +126,6 @@
   }
   const readMessageEventData = (event) =>
     nativeMessageEventData ? callNative(nativeMessageEventData, event) : undefined
-  const readMessageEventSource = (event) =>
-    nativeMessageEventSource ? callNative(nativeMessageEventSource, event) : null
   const readMessageEventPorts = (event) =>
     nativeMessageEventPorts ? callNative(nativeMessageEventPorts, event) : null
   const nativeBind = types.Function.proto.methods.bind
@@ -890,48 +882,31 @@
         if (nativeSelfPostMessage) nativeSelfPostMessage(null, makePristineIterable([ch.port2]))
         return Promise.resolve()
       })()
-    : isChromium
-      ? new Promise((resolve) => {
-          const onBridgeMessage = (event) => {
-            const source = readMessageEventSource(event)
-            const data = readMessageEventData(event)
-            const ports = readMessageEventPorts(event)
-            const directPort = data && data.directPort ? data.directPort : ports && ports[0]
-            if (source !== windowObject || !directPort) return
-            nativeWindowRemoveEventListener(windowObject, 'message', onBridgeMessage)
-            brokerStackOtp = data && typeof data.S === 'string' ? data.S : null
+    : new Promise((resolve) => {
+        const capturePageBridge = (candidate) => {
+          const directPort = candidate && candidate.directPort ? candidate.directPort : candidate
+          if (!directPort) return
+          try {
+            reflect.deleteProperty(globalThis, 'webhid')
+            brokerStackOtp = candidate && typeof candidate.S === 'string' ? candidate.S : null
             bridgePort = directPort
             setupBridgePort()
             if (fanoutCandidate || brokerStackOtp) armBrokerCandidateSetter()
             resolve()
-          }
-          nativeWindowAddEventListener(windowObject, 'message', onBridgeMessage)
-        })
-      : new Promise((resolve) => {
-          const capturePageBridge = (candidate) => {
-            const directPort = candidate && candidate.directPort ? candidate.directPort : candidate
-            if (!directPort) return
-            try {
-              reflect.deleteProperty(globalThis, 'webhid')
-              brokerStackOtp = candidate && typeof candidate.S === 'string' ? candidate.S : null
-              bridgePort = directPort
-              setupBridgePort()
-              if (fanoutCandidate || brokerStackOtp) armBrokerCandidateSetter()
-              resolve()
-            } catch {
-              bridgePort = null
-            }
-          }
-          try {
-            capturePageBridge(windowObject.webhid)
           } catch {
-            void 0
+            bridgePort = null
           }
-          object.defineProperty(windowObject, 'webhid', {
-            configurable: true,
-            set: capturePageBridge
-          })
+        }
+        try {
+          capturePageBridge(windowObject.webhid)
+        } catch {
+          void 0
+        }
+        object.defineProperty(windowObject, 'webhid', {
+          configurable: true,
+          set: capturePageBridge
         })
+      })
   if (!isWorker) setupTrustedTypesSharing()
 
   /** @returns {void} */

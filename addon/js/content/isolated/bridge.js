@@ -3,7 +3,6 @@
 
   /** @type {import("./types.js").Logger} */
   const logger = webhid.import('logger')
-  const isChromium = webhid.import('isChromium')
   const http = webhid.import('http')
   const createSettingsStore = webhid.import('createSettingsStore')
   const createSettingsListenerSet = webhid.import('createSettingsListenerSet')
@@ -30,12 +29,9 @@
   const bootstrapValue = fanoutCandidate
     ? { directPort: pageChannel.port2, S: stackOtp }
     : pageChannel.port2
-  if (isChromium) window.postMessage(bootstrapValue, '*', [pageChannel.port2])
-  else {
-    window.wrappedJSObject.webhid = globalThis.cloneInto(bootstrapValue, window, {
-      wrapReflectors: true
-    })
-  }
+  window.wrappedJSObject.webhid = globalThis.cloneInto(bootstrapValue, window, {
+    wrapReflectors: true
+  })
   const pagePort = pageChannel.port1
   const controlQueue = []
   let controlPort = null
@@ -1254,10 +1250,6 @@
     const originSettings = await loadSettingsForOrigin(origin)
     const cached = cachedSpawnModes.get(origin)
     if (cached) return cached
-    if (isChromium) {
-      cachedSpawnModes.set(origin, 'blob')
-      return 'blob'
-    }
     let mode = originSettings.workerSpawnMode
     const settingsScope = settingsScopeForOrigin(origin)
     if (settingsScope) {
@@ -2840,10 +2832,7 @@
     const context = frameContextForPort(requestPort)
     const origin = context ? context.persistentOrigin || '' : persistentOrigin || ''
     const originSettings = await loadSettingsForOrigin(origin)
-    const pickerMode =
-      isChromium && originSettings.devicePickerMode === 'pageAction'
-        ? 'modal'
-        : originSettings.devicePickerMode
+    const pickerMode = originSettings.devicePickerMode
 
     sendBackgroundRequest(
       {

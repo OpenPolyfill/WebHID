@@ -1,7 +1,6 @@
 ;(function () {
   const webhid = globalThis.webhid
   const logger = webhid.import('logger')
-  const isChromium = webhid.import('isChromium')
   const {
     workerPolyfillSites,
     permissionsPolicy,
@@ -1084,24 +1083,6 @@
    * @returns {void}
    */
   function registerWebRequestHandlers(settings) {
-    if (isChromium) {
-      browser.webRequest.onHeadersReceived.addListener(
-        (details) => {
-          storePermissionsPolicy(details)
-        },
-        { urls: ['<all_urls>'], types: ['main_frame', 'sub_frame'] },
-        ['responseHeaders']
-      )
-      browser.webRequest.onBeforeRequest.addListener(
-        (details) => {
-          if (details.tabId === undefined || details.frameId === undefined) return
-          if (details.type === 'main_frame') clearPolicyTab(details.tabId)
-          else clearPolicyFrame(details.tabId, details.frameId)
-        },
-        { urls: ['<all_urls>'], types: ['main_frame', 'sub_frame'] }
-      )
-      return
-    }
     browserInfoReady = browser.runtime
       .getBrowserInfo()
       .then((info) => {

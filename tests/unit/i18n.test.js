@@ -88,7 +88,7 @@ test('every static localization reference with a literal key resolves in en_US',
   for (const path of filesUnder(resolve(ADDON, 'js'), (path) => path.endsWith('.js'))) {
     for (const key of staticTKeys(readFileSync(path, 'utf8'))) keys.add(key)
   }
-  for (const path of ['manifest.json', 'manifest.v2.json', 'manifest.chromium.json']) {
+  for (const path of ['manifest.json', 'manifest.v2.json']) {
     const source = readFileSync(resolve(ADDON, path), 'utf8')
     for (const match of source.matchAll(/__MSG_([A-Za-z0-9_]+)__/g)) keys.add(match[1])
   }

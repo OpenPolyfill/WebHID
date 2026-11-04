@@ -1,7 +1,6 @@
 ;(function () {
   const webhid = globalThis.webhid
   const logger = webhid.import('logger')
-  const isChromium = webhid.import('isChromium')
   const createSettingsStore = webhid.import('createSettingsStore')
   const GLOBAL_DEFAULTS = webhid.import('GLOBAL_DEFAULTS')
   const SETTING_NAMES = webhid.import('SETTING_NAMES')
@@ -250,7 +249,7 @@
         browser.tabs
           .update(tabId, { active: true })
           .catch((e) => logger.debug('tabs.update failed', e))
-        if (!isChromium && browser.pageAction && browser.pageAction.openPopup)
+        if (browser.pageAction && browser.pageAction.openPopup)
           browser.pageAction.openPopup().catch((e) => logger.debug('openPopup failed', e))
         notificationsApi
           .clear('webhid-picker')

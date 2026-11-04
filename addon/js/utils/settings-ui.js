@@ -1,6 +1,5 @@
 ;(function () {
   const webhid = globalThis.webhid
-  const isChromium = webhid.import('isChromium')
   let privilegedPickerAvailable = false
 
   /**
@@ -47,11 +46,7 @@
   function applyPlaneRadios(s, defaults) {
     setRadioValue('dataPlane', effectiveDataPlaneValue(s))
     let pickerMode = s.devicePickerMode || defaults.devicePickerMode
-    if (
-      (isChromium && pickerMode === 'pageAction') ||
-      (pickerMode === 'privileged' && !privilegedPickerAvailable)
-    )
-      pickerMode = 'modal'
+    if (pickerMode === 'privileged' && !privilegedPickerAvailable) pickerMode = 'modal'
     setRadioValue('devicePickerMode', pickerMode)
     setRadioValue('workerSpawnMode', s.workerSpawnMode || defaults.workerSpawnMode)
     setRadioValue('logLevel', String(s.logLevel))
@@ -66,22 +61,7 @@
   function updatePlaneVisibility() {
     const dp = currentRadioValue('dataPlane')
     document.getElementById('workerSpawnMode-setting').style.display =
-      !isChromium && (dp === 'wt' || dp === 'ws') ? '' : 'none'
-  }
-
-  /**
-   * Hides options that are unavailable on Chromium.
-   * No-op on Firefox.
-   * @returns {void}
-   */
-  function hideChromiumOptions() {
-    if (!isChromium) return
-    const pageAction = document.querySelector('input[name="devicePickerMode"][value="pageAction"]')
-    const label = pageAction ? pageAction.closest('label') : null
-    if (label) label.style.display = 'none'
-    const polyfill = document.getElementById('workerPolyfillEnabled')
-    const polyfillSetting = polyfill ? polyfill.closest('.setting') : null
-    if (polyfillSetting) polyfillSetting.style.display = 'none'
+      dp === 'wt' || dp === 'ws' ? '' : 'none'
   }
 
   /**
@@ -100,7 +80,6 @@
       privilegedPicker.closest('label').style.display = 'none'
       if (pickerCapabilities.savedMode === 'privileged') save('devicePickerMode', 'modal')
     }
-    hideChromiumOptions()
 
     /**
      * Saves the Data Plane radio selection. WebTransport (in-page) is stored

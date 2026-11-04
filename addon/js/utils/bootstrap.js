@@ -540,11 +540,5 @@
     configurable: true
   })
 
-  api.export(
-    'isChromium',
-    typeof browser !== 'undefined' &&
-      browser.runtime != null &&
-      browser.runtime.getURL('').startsWith('chrome-extension://')
-  )
   api.export('pristine', pristine)
 })()
