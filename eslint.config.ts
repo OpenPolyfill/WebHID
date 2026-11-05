@@ -54,7 +54,6 @@ export default tseslint.config(
       globals: {
         webhid: 'readonly',
         browser: 'readonly',
-        chrome: 'readonly',
         self: 'readonly',
         globalThis: 'readonly',
         document: 'readonly',

@@ -285,7 +285,7 @@ npm run release:minor
 npm run release:patch
 ```
 
-Bumps the release-owned version surfaces declared in `.versionrc.json`: `.version.json`, `package.json`, Firefox `addon/manifest.json` and `addon/manifest.v2.json`, the three release `Cargo.toml` files plus `crates/Cargo.lock`, Homebrew/Nix metadata, and the Void/Alpine/Arch addon packaging files. The Chromium manifest is a test-bed manifest and is not part of the release bump set.
+Bumps the release-owned version surfaces declared in `.versionrc.json`: `.version.json`, `package.json`, Firefox `addon/manifest.json` and `addon/manifest.v2.json`, the three release `Cargo.toml` files plus `crates/Cargo.lock`, Homebrew/Nix metadata, and the Void/Alpine/Arch addon packaging files.
 
 ## Cross-platform
 
@@ -297,7 +297,7 @@ CI builds on Linux, Windows, and macOS. Platform-specific code is gated with `#[
 | macOS    | Unix socket under the user's Application Support path | IOHIDManager callbacks     | `macos-shared-device` | Yes, with Input Monitoring as required |
 | Windows  | Named pipe (`\\.\pipe\webhid`)                        | RegisterDeviceNotification | `windows-native`      | Yes                                    |
 
-Daemon-as-NM-host works on all listed platforms. Firefox supplies the manifest path and addon ID as two positional arguments; Chromium supplies one extension-origin argument. The addon selects the host name from `daemonAsNmHost`. On macOS and Windows, that setting defaults to `true` when no value is stored.
+Daemon-as-NM-host works on all listed platforms. Firefox supplies the manifest path and addon ID as two positional arguments. The addon selects the host name from `daemonAsNmHost`. On macOS and Windows, that setting defaults to `true` when no value is stored.
 
 The NM forwarder uses vectored I/O (`write_vectored`) on all platforms (no `splice()`).
 

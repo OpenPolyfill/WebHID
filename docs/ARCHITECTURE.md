@@ -255,7 +255,7 @@ The background reconnects its Native Messaging Port with backoff. A forwarder se
 
 ### Worker spawning and worker polyfill
 
-The production data worker is created in page context. `workerSpawnMode` selects shadow URL or blob spawning. Background pre-flights the page CSP. When a selected worker cannot be created or its transport cannot connect, bridge falls back to NM. On Chromium, blob spawning is the functional mode and the normal worker-spawn selector is hidden.
+The production data worker is created in page context. `workerSpawnMode` selects shadow URL or blob spawning. Background pre-flights the page CSP. When a selected worker cannot be created or its transport cannot connect, bridge falls back to NM.
 
 When `workerPolyfillEnabled` is enabled, background injects the worker polyfill into page-created workers. It exposes the specified WebHID surface but does not create a functional worker data plane. `requestDevice()` remains unavailable in that context.
 

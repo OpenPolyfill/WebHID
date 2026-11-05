@@ -221,7 +221,7 @@ This profile removes the separate NM forwarder and daemon IPC socket. The daemon
 
 **Requires:** the daemon must be able to open the HID devices as the Firefox user. On Linux this normally means the shipped udev rule; on macOS it means the required Input Monitoring permission. Windows has no separate HID permission step in this guide.
 
-The daemon auto-detects Native Messaging host mode from the browser's launch arguments. Firefox passes the manifest path and addon ID; Chromium uses its one extension-origin argument. No `--nm-host` flag is needed. The manifest's `path` points at the `webhid-daemon` binary.
+The daemon auto-detects Native Messaging host mode from Firefox's launch arguments. Firefox passes the manifest path and addon ID as two positional arguments. No `--nm-host` flag is needed. The manifest's `path` points at the `webhid-daemon` binary.
 
 #### System-wide install
 

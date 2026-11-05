@@ -165,7 +165,7 @@
     "message": "Device Picker Mode"
   },
   "settingsDevicePickerModeDesc": {
-    "message": "**Modal**: shadow-DOM overlay on the page when requestDevice() is called (default).\n**Page Action**: URL-bar popup picker; the user clicks the icon to open it. Firefox only, Chromium falls back to modal.\n**Window**: separate popup window."
+    "message": "**Modal**: shadow-DOM overlay on the page when requestDevice() is called (default).\n**Page Action**: URL-bar popup picker; the user clicks the icon to open it.\n**Window**: separate popup window."
   },
   "settingsDevicePickerModal": {
     "message": "Modal (overlay)"

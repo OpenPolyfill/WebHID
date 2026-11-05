@@ -56,17 +56,7 @@ fn socket_mode(path: &str) -> u32 {
     }
 }
 
-fn detect_nm_host_mode() -> Option<(String, String)> {
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() == 2 && args[1].starts_with("chrome-extension://") {
-        let id = args[1]
-            .trim_end_matches('/')
-            .rsplit('/')
-            .next()
-            .unwrap_or("")
-            .to_string();
-        return Some((args[1].clone(), id));
-    }
+fn detect_nm_host_mode(args: &[String]) -> Option<(String, String)> {
     if args.len() != 3 {
         return None;
     }
@@ -104,7 +94,8 @@ async fn main() -> anyhow::Result<()> {
         webhid::security::apply_seccomp_filter(webhid::security::DAEMON_SYSCALLS);
     }
 
-    let nm_host_info = detect_nm_host_mode();
+    let nm_host_args: Vec<String> = std::env::args().collect();
+    let nm_host_info = detect_nm_host_mode(&nm_host_args);
     let nm_host_mode = nm_host_info.is_some();
 
     let ws_port: u16 = if nm_host_mode {
@@ -310,5 +301,36 @@ async fn main() -> anyhow::Result<()> {
         log::info!("IPC not supported on this platform");
         tokio::signal::ctrl_c().await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::detect_nm_host_mode;
+
+    #[test]
+    fn detect_nm_host_mode_accepts_firefox_manifest_arguments() {
+        let manifest_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("Cargo.toml")
+            .to_string_lossy()
+            .into_owned();
+        let addon_id = "webhid@k4zoku.dev";
+        let args = vec![
+            "webhid-daemon".to_string(),
+            manifest_path.clone(),
+            addon_id.to_string(),
+        ];
+
+        assert_eq!(
+            detect_nm_host_mode(&args),
+            Some((manifest_path, addon_id.to_string()))
+        );
+    }
+
+    #[test]
+    fn detect_nm_host_mode_rejects_single_argument_launches() {
+        let args = vec!["webhid-daemon".to_string(), "extension-origin".to_string()];
+
+        assert_eq!(detect_nm_host_mode(&args), None);
     }
 }
