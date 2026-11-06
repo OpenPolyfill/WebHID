@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [3.3.2](https://github.com/OpenPolyfill/WebHID/compare/v3.3.1...v3.3.2) (2026-11-06)
+
+### Bug Fixes
+
+* **addon:** guard stale WebTransport callbacks ([c80935e](https://github.com/OpenPolyfill/WebHID/commit/c80935e3574023a181529abd7328dca38473b50d))
+* **addon:** isolate CSP state by navigation ([e9d3d4f](https://github.com/OpenPolyfill/WebHID/commit/e9d3d4f168d3b22bbe4d5f95d9f06caa26a7b74e))
+* **addon:** privileged icon anchor ([f0f9a90](https://github.com/OpenPolyfill/WebHID/commit/f0f9a90540d739dce9e635541bd097597dac33c9))
+* **addon:** privileged picker page action click behavior ([0aa7c70](https://github.com/OpenPolyfill/WebHID/commit/0aa7c7016763567662e8264ded73b82f5bd4ac9b))
+* worker polyfill teardown ([bb1e069](https://github.com/OpenPolyfill/WebHID/commit/bb1e0694c6235c93d67cc47548c814a221ae63d8))
+
+### Performance
+
+* **addon:** high speed nm dataplane ([28e62d7](https://github.com/OpenPolyfill/WebHID/commit/28e62d7ea8b8eaac33a73fdffd9f91f3cbbe670f))
+* **addon:** optimize nm even more ([0182b1b](https://github.com/OpenPolyfill/WebHID/commit/0182b1b735f8f98c8df7f6ecee25d5badfc0602c))
+* optimize nm dataplane ([82869cf](https://github.com/OpenPolyfill/WebHID/commit/82869cf09a44ee1f72be895a3b20658891107e14))
+
+### Code Refactoring
+
+* **addon:** normalize handoff ([3961f8d](https://github.com/OpenPolyfill/WebHID/commit/3961f8dde3822497d42b36beee1a42c52e776235))
+* cleanup chromium testbed ([7d58366](https://github.com/OpenPolyfill/WebHID/commit/7d58366bd9a2cffe761b12b3c5f69250460b9f37))
+* cleanup leftover chromium thingy ([608e92c](https://github.com/OpenPolyfill/WebHID/commit/608e92c60232a2a50d9b6e76daf06ea2da508f51))
+
+### Documentation
+
+* update docs ([bf63b9c](https://github.com/OpenPolyfill/WebHID/commit/bf63b9c39e909f20d4ce6a327b4b8bd44ca26b8f))
+
+### Chores
+
+* **addon:** set default dataplane to nm ([bfd136e](https://github.com/OpenPolyfill/WebHID/commit/bfd136ee07cb408b29ea9ee900adfc1e84c0163a))
+* update eslint rule ([15c3921](https://github.com/OpenPolyfill/WebHID/commit/15c39212d6e5d8221ff718030eabf64c681bb52e))
 ## [3.3.1](https://github.com/OpenPolyfill/WebHID/compare/v3.3.0...v3.3.1) (2026-10-31)
 
 ### Features
