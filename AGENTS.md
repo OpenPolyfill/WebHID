@@ -42,6 +42,8 @@ Every document keeps the normal direct architecture: its MAIN realm owns its own
 
 **Baseline**: `child MAIN <-> child ISOLATED <-> direct webhid-control <-> background` always exists. If the child uses NM before broker pairing is ready, it may also use its own `webhid-data:<deviceId>` Port.
 
+**Fast direct NM**: when a local unbrokered NM generation is ready, MAIN uses an `exportFunction` entrypoint to reach its isolated bridge instead of posting every report through the page data MessagePort. The isolated bridge copies outgoing bytes to an owned `Uint8Array` and returns acknowledgements and input bytes through a registered page callback, with `cloneInto` for byte payloads. The per-device runtime data Port and Native Messaging connection remain in the path. The fast gate is document-token and Session/generation scoped; worker, in-page, and broker-attached data planes retain their own transports.
+
 **Broker upgrade**: after the direct child endpoint exists, an eligible same-origin non-top bridge generates a per-document stack OTP and sends `fanoutChildOffer` on its own real `webhid-control` Port. Background authenticates that exact child endpoint plus the live same-origin top endpoint, generates fresh `authOtp`/`ackOtp`, and sends `fanoutPairOffer` to the child and `fanoutBrokerOffer` to the top. Background retains no logical fanout endpoint and never routes later fanout traffic by a page-provided channel.
 
 - Top ISOLATED creates the private broker MessageChannel. Its candidate travels top ISOLATED -> top MAIN -> child MAIN -> child ISOLATED. The child MAIN handoff uses the page-visible `navigator.hid` setter only as a one-shot transfer surface and accepts the candidate only when the exact generated `webhidBroker_<token>` caller frame matches the child's stack OTP. Unexpected assignments yield back to ordinary page semantics.
@@ -68,8 +70,7 @@ The `dataPlane` setting selects `wt`, `ws`, or `nm`. Daemon-backed control reque
 
 ### Benchmarks
 
-- The `open` metric of 38-58ms is a historical benchmark artifact, not a daemon-wide latency guarantee. That benchmark decomposed `open()` and a one-time first-WS-message cost; see [docs/BENCHMARK.md](docs/BENCHMARK.md) for the preserved dataset and methodology.
-- Cold-start methodology: local sayodevice.com clone removes network variance; Playwright-driven runs remove click timing; Chromium grants are supplied by policy.
+- The current [image-pipeline benchmark snapshot](docs/BENCHMARK.md) records open/warmup/total separately per Firefox mode. Open timings are workload- and environment-specific, not a daemon-wide guarantee.
 - Image-pipeline benchmark (`tests/benchmark/`, see [docs/BENCHMARK.md](docs/BENCHMARK.md)) uses a separate mock relay and retries invalidated runs. Do not extrapolate its burst behavior to normal device traffic.
 - Benchmark chunking protocols differ per harness on purpose: the image pipeline chunks a 62-byte payload + 2-byte sequence (tests/pages/benchmark-image.html + benchmark-utils PAYLOAD), the loss harness uses a 63-byte payload + 3-byte sequence (loss-utils). The page-side decoders match their own harness; keep them in sync pairwise, not across harnesses.
 
@@ -158,8 +159,8 @@ The popup's site label is a custom dropdown (no `<select>`) built from backgroun
 
 ### Exploratory branches (curiosity-driven, not benchmark-justified)
 
-- **WT/QUIC data plane** (`dataPlane: "wt"`): the daemon WT server starts at boot, uses a self-signed certificate with SAN 127.0.0.1 and a default validity of 14 days, pins the certificate with `serverCertificateHashes`, authenticates with the URL path, and uses one persistent bidirectional stream with a `[len_u32 LE]` frame prefix. Certificate expiry rotates to a new port while existing sessions drain. In the current benchmark dataset, Firefox worker WT has a per-report p50 of 0.74ms versus WS at 0.94ms; this is a recorded benchmark result, not a universal performance guarantee. Report I/O coverage: `tests/regression/wt.spec.ts`; benchmark coverage: `tests/benchmark/benchmark-wt.spec.ts`.
-- **Chromium benchmark suite**: removed on 2026-10-24; historical measurements remain in `docs/BENCHMARK.md`.
+- **WT/QUIC data plane** (`dataPlane: "wt"`): the daemon WT server starts at boot, uses a self-signed certificate with SAN 127.0.0.1 and a default validity of 14 days, pins the certificate with `serverCertificateHashes`, authenticates with the URL path, and uses one persistent bidirectional stream with a `[len_u32 LE]` frame prefix. Certificate expiry rotates to a new port while existing sessions drain. In the current Firefox CI image-pipeline snapshot, worker WT and WS both have per-report p50 of 0.94ms; this is a recorded result, not a universal performance guarantee. Report I/O coverage: `tests/regression/wt.spec.ts`; benchmark coverage: `tests/benchmark/benchmark-wt.spec.ts`.
+- **Chromium benchmark suite**: removed on 2026-10-24; `docs/BENCHMARK.md` now contains only the current Firefox snapshot.
 
 ## Not every change needs a benchmark-driven justification
 

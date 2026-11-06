@@ -22,6 +22,7 @@ graph TB
     HID["HID device"]
 
     Page -- "control MessagePort" --> Bridge
+    Page -- "direct NM exportFunction + callback" --> Bridge
     Bridge -- "persistent runtime Port: webhid-control" --> BG
     Page -- "transferred per-device MessagePort" --> Worker
     Bridge -- "persistent runtime Port: webhid-data:<deviceId>, NM only" --> BG
@@ -41,7 +42,7 @@ Worker WS and WT connections reach that same daemon in either profile, as does H
 
 Every browser document always owns its own direct page control MessagePort and exact `webhid-control` runtime Port. Same-origin top-broker fanout, described below, is an optional NM data-plane upgrade only; it never replaces that direct control bridge.
 
-The `dataPlane` setting selects report transport: `wt` is preferred when the handshake offers a WT endpoint, `ws` is the alternate worker network path, and `nm` is the compatibility path. A selected `wt` mode uses worker WT when available and uses worker WS when the handshake has no WT endpoint. Worker setup or transport failure can move the open session to NM. Normal page control requests use the persistent bridge control Port and then either terminate in addon state or continue over the persistent Native Messaging Port when the handler is daemon-backed. Extension-page control uses the one-shot internal paths described below.
+The `dataPlane` setting selects report transport: `wt` is preferred when the handshake offers a WT endpoint, `ws` is the alternate worker network path, and `nm` is the Native Messaging path with a direct MAIN-to-isolated fast data plane for eligible local Sessions. A selected `wt` mode uses worker WT when available and uses worker WS when the handshake has no WT endpoint. Worker setup or transport failure can move the open session to NM. Normal page control requests use the persistent bridge control Port and then either terminate in addon state or continue over the persistent Native Messaging Port when the handler is daemon-backed. Extension-page control uses the one-shot internal paths described below.
 
 ## Browser communication surfaces
 
@@ -50,11 +51,17 @@ The `dataPlane` setting selects report transport: `wt` is preferred when the han
 The normal direct bridge-to-background path is Port-based and exists for every document:
 
 - On load, `bridge.js` creates `browser.runtime.connect({name: 'webhid-control'})`. It queues ordinary bridge control requests and completes one pending request from each Port response. Background registers the Port as the exact browser document endpoint using browser-provided tab/frame/document/origin metadata.
-- When an unbrokered open device uses NM, that same bridge creates or reuses `browser.runtime.connect({name: 'webhid-data:<deviceId>'})`. `sendReport`, `sendFeatureReport`, and `receiveFeatureReport` use that per-device data Port.
+- When an unbrokered open device uses NM, that same bridge creates or reuses `browser.runtime.connect({name: 'webhid-data:<deviceId>'})`. `sendReport`, `sendFeatureReport`, and `receiveFeatureReport` continue over that per-device runtime data Port after the page-to-bridge handoff.
 - An eligible same-origin child may later upgrade only its NM data routing to a private top broker. Its direct page bridge and `webhid-control` Port remain alive and continue to own control requests, origin/permission authority and Session lifetime.
 - Background receives control and data runtime Ports through `runtime.onConnect`, registers them with `registerContentPort`, and dispatches their requests through the same handler set. Responses return on the originating Port.
 
 This replaces the old normal `bridge -> runtime.sendMessage -> background -> sendResponse -> bridge` model. `runtime.sendMessage` remains valid for one-shot cold or internal traffic, including picker flows, extension pages, internal device-event notification and extension resource fetching. It is not the normal direct bridge control or NM report path.
+
+### Direct NM fast page-to-bridge handoff
+
+For an eligible local, unbrokered NM plane, the isolated bridge exports a single token-gated function to MAIN with `exportFunction`. MAIN registers a callback during bootstrap and enables the path after the active plane generation becomes ready. Each output or feature operation invokes the exported function directly, bypassing its data MessagePort; the bridge copies the outgoing bytes into an owned `Uint8Array` and dispatches through the ordinary `webhid-data:<deviceId>` runtime Port. Responses and input reports return through the registered MAIN callback, with byte payloads copied across realms using `cloneInto`.
+
+The bridge validates the document, live Session, ready generation, and plane type. Broker-attached children and worker or in-page data planes retain their own routing. If the fast path is not enabled, direct NM continues to use its existing page data MessagePort. The page control MessagePort, per-device runtime data Port, and Native Messaging connection remain persistent.
 
 ### Optional same-origin NM broker upgrade
 
@@ -82,8 +89,8 @@ The bridge participates in worker spawn, port setup, lifecycle, fallback, and da
 
 | Component                                                  | Responsibility                                                                                                                                                                                                                                                                 |
 | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `content/main/index.js`                                    | MAIN-world WebHID polyfill. Uses the control MessagePort for general requests and a per-device data MessagePort for reports. Transfers report payload buffers where possible. Receives worker input batches directly and dispatches `HIDInputReportEvent`.                     |
-| `content/isolated/bridge.js`                               | Owns the always-direct `webhid-control` endpoint, data-plane setup, worker lifecycle, settings/consent state and local NM fallback. A top bridge may additionally own private fanout contexts, child attachments and shared NM runtime data Ports.                             |
+| `content/main/index.js`                                    | MAIN-world WebHID polyfill. Uses the control MessagePort for general requests, the fast exported function/callback for eligible direct NM, and a per-device data MessagePort for worker, brokered, or non-fast traffic. Dispatches `HIDInputReportEvent`.                     |
+| `content/isolated/bridge.js`                               | Owns the always-direct `webhid-control` endpoint, fast NM realm crossing, data-plane setup, worker lifecycle, settings/consent state and local NM fallback. A top bridge may additionally own private fanout contexts, child attachments and shared NM runtime data Ports.                             |
 | `content/isolated/worker/index.js`                         | Per-device production WS or WT worker. Owns the persistent network transport and communicates directly with the page through the transferred data MessagePort.                                                                                                                 |
 | `background/messages.js` and `background/content-ports.js` | Registers `runtime.onConnect` Ports with `registerContentPort`, routes their requests through the handler set, and replies on the same Port. It also retains the one-shot `runtime.onMessage` handler for legitimate extension and internal callers.                           |
 | `background/nm.js`                                         | Maintains one reconnecting `connectNative` Port, routes daemon-backed requests, decodes packed NM input, delivers first through matching `webhid-data:<deviceId>` Ports, then falls back only to exact Session-owner `webhid-control` Ports when no matching data Port exists. |
@@ -140,11 +147,10 @@ Input reports are rate-gated into batches. A sparse report flushes immediately, 
 
 ### Native Messaging
 
-The baseline direct NM report path is:
+The optimized direct NM report path is:
 
 ```text
-Page data MessagePort
--> direct Bridge
+Page MAIN -> exported function -> direct isolated Bridge
 -> local webhid-data:<deviceId> runtime Port
 -> Background
 -> persistent Native Messaging Port
@@ -153,7 +159,7 @@ Page data MessagePort
 -> persistent HID handle
 ```
 
-`sendReport` and `sendFeatureReport` use packed binary TLVs encoded in the single JSON field `{"d":"<base64>"}`. `receiveFeatureReport` uses the NM JSON action. All three receive acknowledgement or feature data on the same per-device runtime Port and then the direct bridge replies to the page data MessagePort.
+`sendReport` and `sendFeatureReport` use packed binary TLVs encoded in the single JSON field `{"d":"<base64>"}`. `receiveFeatureReport` uses the NM JSON action. All three receive acknowledgement or feature data on the same per-device runtime Port. On the fast path the bridge invokes MAIN's registered callback (using `cloneInto` for byte payloads); otherwise the direct bridge uses the page data MessagePort.
 
 For an optionally broker-attached same-origin child, control still goes through its direct bridge, but steady-state NM report data instead uses:
 
@@ -187,10 +193,10 @@ HID reader
 -> Background
 -> matching webhid-data:<deviceId> runtime Port
 -> owning direct bridge or top broker
--> page data/attachment MessagePort
+-> fast MAIN callback (direct NM) or page data/attachment MessagePort
 ```
 
-The reader sends a packed input report to each active, valid NM hot binding. Background decodes it and first posts to the matching `webhid-data:<deviceId>` runtime Port. If such a data Port exists, that delivery is authoritative and background does not send a second copy. A top-owned shared Port can then fan the report locally to matching same-origin child attachments.
+The reader sends a packed input report to each active, valid NM hot binding. Background decodes it and first posts to the matching `webhid-data:<deviceId>` runtime Port. If such a data Port exists, that delivery is authoritative and background does not send a second copy. An eligible direct bridge clones the report bytes for its fast page callback, while a top-owned shared Port can fan the report locally to matching same-origin child attachments.
 
 Only when **no matching data runtime Port exists** does background fall back to the exact `webhid-control` Ports that own live Sessions for that device. NM input reports do not use a tab-wide `tabs.sendMessage` fallback. The generic broadcast channel and tab messaging remain for appropriate lifecycle/device/global events, not the primary NM report path.
 
@@ -353,7 +359,7 @@ sequenceDiagram
     participant I as Persistent I/O worker
     participant H as HID
 
-    P->>B: data MessagePort request
+    P->>B: exported fast NM function call
     B->>G: webhid-data:<deviceId> runtime Port
     G->>N: persistent Native Messaging Port
     N->>D: direct stdio, or forwarder then socket/pipe
@@ -364,8 +370,10 @@ sequenceDiagram
     D-->>N: acknowledgement
     N-->>G: acknowledgement
     G-->>B: same webhid-data:<deviceId> Port
-    B-->>P: data MessagePort result
+    B-->>P: direct callback (cloneInto bytes)
 ```
+
+For a direct NM generation without an enabled fast entrypoint, the initial request and final result still use the page data MessagePort.
 
 ### `sendReport()` through brokered same-origin child NM
 
@@ -408,11 +416,11 @@ sequenceDiagram
     R->>D: enqueue packed report to active nm_hot sink
     D->>G: client writer, persistent Native Messaging Port
     G->>X: matching webhid-data:<deviceId> Port
-    X->>P: direct page data Port or broker attachment
+    X->>P: fast cloned callback, page data Port, or broker attachment
     Note over G,X: if no matching data Port exists, use exact Session-owner webhid-control Port instead
 ```
 
-For a brokered same-origin child, `X` is the top bridge: it receives one report on its shared runtime data Port and fans the report to the matching child attachment. The exact-owner control-Port fallback is used only when no matching data runtime Port exists; NM input reports do not use a `tabs.sendMessage` fallback.
+For a brokered same-origin child, `X` is the top bridge: it receives one report on its shared runtime data Port and fans the report to the matching child attachment. An eligible direct NM bridge uses the fast cloned callback. The exact-owner control-Port fallback is used only when no matching data runtime Port exists; NM input reports do not use a `tabs.sendMessage` fallback.
 
 ### First and additional open
 

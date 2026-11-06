@@ -79,7 +79,7 @@ If the active tab contains multiple persistent WebHID frame scopes, the site-nam
 - **Data Plane**: how the addon moves data between the site and the daemon.
   - **WebTransport** (default where available): the preferred worker network path when the daemon handshake offers WT.
   - **WebSocket**: the alternate worker network path. A selected WebTransport mode uses WebSocket when no WT endpoint is available.
-  - **Native Messaging**: the compatibility path. It is selected directly when configured, and worker setup or transport failure can move a device to it.
+  - **Native Messaging**: the direct or fallback path. Eligible local NM sessions use a fast `exportFunction` data plane between page MAIN and the isolated bridge; the runtime data Port and Native Messaging backend remain persistent. It is selected directly when configured, and worker setup or transport failure can move a device to it.
 - **Worker Spawn Mode**: how the addon creates the worker in the page. Only shown when a worker is actually used (Data Plane is WebTransport or WebSocket). The bridge pre-flights CSP for shadow spawning; CSP, worker-spawn, or transport failure can result in Native Messaging. Shadow and blob are not a worker-to-worker fallback chain.
   - **Shadow URL** (default): uses the page's own URL for the worker and webRequest interception to serve the data worker.
   - **Blob + CSP rewrite**: creates the worker from a blob URL and asks the extension's CSP path to allow the worker and daemon connections. It works fully on the MV2 build; MV3 header policies may still prevent the spawn, after which Native Messaging is used.
