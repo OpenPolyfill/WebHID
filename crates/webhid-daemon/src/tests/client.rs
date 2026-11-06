@@ -148,3 +148,66 @@ fn test_ipc_event_to_nm_input_report() {
         _ => panic!("expected PackedData"),
     }
 }
+
+#[test]
+fn test_nm_input_batch_preserves_report_order_and_control_boundary() {
+    let (tx, mut rx) = mpsc::channel(8);
+    tx.try_send(NmMessage::packed_input_report(42, [(1, &[0xaa][..])]))
+        .unwrap();
+    tx.try_send(NmMessage::packed_input_report(42, [(2, &[0xbb][..])]))
+        .unwrap();
+    tx.try_send(NmMessage::Control(NmResponse::ok())).unwrap();
+    tx.try_send(NmMessage::packed_input_report(42, [(3, &[0xcc][..])]))
+        .unwrap();
+
+    let mut first = rx.try_recv().unwrap();
+    let mut deferred = None;
+    coalesce_queued_nm_input(&mut first, &mut rx, &mut deferred);
+    let NmMessage::PackedData(data) = first else {
+        panic!("expected input batch")
+    };
+    assert_eq!(
+        data,
+        [
+            &[PKG_INPUT_REPORT, 42, 0, 0, 0][..],
+            &[1, 1, 0, 0xaa][..],
+            &[2, 1, 0, 0xbb][..]
+        ]
+        .concat()
+    );
+    assert!(matches!(deferred.take(), Some(NmMessage::Control(_))));
+    let NmMessage::PackedData(remaining) = rx.try_recv().unwrap() else {
+        panic!("expected remaining input")
+    };
+    assert_eq!(remaining[5], 3);
+}
+
+#[test]
+fn test_nm_input_batch_preserves_device_boundary_and_cap() {
+    let (tx, mut rx) = mpsc::channel(16);
+    for id in 0..10 {
+        tx.try_send(NmMessage::packed_input_report(42, [(id, &[0xaa][..])]))
+            .unwrap();
+    }
+    tx.try_send(NmMessage::packed_input_report(43, [(11, &[0xbb][..])]))
+        .unwrap();
+    let mut first = rx.try_recv().unwrap();
+    let mut deferred = None;
+    coalesce_queued_nm_input(&mut first, &mut rx, &mut deferred);
+    let NmMessage::PackedData(data) = first else {
+        panic!("expected input batch")
+    };
+    assert_eq!(data.len(), 5 + 8 * 4);
+    assert_eq!(data[5], 0);
+    assert_eq!(data[5 + 7 * 4], 7);
+
+    let mut second = rx.try_recv().unwrap();
+    coalesce_queued_nm_input(&mut second, &mut rx, &mut deferred);
+    let NmMessage::PackedData(data) = second else {
+        panic!("expected second batch")
+    };
+    assert_eq!(data.len(), 5 + 2 * 4);
+    assert_eq!(data[5], 8);
+    assert_eq!(data[9], 9);
+    assert!(matches!(deferred, Some(NmMessage::PackedData(_))));
+}

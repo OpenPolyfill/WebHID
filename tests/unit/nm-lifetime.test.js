@@ -257,3 +257,23 @@ test('late successful response to a timed-out open closes its orphan session', a
   await Promise.resolve()
   assert.equal(closed.length, 1)
 })
+
+test('concurrent NM requests share one timeout and release it after completion', async () => {
+  const { nativeMessaging } = loadNativeMessaging()
+  const requests = []
+  nativeMessaging.port = { postMessage: (message) => requests.push(message) }
+  const first = nativeMessaging.sendRequest({ a: 1 })
+  const timer = nativeMessaging.requestTimeoutTimer
+  assert.ok(timer)
+  const second = nativeMessaging.sendRequest({ a: 1 })
+  assert.equal(nativeMessaging.requestTimeoutTimer, timer)
+  assert.equal(nativeMessaging.pending.size, 2)
+
+  nativeMessaging.handleNativeMessage({ n: requests[0].n, s: 200 })
+  assert.equal(nativeMessaging.requestTimeoutTimer, timer)
+  nativeMessaging.handleNativeMessage({ n: requests[1].n, s: 200 })
+  assert.equal(nativeMessaging.requestTimeoutTimer, null)
+  assert.equal(nativeMessaging.pending.size, 0)
+  assert.equal((await first).s, 200)
+  assert.equal((await second).s, 200)
+})

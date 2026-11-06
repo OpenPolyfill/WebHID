@@ -2030,13 +2030,14 @@
    * @param {object} request
    * @returns {void}
    */
+  const DATA_REPORT_ACTIONS = new Set(['sendReport', 'sendFeatureReport', 'receiveFeatureReport'])
+
   function dispatchRuntimeDataRequest(port, request) {
     const prefix = 'webhid-data:'
     const deviceId = port.name.slice(prefix.length)
-    const allowed = new Set(['sendReport', 'sendFeatureReport', 'receiveFeatureReport'])
     if (
       !request ||
-      !allowed.has(request.action) ||
+      !DATA_REPORT_ACTIONS.has(request.action) ||
       String(request.deviceId) !== deviceId ||
       !Number.isInteger(Number(request.deviceId))
     ) {

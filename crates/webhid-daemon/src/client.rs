@@ -18,6 +18,48 @@ enum WriterTask {
     },
 }
 
+const NM_INPUT_BATCH_LIMIT: usize = 8;
+const NM_INPUT_BATCH_MAX_BYTES: usize = 512 * 1024;
+
+fn merge_nm_input_frame(first: &mut NmMessage, next: &NmMessage) -> bool {
+    let (NmMessage::PackedData(first), NmMessage::PackedData(next)) = (first, next) else {
+        return false;
+    };
+    if first.len() < 5
+        || next.len() < 5
+        || first[0] != webhid::PKG_INPUT_REPORT
+        || next[0] != webhid::PKG_INPUT_REPORT
+        || first[1..5] != next[1..5]
+        || first.len() + next.len() - 5 > NM_INPUT_BATCH_MAX_BYTES
+    {
+        return false;
+    }
+    first.extend_from_slice(&next[5..]);
+    true
+}
+
+fn coalesce_queued_nm_input(
+    message: &mut NmMessage,
+    receiver: &mut mpsc::Receiver<NmMessage>,
+    deferred: &mut Option<NmMessage>,
+) {
+    if !matches!(
+        message,
+        NmMessage::PackedData(data) if data.first() == Some(&webhid::PKG_INPUT_REPORT)
+    ) {
+        return;
+    }
+    for _ in 1..NM_INPUT_BATCH_LIMIT {
+        let Ok(next) = receiver.try_recv() else {
+            break;
+        };
+        if !merge_nm_input_frame(message, &next) {
+            *deferred = Some(next);
+            break;
+        }
+    }
+}
+
 impl WriterTask {
     fn stop(self) {
         match self {
@@ -35,13 +77,15 @@ fn run_sync_writer<W: std::io::Write>(
     rx: &mut mpsc::Receiver<NmMessage>,
     cancel: &AtomicBool,
 ) {
+    let mut deferred = None;
     loop {
-        let Some(msg) = rx.blocking_recv() else {
+        let Some(mut msg) = deferred.take().or_else(|| rx.blocking_recv()) else {
             break;
         };
         if cancel.load(Ordering::Acquire) {
             break;
         }
+        coalesce_queued_nm_input(&mut msg, rx, &mut deferred);
         if let Err(e) = protocol::write_message_sync(writer, &msg) {
             log::warn!("[client] write error: {e}");
             break;
@@ -100,7 +144,16 @@ pub async fn handle(
             WriterTask::Async(tokio::spawn(async move {
                 let mut writer = tokio::io::BufWriter::new(writer);
                 let mut rx = rx;
-                while let Some(msg) = rx.recv().await {
+                let mut deferred = None;
+                loop {
+                    let next = match deferred.take() {
+                        Some(msg) => Some(msg),
+                        None => rx.recv().await,
+                    };
+                    let Some(mut msg) = next else {
+                        break;
+                    };
+                    coalesce_queued_nm_input(&mut msg, &mut rx, &mut deferred);
                     if let Err(e) = protocol::write_message(&mut writer, &msg).await {
                         log::warn!("[client] write error: {e}");
                         break;

@@ -265,19 +265,23 @@ fn get_u32(v: &serde_json::Value, key: &str) -> io::Result<u32> {
     })
 }
 
+fn encode_message_frame<T: Serialize>(value: &T) -> io::Result<Vec<u8>> {
+    let mut frame = vec![0; 4];
+    serde_json::to_writer(&mut frame, value)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("JSON encode: {e}")))?;
+    let len = (frame.len() - 4) as u32;
+    frame[..4].copy_from_slice(&len.to_le_bytes());
+    Ok(frame)
+}
+
 /// Serialise `value` as JSON, prefix with its length, and write to `writer`.
 pub async fn write_message<W, T>(writer: &mut W, value: &T) -> io::Result<()>
 where
     W: AsyncWrite + Unpin,
     T: Serialize,
 {
-    let json = serde_json::to_vec(value)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("JSON encode: {e}")))?;
-    let buf = BytesMut::from(&json[..]);
-
-    let len = buf.len() as u32;
-    writer.write_u32_le(len).await?;
-    writer.write_all(&buf).await?;
+    let frame = encode_message_frame(value)?;
+    writer.write_all(&frame).await?;
     writer.flush().await
 }
 /// Synchronously serialise `value` as JSON, prefix with its length, and write
@@ -287,13 +291,8 @@ where
     W: io::Write,
     T: Serialize,
 {
-    let json = serde_json::to_vec(value)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("JSON encode: {e}")))?;
-    let buf = BytesMut::from(&json[..]);
-
-    let len = buf.len() as u32;
-    writer.write_all(&len.to_le_bytes())?;
-    writer.write_all(&buf)?;
+    let frame = encode_message_frame(value)?;
+    writer.write_all(&frame)?;
     writer.flush()
 }
 

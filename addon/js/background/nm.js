@@ -50,6 +50,33 @@
     handshakePort: null,
     /** Per-request deadline for NM requests (see sendFrame). */
     REQUEST_TIMEOUT_MS: 30000,
+    requestTimeoutTimer: null,
+
+    stopRequestTimeout() {
+      if (this.requestTimeoutTimer != null) clearTimeout(this.requestTimeoutTimer)
+      this.requestTimeoutTimer = null
+    },
+
+    scheduleRequestTimeout() {
+      if (this.requestTimeoutTimer != null) return
+      let nextDeadline = Infinity
+      for (const request of this.pending.values()) {
+        if (request.deadline < nextDeadline) nextDeadline = request.deadline
+      }
+      if (!Number.isFinite(nextDeadline)) return
+      this.requestTimeoutTimer = setTimeout(() => {
+        this.requestTimeoutTimer = null
+        const now = Date.now()
+        for (const [id, request] of this.pending) {
+          if (request.deadline > now) continue
+          this.pending.delete(id)
+          if (request.trackLateOpen) this.lateOpenRequests.add(id)
+          logger.warn('NM request n=' + id + ' timed out')
+          request.reject(new Error('NM request timed out'))
+        }
+        this.scheduleRequestTimeout()
+      }, Math.max(1, nextDeadline - Date.now()))
+    },
 
     /**
      * @param {object} message
@@ -63,6 +90,7 @@
       this.lastError = String(message.E)
       for (const [, p] of this.pending) p.resolve(message)
       this.pending.clear()
+      this.stopRequestTimeout()
       this.lateOpenRequests.clear()
       return true
     },
@@ -98,6 +126,7 @@
       const p = this.pending.get(message.n)
       if (!p) return this.tryLateOpenResponse(message)
       this.pending.delete(message.n)
+      if (this.pending.size === 0) this.stopRequestTimeout()
       p.resolve(message)
       return true
     },
@@ -197,6 +226,7 @@
       this.handshakePort = null
       for (const [, p] of this.pending) p.resolve({ s: 503 })
       this.pending.clear()
+      this.stopRequestTimeout()
       this.lateOpenRequests.clear()
       clearAuthorityOwnership()
       broadcastGlobalReset(broadcastExactGlobalReset)
@@ -239,32 +269,20 @@
           return
         }
         const id = this.nextId++
-        // Deadline so a request the daemon never answers cannot hang the
-        // background (and its pending map) forever.
-        const timer = setTimeout(() => {
-          if (this.pending.delete(id)) {
-            if (trackLateOpen) this.lateOpenRequests.add(id)
-            logger.warn('NM request n=' + id + ' timed out')
-            reject(new Error('NM request timed out'))
-          }
-        }, this.REQUEST_TIMEOUT_MS)
         this.pending.set(id, {
-          resolve: (...args) => {
-            clearTimeout(timer)
-            resolve(...args)
-          },
-          reject: (...args) => {
-            clearTimeout(timer)
-            reject(...args)
-          }
+          resolve,
+          reject,
+          trackLateOpen,
+          deadline: Date.now() + this.REQUEST_TIMEOUT_MS
         })
+        this.scheduleRequestTimeout()
         try {
           const message = buildMessage(id)
           logger.debug(describe(message, id))
           this.port.postMessage(message)
         } catch (e) {
           this.pending.delete(id)
-          clearTimeout(timer)
+          if (this.pending.size === 0) this.stopRequestTimeout()
           reject(e)
         }
       })
