@@ -540,6 +540,17 @@
    * @returns {void}
    */
   function detachDataPort(state) {
+    if (state.fastNmGeneration != null && fastNmBridge) {
+      callNative(
+        fastNmBridge,
+        null,
+        'disable',
+        fastNmToken,
+        state.deviceId,
+        state.fastNmGeneration
+      )
+    }
+    state.fastNmGeneration = null
     if (!state.dataPort) {
       state.dataPortGeneration = null
       return
@@ -582,6 +593,12 @@
     state.planeReady = true
     state.planeUnavailable = false
     state.planeUnavailableGeneration = null
+    state.fastNmGeneration =
+      data.directNm &&
+      fastNmBridge &&
+      callNative(fastNmBridge, null, 'enable', fastNmToken, data.deviceId, data.generation)
+        ? data.generation
+        : null
   }
 
   /**
@@ -860,6 +877,23 @@
 
   /** @type {MessagePort|null} */
   let bridgePort = null
+  let fastNmBridge = null
+  let fastNmToken = null
+  function receiveFastNm(kind, deviceId, generation, reportId, bytes, reqId, error) {
+    const device = deviceRegistry.get(deviceId)
+    const state = device ? devState.get(device) : null
+    if (!state || state.fastNmGeneration !== generation || !state.planeReady) return
+    if (kind === 'input') {
+      handleInputReport(state, { reportId, data: bytes ? bytes.buffer : null })
+    } else if (kind === 'result') {
+      onDataPortMessage(state, {
+        type: reportId,
+        reqId,
+        error,
+        data: bytes
+      })
+    }
+  }
   /**
    * Whether this document is a same-origin non-top frame eligible for a
    * private top-owned NM broker. Uses only browser-owned frame relationships,
@@ -889,6 +923,21 @@
           try {
             reflect.deleteProperty(globalThis, 'webhid')
             brokerStackOtp = candidate && typeof candidate.S === 'string' ? candidate.S : null
+            const exported = windowObject.__webhidNmDirect
+            reflect.deleteProperty(globalThis, '__webhidNmDirect')
+            if (typeof exported === 'function' && typeof candidate.fastToken === 'string') {
+              const registered = callNative(
+                exported,
+                null,
+                'register',
+                candidate.fastToken,
+                receiveFastNm
+              )
+              if (registered) {
+                fastNmBridge = exported
+                fastNmToken = candidate.fastToken
+              }
+            }
             bridgePort = directPort
             setupBridgePort()
             if (fanoutCandidate || brokerStackOtp) armBrokerCandidateSetter()
@@ -1194,8 +1243,7 @@
   const deviceRegistry = hardenMap(new NativeMap())
 
   /**
-   * Sends a report request over the in-page plane when one is open, else the
-   * device's data port, resolving with the daemon ack.
+   * Sends a report over the in-page plane, direct NM bridge, or device data port.
    * @param {object} state
    * @param {object} opts
    * @param {number} opts.inPageType
@@ -1245,12 +1293,30 @@
       }
       state.dataPending.set(reqId, entry)
       try {
-        callNative(
-          nativeMessagePortPostMessage,
-          state.dataPort,
-          msg,
-          transfers.length ? makePristineIterable(transfers) : undefined
-        )
+        if (state.fastNmGeneration === generation && fastNmBridge) {
+          if (
+            !callNative(
+              fastNmBridge,
+              null,
+              'send',
+              fastNmToken,
+              state.deviceId,
+              generation,
+              opts.portType,
+              reqId,
+              opts.reportId,
+              opts.payload || null
+            )
+          )
+            throw new NativeError('data plane unavailable')
+        } else {
+          callNative(
+            nativeMessagePortPostMessage,
+            state.dataPort,
+            msg,
+            transfers.length ? makePristineIterable(transfers) : undefined
+          )
+        }
       } catch (error) {
         state.dataPending.delete(reqId)
         entry.reject(error)
@@ -2283,6 +2349,7 @@
       planeReady: false,
       planeUnavailable: false,
       planeUnavailableGeneration: null,
+      fastNmGeneration: null,
       dataPort: null,
       dataPortGeneration: null,
       dataPending: null,

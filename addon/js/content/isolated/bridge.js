@@ -14,6 +14,106 @@
   logger.initLogger('bridge')
   const frameInstanceId = 'frame-' + crypto.randomUUID()
   const pageChannel = new MessageChannel()
+  const fastToken = crypto.randomUUID()
+  const fastReplyPorts = new Map()
+  const fastEnabledGenerations = new Map()
+  let fastSink = null
+  function deliverFastPayload(kind, deviceId, generation, reportId, data, reqId, error) {
+    if (!fastSink) return
+    const bytes =
+      data == null
+        ? null
+        : data instanceof Uint8Array &&
+            data.byteOffset === 0 &&
+            data.byteLength === data.buffer.byteLength
+          ? data
+          : new Uint8Array(data)
+    fastSink(
+      kind,
+      deviceId,
+      generation,
+      reportId,
+      bytes ? globalThis.cloneInto(bytes, window) : null,
+      reqId,
+      error
+    )
+  }
+  function fastReplyPort(context, deviceId, key, generation) {
+    const existing = fastReplyPorts.get(key)
+    if (existing && existing.generation === generation) return existing.port
+    const port = {
+      postMessage(message) {
+        if (context.destroyed || spawnGen.get(key) !== generation) return
+        deliverFastPayload(
+          'result',
+          deviceId,
+          generation,
+          message.type,
+          message.data,
+          message.reqId,
+          message.error
+        )
+      }
+    }
+    fastReplyPorts.set(key, { generation, port })
+    return port
+  }
+  globalThis.exportFunction(
+    (command, token, a, b, c, d, e, f) => {
+      if (token !== fastToken) return false
+      if (command === 'register') {
+        if (fastSink) return false
+        fastSink = a
+        return true
+      }
+      if (command === 'disable') {
+        const context = ownContext()
+        if (!context) return false
+        const key = planeKeyForClient(context, a, 'window')
+        if (fastEnabledGenerations.get(key) === b) fastEnabledGenerations.delete(key)
+        return true
+      }
+      if (command === 'enable') {
+        const context = ownContext()
+        const sessions = clientSessions.get(pagePort)
+        if (!context || context.destroyed || !sessions || !sessions.has(a)) return false
+        const key = planeKeyForClient(context, a, 'window')
+        if (
+          spawnGen.get(key) !== b ||
+          readyGenerations.get(key) !== b ||
+          !nmPlanes.has(key) ||
+          workers.has(key) ||
+          inPageDevices.has(key) ||
+          brokerAttachments.has(key) ||
+          brokerAttachedKeys.has(key)
+        )
+          return false
+        fastEnabledGenerations.set(key, b)
+        return true
+      }
+      if (command !== 'send' || !fastSink) return false
+      const context = ownContext()
+      const sessions = clientSessions.get(pagePort)
+      if (!context || context.destroyed || !sessions || !sessions.has(a)) return false
+      const key = planeKeyForClient(context, a, 'window')
+      if (
+        spawnGen.get(key) !== b ||
+        fastEnabledGenerations.get(key) !== b ||
+        !nmPlanes.has(key) ||
+        workers.has(key) ||
+        inPageDevices.has(key) ||
+        brokerAttachments.has(key) ||
+        brokerAttachedKeys.has(key)
+      )
+        return false
+      const msg = { type: c, reqId: d, reportId: e }
+      if (f != null) msg.data = new Uint8Array(f)
+      onDataPortMessage(context, a, msg, fastReplyPort(context, a, key, b))
+      return true
+    },
+    window.wrappedJSObject,
+    { defineAs: '__webhidNmDirect' }
+  )
   const fanoutCandidate = (function () {
     if (window === window.top) return false
     const origin = window.location.origin
@@ -26,9 +126,11 @@
     return true
   })()
   let stackOtp = fanoutCandidate ? crypto.randomUUID() : null
-  const bootstrapValue = fanoutCandidate
-    ? { directPort: pageChannel.port2, S: stackOtp }
-    : pageChannel.port2
+  const bootstrapValue = {
+    directPort: pageChannel.port2,
+    fastToken,
+    ...(fanoutCandidate ? { S: stackOtp } : {})
+  }
   window.wrappedJSObject.webhid = globalThis.cloneInto(bootstrapValue, window, {
     wrapReflectors: true
   })
@@ -971,7 +1073,14 @@
       client.port.postMessage({
         type: 'dataPlaneReady',
         deviceId: deviceIdForPlaneKey(key),
-        generation
+        generation,
+        directNm:
+          client.port === pagePort &&
+          nmPlanes.has(key) &&
+          !workers.has(key) &&
+          !inPageDevices.has(key) &&
+          !brokerAttachments.has(key) &&
+          !brokerAttachedKeys.has(key)
       })
     } catch (e) {
       logger.debug('data plane ready notification failed', e)
@@ -1234,6 +1343,8 @@
     connectParams.delete(key)
     deviceTransports.delete(key)
     nmPlanes.delete(key)
+    fastReplyPorts.delete(key)
+    fastEnabledGenerations.delete(key)
     planeReadiness.delete(key)
     readyGenerations.delete(key)
     maybeDisconnectRuntimeDataPort(deviceId)
@@ -3555,10 +3666,24 @@
         try {
           const data = messageEvent.data
           const copy = data != null && ArrayBuffer.isView(data) ? new Uint8Array(data) : data
-          port.postMessage({
-            type: 'event',
-            event: { ...messageEvent, data: copy }
-          })
+          if (
+            port === pagePort &&
+            fastSink &&
+            fastEnabledGenerations.get(key) === spawnGen.get(key)
+          ) {
+            deliverFastPayload(
+              'input',
+              messageEvent.deviceId,
+              spawnGen.get(key),
+              messageEvent.reportId,
+              copy
+            )
+          } else {
+            port.postMessage({
+              type: 'event',
+              event: { ...messageEvent, data: copy }
+            })
+          }
           handled = true
         } catch (e) {
           logger.debug('forward inputReport to NM client failed', e)
@@ -3621,7 +3746,7 @@
   }
 
   /**
-   * Sends the report result back over the device's data port.
+   * Sends the report result through the device's port or direct NM callback.
    * @param {object} msg
    * @param {MessagePort|null} port
    * @param {object|null} response
