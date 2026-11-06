@@ -59,197 +59,208 @@
       </section>
       <section id="view-settings" hidden>
         <div id="settings-section">
-          <div class="setting">
-            <div class="setting-info">
-              <h3 id="popupDataPlane" data-i18n="popupDataPlane">Data Plane</h3>
-              <div class="info-popover">
-                <p data-i18n-md="popupDataPlaneDesc">
-                  WebTransport worker, WebSocket worker, or Native Messaging
-                </p>
+          <section class="popup-preferences-group">
+            <h2 data-i18n="settingsGroupDevices">Connections and device selection</h2>
+            <div class="setting">
+              <div class="setting-info">
+                <h3 id="popupDataPlane" data-i18n="popupDataPlane">Data Plane</h3>
+                <div class="info-popover">
+                  <p data-i18n-md="popupDataPlaneDesc">
+                    WebTransport worker, WebSocket worker, or Native Messaging
+                  </p>
+                </div>
               </div>
+              <webhid-radio-group class="seg-group" aria-labelledby="popupDataPlane">
+                <label class="seg-option" data-i18n-attr="title:settingsDataPlaneWt">
+                  <input
+                    type="radio"
+                    name="dataPlane"
+                    value="wt"
+                    data-i18n-attr="aria-label:settingsDataPlaneWt"
+                  />
+                  <span class="seg-label" data-i18n="segDataPlaneWt">WT</span>
+                </label>
+                <label class="seg-option" data-i18n-attr="title:settingsDataPlaneWtInpage" hidden>
+                  <input
+                    type="radio"
+                    name="dataPlane"
+                    value="wt-inpage"
+                    data-i18n-attr="aria-label:settingsDataPlaneWtInpage"
+                  />
+                  <span class="seg-label" data-i18n="segDataPlaneWtInpage">WTI</span>
+                </label>
+                <label class="seg-option" data-i18n-attr="title:settingsDataPlaneWs">
+                  <input
+                    type="radio"
+                    name="dataPlane"
+                    value="ws"
+                    data-i18n-attr="aria-label:settingsDataPlaneWs"
+                  />
+                  <span class="seg-label" data-i18n="segDataPlaneWs">WS</span>
+                </label>
+                <label class="seg-option" data-i18n-attr="title:settingsDataPlaneNm">
+                  <input
+                    type="radio"
+                    name="dataPlane"
+                    value="nm"
+                    data-i18n-attr="aria-label:settingsDataPlaneNm"
+                  />
+                  <span class="seg-label" data-i18n="segDataPlaneNm">NM</span>
+                </label>
+              </webhid-radio-group>
             </div>
-            <webhid-radio-group class="seg-group" aria-labelledby="popupDataPlane">
-              <label class="seg-option" data-i18n-attr="title:settingsDataPlaneWt">
-                <input
-                  type="radio"
-                  name="dataPlane"
-                  value="wt"
-                  data-i18n-attr="aria-label:settingsDataPlaneWt"
-                />
-                <span class="seg-label" data-i18n="segDataPlaneWt">WT</span>
-              </label>
-              <label class="seg-option" data-i18n-attr="title:settingsDataPlaneWtInpage" hidden>
-                <input
-                  type="radio"
-                  name="dataPlane"
-                  value="wt-inpage"
-                  data-i18n-attr="aria-label:settingsDataPlaneWtInpage"
-                />
-                <span class="seg-label" data-i18n="segDataPlaneWtInpage">WTI</span>
-              </label>
-              <label class="seg-option" data-i18n-attr="title:settingsDataPlaneWs">
-                <input
-                  type="radio"
-                  name="dataPlane"
-                  value="ws"
-                  data-i18n-attr="aria-label:settingsDataPlaneWs"
-                />
-                <span class="seg-label" data-i18n="segDataPlaneWs">WS</span>
-              </label>
-              <label class="seg-option" data-i18n-attr="title:settingsDataPlaneNm">
-                <input
-                  type="radio"
-                  name="dataPlane"
-                  value="nm"
-                  data-i18n-attr="aria-label:settingsDataPlaneNm"
-                />
-                <span class="seg-label" data-i18n="segDataPlaneNm">NM</span>
-              </label>
-            </webhid-radio-group>
-          </div>
-          <div class="setting">
-            <div class="setting-info">
-              <h3 id="popupDevicePickerMode" data-i18n="popupDevicePickerMode">
-                Device Picker Mode
-              </h3>
-              <div class="info-popover">
-                <p data-i18n-md="popupDevicePickerModeDesc">
-                  How the device chooser is presented on this site
-                </p>
+            <div class="setting">
+              <div class="setting-info">
+                <h3 id="popupDevicePickerMode" data-i18n="popupDevicePickerMode">
+                  Device Picker Mode
+                </h3>
+                <div class="info-popover">
+                  <p data-i18n-md="popupDevicePickerModeDesc">
+                    How the device chooser is presented on this site
+                  </p>
+                </div>
               </div>
+              <webhid-radio-group class="seg-group" aria-labelledby="popupDevicePickerMode">
+                <label class="seg-option" data-i18n-attr="title:settingsDevicePickerModal">
+                  <input
+                    type="radio"
+                    name="devicePickerMode"
+                    value="modal"
+                    data-i18n-attr="aria-label:settingsDevicePickerModal"
+                  />
+                  <span class="seg-label" data-i18n="segPickerModal">Modal</span>
+                </label>
+                <label class="seg-option" data-i18n-attr="title:settingsDevicePickerPageAction">
+                  <input
+                    type="radio"
+                    name="devicePickerMode"
+                    value="pageAction"
+                    data-i18n-attr="aria-label:settingsDevicePickerPageAction"
+                  />
+                  <span class="seg-label" data-i18n="segPickerPageAction">Page Action</span>
+                </label>
+                <label class="seg-option" data-i18n-attr="title:settingsDevicePickerWindow">
+                  <input
+                    type="radio"
+                    name="devicePickerMode"
+                    value="window"
+                    data-i18n-attr="aria-label:settingsDevicePickerWindow"
+                  />
+                  <span class="seg-label" data-i18n="segPickerWindow">Window</span>
+                </label>
+                <label class="seg-option" data-picker-capability="privileged">
+                  <input
+                    type="radio"
+                    name="devicePickerMode"
+                    value="privileged"
+                    aria-label="Privileged doorhanger"
+                  />
+                  <span class="seg-label">Privileged doorhanger</span>
+                </label>
+              </webhid-radio-group>
             </div>
-            <webhid-radio-group class="seg-group" aria-labelledby="popupDevicePickerMode">
-              <label class="seg-option" data-i18n-attr="title:settingsDevicePickerModal">
-                <input
-                  type="radio"
-                  name="devicePickerMode"
-                  value="modal"
-                  data-i18n-attr="aria-label:settingsDevicePickerModal"
-                />
-                <span class="seg-label" data-i18n="segPickerModal">Modal</span>
-              </label>
-              <label class="seg-option" data-i18n-attr="title:settingsDevicePickerPageAction">
-                <input
-                  type="radio"
-                  name="devicePickerMode"
-                  value="pageAction"
-                  data-i18n-attr="aria-label:settingsDevicePickerPageAction"
-                />
-                <span class="seg-label" data-i18n="segPickerPageAction">Page Action</span>
-              </label>
-              <label class="seg-option" data-i18n-attr="title:settingsDevicePickerWindow">
-                <input
-                  type="radio"
-                  name="devicePickerMode"
-                  value="window"
-                  data-i18n-attr="aria-label:settingsDevicePickerWindow"
-                />
-                <span class="seg-label" data-i18n="segPickerWindow">Window</span>
-              </label>
-              <label class="seg-option" data-picker-capability="privileged">
-                <input
-                  type="radio"
-                  name="devicePickerMode"
-                  value="privileged"
-                  aria-label="Privileged doorhanger"
-                />
-                <span class="seg-label">Privileged doorhanger</span>
-              </label>
-            </webhid-radio-group>
-          </div>
-          <div class="setting">
-            <div class="setting-info">
-              <h3 id="popupWorkerPolyfill" data-i18n="popupWorkerPolyfill">Worker Polyfill</h3>
-              <div class="info-popover">
-                <p data-i18n-md="popupWorkerPolyfillDesc">
-                  Inject WebHID API into Worker scripts on this site
-                </p>
+          </section>
+          <section class="popup-preferences-group">
+            <h2 data-i18n="settingsGroupCompatibility">Compatibility</h2>
+            <div class="setting">
+              <div class="setting-info">
+                <h3 id="popupWorkerPolyfill" data-i18n="popupWorkerPolyfill">Worker Polyfill</h3>
+                <div class="info-popover">
+                  <p data-i18n-md="popupWorkerPolyfillDesc">
+                    Inject WebHID API into Worker scripts on this site
+                  </p>
+                </div>
               </div>
+              <webhid-toggle>
+                <input
+                  type="checkbox"
+                  id="workerPolyfillEnabled"
+                  aria-labelledby="popupWorkerPolyfill"
+                />
+              </webhid-toggle>
             </div>
-            <webhid-toggle>
-              <input
-                type="checkbox"
-                id="workerPolyfillEnabled"
-                aria-labelledby="popupWorkerPolyfill"
-              />
-            </webhid-toggle>
-          </div>
-          <div class="setting" id="workerSpawnMode-setting">
-            <div class="setting-info">
-              <h3 id="popupWorkerSpawnMode" data-i18n="popupWorkerSpawnMode">Worker Spawn Mode</h3>
-              <div class="info-popover">
-                <p data-i18n-md="popupWorkerSpawnModeDesc">
-                  How the data worker is created on this site
-                </p>
+            <div class="setting" id="workerSpawnMode-setting">
+              <div class="setting-info">
+                <h3 id="popupWorkerSpawnMode" data-i18n="popupWorkerSpawnMode">
+                  Worker Spawn Mode
+                </h3>
+                <div class="info-popover">
+                  <p data-i18n-md="popupWorkerSpawnModeDesc">
+                    How the data worker is created on this site
+                  </p>
+                </div>
               </div>
+              <webhid-radio-group class="seg-group" aria-labelledby="popupWorkerSpawnMode">
+                <label class="seg-option" data-i18n-attr="title:settingsWorkerSpawnShadow">
+                  <input
+                    type="radio"
+                    name="workerSpawnMode"
+                    value="shadow"
+                    data-i18n-attr="aria-label:settingsWorkerSpawnShadow"
+                  />
+                  <span class="seg-label" data-i18n="segSpawnShadow">Shadow</span>
+                </label>
+                <label class="seg-option" data-i18n-attr="title:settingsWorkerSpawnBlob">
+                  <input
+                    type="radio"
+                    name="workerSpawnMode"
+                    value="blob"
+                    data-i18n-attr="aria-label:settingsWorkerSpawnBlob"
+                  />
+                  <span class="seg-label" data-i18n="segSpawnBlob">Blob</span>
+                </label>
+              </webhid-radio-group>
             </div>
-            <webhid-radio-group class="seg-group" aria-labelledby="popupWorkerSpawnMode">
-              <label class="seg-option" data-i18n-attr="title:settingsWorkerSpawnShadow">
-                <input
-                  type="radio"
-                  name="workerSpawnMode"
-                  value="shadow"
-                  data-i18n-attr="aria-label:settingsWorkerSpawnShadow"
-                />
-                <span class="seg-label" data-i18n="segSpawnShadow">Shadow</span>
-              </label>
-              <label class="seg-option" data-i18n-attr="title:settingsWorkerSpawnBlob">
-                <input
-                  type="radio"
-                  name="workerSpawnMode"
-                  value="blob"
-                  data-i18n-attr="aria-label:settingsWorkerSpawnBlob"
-                />
-                <span class="seg-label" data-i18n="segSpawnBlob">Blob</span>
-              </label>
-            </webhid-radio-group>
-          </div>
-          <div class="setting">
-            <div class="setting-info">
-              <h3 id="popupLogLevel" data-i18n="popupLogLevel">Log Level</h3>
-              <div class="info-popover">
-                <p data-i18n-md="popupLogLevelDesc">Console output verbosity for this site</p>
+          </section>
+          <section class="popup-preferences-group">
+            <h2 data-i18n="settingsGroupDiagnostics">Diagnostics</h2>
+            <div class="setting">
+              <div class="setting-info">
+                <h3 id="popupLogLevel" data-i18n="popupLogLevel">Log Level</h3>
+                <div class="info-popover">
+                  <p data-i18n-md="popupLogLevelDesc">Console output verbosity for this site</p>
+                </div>
               </div>
+              <webhid-radio-group class="seg-group" aria-labelledby="popupLogLevel">
+                <label class="seg-option" data-i18n-attr="title:logLevelError">
+                  <input
+                    type="radio"
+                    name="logLevel"
+                    value="0"
+                    data-i18n-attr="aria-label:logLevelError"
+                  />
+                  <span class="seg-label" data-i18n="logLevelError">Error</span>
+                </label>
+                <label class="seg-option" data-i18n-attr="title:logLevelWarn">
+                  <input
+                    type="radio"
+                    name="logLevel"
+                    value="1"
+                    data-i18n-attr="aria-label:logLevelWarn"
+                  />
+                  <span class="seg-label" data-i18n="logLevelWarn">Warn</span>
+                </label>
+                <label class="seg-option" data-i18n-attr="title:logLevelInfo">
+                  <input
+                    type="radio"
+                    name="logLevel"
+                    value="2"
+                    data-i18n-attr="aria-label:logLevelInfo"
+                  />
+                  <span class="seg-label" data-i18n="logLevelInfo">Info</span>
+                </label>
+                <label class="seg-option" data-i18n-attr="title:logLevelDebug">
+                  <input
+                    type="radio"
+                    name="logLevel"
+                    value="3"
+                    data-i18n-attr="aria-label:logLevelDebug"
+                  />
+                  <span class="seg-label" data-i18n="logLevelDebug">Debug</span>
+                </label>
+              </webhid-radio-group>
             </div>
-            <webhid-radio-group class="seg-group" aria-labelledby="popupLogLevel">
-              <label class="seg-option" data-i18n-attr="title:logLevelError">
-                <input
-                  type="radio"
-                  name="logLevel"
-                  value="0"
-                  data-i18n-attr="aria-label:logLevelError"
-                />
-                <span class="seg-label" data-i18n="logLevelError">Error</span>
-              </label>
-              <label class="seg-option" data-i18n-attr="title:logLevelWarn">
-                <input
-                  type="radio"
-                  name="logLevel"
-                  value="1"
-                  data-i18n-attr="aria-label:logLevelWarn"
-                />
-                <span class="seg-label" data-i18n="logLevelWarn">Warn</span>
-              </label>
-              <label class="seg-option" data-i18n-attr="title:logLevelInfo">
-                <input
-                  type="radio"
-                  name="logLevel"
-                  value="2"
-                  data-i18n-attr="aria-label:logLevelInfo"
-                />
-                <span class="seg-label" data-i18n="logLevelInfo">Info</span>
-              </label>
-              <label class="seg-option" data-i18n-attr="title:logLevelDebug">
-                <input
-                  type="radio"
-                  name="logLevel"
-                  value="3"
-                  data-i18n-attr="aria-label:logLevelDebug"
-                />
-                <span class="seg-label" data-i18n="logLevelDebug">Debug</span>
-              </label>
-            </webhid-radio-group>
-          </div>
+          </section>
           <div id="mac-privacy" class="setting" hidden>
             <div class="setting-info">
               <h3 data-i18n="macPrivacyTitle">macOS Input Monitoring</h3>

@@ -1,10 +1,52 @@
 body {
   width: 360px;
-  padding: 12px;
+  box-sizing: border-box;
+  padding: var(--space-medium, 16px);
 }
 
-.setting {
-  padding: 8px 0;
+.popup-preferences-group {
+  margin-bottom: var(--space-large, 20px);
+}
+
+.popup-preferences-group h2 {
+  margin: var(--space-large, 20px) 0 0;
+  padding: 0 0 var(--space-small, 8px);
+  color: var(--text);
+  font-size: var(--font-size-root, 14px);
+  font-weight: var(--font-weight-heading, 600);
+  letter-spacing: normal;
+  text-transform: none;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.popup-preferences-group .setting {
+  gap: var(--space-small, 8px);
+  padding: var(--space-medium, 16px) 0;
+  align-items: center;
+}
+
+.popup-preferences-group .setting:has(webhid-radio-group) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.popup-preferences-group webhid-radio-group.seg-group {
+  justify-content: flex-start;
+  gap: var(--space-small, 8px) var(--space-medium, 16px);
+}
+
+.popup-preferences-group .setting-info h3 {
+  font-size: var(--font-size-small, 12px);
+}
+
+#devices-section > h2 {
+  margin: var(--space-large, 20px) 0 var(--space-small, 8px);
+  padding: 0 0 var(--space-small, 8px);
+  color: var(--text);
+  font-size: var(--font-size-root, 14px);
+  font-weight: var(--font-weight-heading, 600);
+  letter-spacing: normal;
+  text-transform: none;
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 #header {

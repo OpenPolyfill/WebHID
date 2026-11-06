@@ -1,14 +1,59 @@
-body {
-  max-width: 600px;
-  margin: 40px auto;
-  padding: 0 20px;
+.preferences-group .setting {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-medium, 16px);
+  align-items: center;
+  padding: var(--space-large, 20px) 0;
+}
+
+.preferences-group .setting:has(webhid-radio-group) {
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-medium, 16px);
+}
+
+.preferences-group .setting-info h3 {
+  display: block;
+  margin: 0 0 var(--space-xxsmall, 4px);
+  font-size: var(--font-size-root, 14px);
+  font-weight: var(--font-weight-semibold, 600);
+}
+
+.preferences-group .info-popover {
+  display: block;
+  position: static;
+  max-width: none;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.preferences-group .info-popover::before {
+  display: none;
+}
+
+.preferences-group .info-popover p {
+  font-size: var(--font-size-small, 12px);
+  line-height: 1.6;
+}
+
+.preferences-group webhid-radio-group.seg-group {
+  display: grid;
+  justify-content: flex-start;
+  justify-items: start;
+  align-self: start;
+  gap: var(--space-small, 8px);
+}
+
+.preferences-group webhid-radio-group .seg-option {
+  cursor: pointer;
 }
 
 .status {
-  margin-top: 20px;
-  padding: 10px;
+  margin-top: var(--space-large, 20px);
+  padding: var(--space-small, 8px) var(--space-medium, 16px);
   background: var(--surface-hover);
   border-radius: var(--radius-md);
-  font-size: 0.85em;
+  font-size: var(--font-size-small, 12px);
   display: none;
 }

@@ -6,14 +6,26 @@
     <link rel="stylesheet" href="chrome://global/skin/in-content/common.css" />
     <link rel="stylesheet" href="../../../../css/shared.css" />
     <link rel="stylesheet" href="../../../../css/native.css" />
+    <link rel="stylesheet" href="../../../../css/preferences-layout.css" />
     <link rel="stylesheet" href="style.css" />
   </head>
-  <body>
-    <main role="main">
-      <h1 data-i18n="devicesTitle">Paired Devices (all sites)</h1>
-      <div id="devices-list"></div>
-      <div id="devices-none" class="muted" data-i18n="devicesNone" hidden>
-        No devices paired on any site.
+  <body class="preferences-page">
+    <aside class="preferences-sidebar">
+      <div class="preferences-brand" data-i18n="popupTitle">WebHID</div>
+      <nav class="preferences-nav" aria-label="WebHID">
+        <a href="../settings/index.html" data-i18n="popupSettings">Settings</a>
+        <a href="../devices/index.html" aria-current="page" data-i18n="popupPairedDevices"
+          >Paired Devices</a
+        >
+      </nav>
+    </aside>
+    <main class="preferences-main" role="main">
+      <div class="preferences-panel">
+        <h1 data-i18n="devicesTitle">Paired Devices (all sites)</h1>
+        <div id="devices-list"></div>
+        <div id="devices-none" class="muted" data-i18n="devicesNone" hidden>
+          No devices paired on any site.
+        </div>
       </div>
     </main>
     <script src="../../../../js/utils/bootstrap.js"></script>

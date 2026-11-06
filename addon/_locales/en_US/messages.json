@@ -131,6 +131,18 @@
   "settingsTitle": {
     "message": "WebHID Settings"
   },
+  "settingsGroupGeneral": {
+    "message": "General"
+  },
+  "settingsGroupDevices": {
+    "message": "Connections and device selection"
+  },
+  "settingsGroupCompatibility": {
+    "message": "Compatibility"
+  },
+  "settingsGroupDiagnostics": {
+    "message": "Diagnostics"
+  },
   "settingsDaemonAsNmHost": {
     "message": "Daemon as NM host"
   },

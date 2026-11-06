@@ -4,12 +4,10 @@
   const loadGlobalSettings = webhid.import('loadGlobalSettings')
   const saveGlobalSetting = webhid.import('saveGlobalSetting')
   const GLOBAL_DEFAULTS = webhid.import('GLOBAL_DEFAULTS')
-  const initInfoPopovers = webhid.import('initInfoPopovers')
   logger.initLogger('settings')
 
   localizeHTML(document)
   document.querySelectorAll('webhid-toggle').forEach((toggle) => toggle.sync())
-  initInfoPopovers(document)
 
   const current = await loadGlobalSettings()
   const pickerCapabilities = await browser.runtime.sendMessage({

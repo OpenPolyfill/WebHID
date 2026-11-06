@@ -1,0 +1,115 @@
+/* Full-page settings layout, modeled on Firefox's in-content preferences. */
+body.preferences-page {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
+  min-height: 100vh;
+  margin: 0;
+  padding: 0;
+  background: var(--in-content-page-background, var(--bg));
+}
+
+.preferences-sidebar {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  box-sizing: border-box;
+  height: 100vh;
+  padding: var(--space-xxlarge, 32px) var(--space-medium, 16px);
+  background: var(--background-color-canvas, var(--bg));
+  border-inline-end: 1px solid var(--border-subtle);
+}
+
+.preferences-brand {
+  margin: 0 var(--space-small, 8px) var(--space-large, 20px);
+  font-size: var(--font-size-large, 16px);
+  font-weight: var(--font-weight-heading, 600);
+}
+
+.preferences-nav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xxsmall, 4px);
+}
+
+.preferences-nav a {
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  min-height: var(--size-item-large, 32px);
+  padding: var(--space-small, 8px) var(--space-medium, 16px);
+  color: var(--text);
+  text-decoration: none;
+  border-radius: var(--border-radius-medium, var(--radius-md));
+}
+
+.preferences-nav a:hover {
+  background: var(--button-background-color-ghost-hover, var(--surface-hover));
+}
+
+.preferences-nav a[aria-current='page'] {
+  background: var(--button-background-color-selected, var(--accent-surface));
+  color: var(--text);
+  font-weight: var(--font-weight-semibold, 600);
+}
+
+.preferences-main {
+  box-sizing: border-box;
+  min-width: 0;
+  width: 100%;
+  padding: var(--page-space-block-start, 40px) var(--space-xxlarge, 32px) var(--space-xxlarge, 32px);
+}
+
+.preferences-panel {
+  width: min(100%, 600px);
+}
+
+.preferences-panel > h1 {
+  margin: 0 0 var(--space-xlarge, 24px);
+  padding: 0;
+  border: 0;
+  color: var(--text);
+  font-size: var(--font-size-heading-large, 24px);
+  font-weight: var(--font-weight-heading, 600);
+}
+
+.preferences-group {
+  margin: 0 0 var(--space-xxlarge, 32px);
+}
+
+.preferences-group > h2 {
+  margin: 0;
+  padding-bottom: var(--space-small, 8px);
+  color: var(--text);
+  font-size: var(--font-size-heading-medium, 18px);
+  font-weight: var(--font-weight-heading, 600);
+  letter-spacing: normal;
+  text-transform: none;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+@media (max-width: 820px) {
+  body.preferences-page {
+    display: block;
+  }
+
+  .preferences-sidebar {
+    position: static;
+    height: auto;
+    padding: var(--space-small, 8px) var(--space-medium, 16px);
+    border-inline-end: 0;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .preferences-brand {
+    display: none;
+  }
+
+  .preferences-nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .preferences-main {
+    padding: var(--space-xlarge, 24px) var(--space-large, 20px);
+  }
+}
