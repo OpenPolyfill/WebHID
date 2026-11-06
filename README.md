@@ -91,9 +91,6 @@ If the active tab contains multiple persistent WebHID frame scopes, the site-nam
 - **Worker Polyfill**: support for sites that use WebHID inside Dedicated Workers.
   - **Off** (default): most sites do not need it.
   - **On**: injects the WebHID API into Dedicated Worker scripts. `requestDevice()` remains available only on the page as required by the WebHID model. Service Worker WebHID is not provided by the polyfill. Reload the page after changing.
-- **Allow activation-less requestDevice()**: workaround for the few sites that request devices outside of a click.
-  - **Off** (default): normal behavior; sites request devices from a click.
-  - **On**: lets the site request devices without a click (the chooser still asks you to pick one). Reload the page after changing.
 - **Log Level**: how much detail the addon writes to the browser console.
   - **Error**: errors only.
   - **Warn** (default): warnings and errors.

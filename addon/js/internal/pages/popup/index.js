@@ -299,9 +299,6 @@
     /** @type {HTMLInputElement} */
     document.getElementById('workerPolyfillEnabled').checked =
       settings.workerPolyfillEnabled || false
-    /** @type {HTMLInputElement} */
-    document.getElementById('allowActivationlessRequestDevice').checked =
-      settings.allowActivationlessRequestDevice || false
     document.querySelectorAll('webhid-toggle').forEach((toggle) => toggle.sync())
     refreshPlaneVisibility()
   }
@@ -328,9 +325,6 @@
   })
   document.getElementById('workerPolyfillEnabled').addEventListener('change', (e) => {
     saveSetting('workerPolyfillEnabled', e.target.checked)
-  })
-  document.getElementById('allowActivationlessRequestDevice').addEventListener('change', (e) => {
-    saveSetting('allowActivationlessRequestDevice', e.target.checked)
   })
 
   /** @type {boolean} */

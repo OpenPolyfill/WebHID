@@ -19,8 +19,7 @@
   for (const key of [
     'daemonAsNmHost',
     'hidePageAction',
-    'workerPolyfillEnabled',
-    'allowActivationlessRequestDevice'
+    'workerPolyfillEnabled'
   ]) {
     document.getElementById(key).checked = current[key]
   }
@@ -53,8 +52,7 @@
   for (const key of [
     'daemonAsNmHost',
     'hidePageAction',
-    'workerPolyfillEnabled',
-    'allowActivationlessRequestDevice'
+    'workerPolyfillEnabled'
   ]) {
     document.getElementById(key).addEventListener('change', async (e) => {
       await saveGlobalSetting(key, e.target.checked)

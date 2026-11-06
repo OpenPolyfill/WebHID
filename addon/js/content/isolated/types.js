@@ -22,5 +22,4 @@
  * @property {boolean} hidePageAction
  * @property {string} devicePickerMode
  * @property {boolean} workerPolyfillEnabled
- * @property {boolean} allowActivationlessRequestDevice
  */

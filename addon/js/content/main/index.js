@@ -2664,6 +2664,8 @@
    * @param {object} options
    * @param {object[]} options.filters
    * @param {object[]} [options.exclusionFilters]
+   * @param {boolean} hasActivation
+   * @param {boolean} calledFromConsole
    * @returns {Promise<object[]>}
    */
   async function requestDeviceImpl(options, hasActivation, calledFromConsole) {
@@ -2676,7 +2678,7 @@
         'SecurityError'
       )
     }
-    if (!hasActivation && !settings.allowActivationlessRequestDevice && !calledFromConsole) {
+    if (!hasActivation && !calledFromConsole) {
       throw new NativeDOMException(
         'Must be handling a user gesture to perform a hid.requestDevice() call.',
         'SecurityError'

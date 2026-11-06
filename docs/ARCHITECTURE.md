@@ -275,11 +275,10 @@ Product-code `tabs.sendMessage` remains a one-shot fallback for global reset and
 
 ### Settings
 
-User-facing settings include `dataPlane`, `workerSpawnMode`, `daemonAsNmHost`, `hidePageAction`, `logLevel`, `devicePickerMode`, `workerPolyfillEnabled`, and `allowActivationlessRequestDevice`. `daemonAsNmHost` defaults to `true` on macOS and Windows when no stored value exists, and `false` elsewhere. `daemonAsNmHost` and `hidePageAction` are global-only; the other user-facing settings support site overrides.
+User-facing settings include `dataPlane`, `workerSpawnMode`, `daemonAsNmHost`, `hidePageAction`, `logLevel`, `devicePickerMode`, and `workerPolyfillEnabled`. `daemonAsNmHost` defaults to `true` on macOS and Windows when no stored value exists, and `false` elsewhere. `daemonAsNmHost` and `hidePageAction` are global-only; the other user-facing settings support site overrides.
 
 Per-site storage is keyed by the browser-derived persistence target rather than blindly trusting a page URL. Normal frames use their origin; opaque frames can receive a canonical `opaque|<top-origin>|<source-origin>` partition when that identity is derivable. The popup exposes distinct frame targets when an active tab contains more than one persistent scope.
 
-`allowActivationlessRequestDevice` skips the user-activation check for `requestDevice()`. This intentional spec deviation is configurable because some sites call it after asynchronous work; Permissions Policy still applies, and device selection still requires explicit user action.
 
 ### Benchmark-only WT in-page mode
 
