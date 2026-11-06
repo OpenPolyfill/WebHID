@@ -2,9 +2,9 @@ class Webhid < Formula
   desc "WebHID implementation for Firefox via native-messaging bridge and HID daemon"
   homepage "https://github.com/OpenPolyfill/WebHID"
   url "https://github.com/OpenPolyfill/WebHID.git",
-      tag: "v3.3.2",
+      tag: "v3.3.3",
       revision: "0d0c4a649c4bef9bf577c4cef6eedc28bcb72e32"
-  version "3.3.2"
+  version "3.3.3"
   license "MIT"
   head "https://github.com/OpenPolyfill/WebHID.git", branch: "main"
 
