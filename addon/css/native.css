@@ -100,25 +100,26 @@ webhid-radio-group .seg-option input:focus-visible + .seg-label {
   outline: none;
 }
 
-.btn-revoke {
-  background: var(
+button.btn-revoke {
+  --revoke-background: var(
     --button-background-color-destructive,
     var(--in-content-danger-button-background, var(--danger))
   );
+  background-color: var(--revoke-background);
   color: var(--button-text-color-destructive, var(--in-content-primary-button-text-color, Canvas));
   border-color: var(--button-border-color-destructive, transparent);
   border-radius: var(--button-border-radius, var(--radius-sm));
   white-space: nowrap;
-  font-size: var(--font-size-small, 12px);
+  font-size: var(--button-font-size-small, var(--font-size-small, 12px));
+  min-height: var(--button-min-height-small, 24px);
+  padding: var(--button-padding-block-small, 2px) var(--button-padding-inline-small, 8px);
+  margin: 0;
 }
 
-.btn-revoke:hover {
-  background: var(
-    --button-background-color-destructive-hover,
-    var(--in-content-danger-button-background-hover, var(--danger))
-  );
-  color: var(--button-text-color-destructive-hover, var(--button-text-color-destructive));
-  border-color: var(--button-border-color-destructive-hover, transparent);
+button.btn-revoke:hover:not(:disabled) {
+  background-color: color-mix(in srgb, var(--revoke-background) 88%, white);
+  color: var(--button-text-color-destructive, var(--in-content-primary-button-text-color, Canvas));
+  border-color: var(--button-border-color-destructive, transparent);
 }
 
 .info-popover-btn {

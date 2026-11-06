@@ -17,6 +17,7 @@
         overflow: hidden;
       }
       #picker {
+        --accent-selected: color-mix(in srgb, var(--bg), var(--accent) 35%);
         display: flex;
         flex-direction: column;
         width: 100%;
@@ -50,35 +51,6 @@
         gap: 10px;
         flex-shrink: 0;
       }
-      #picker-cancel {
-        padding: 8px 16px;
-        border: 1px solid var(--border-default);
-        border-radius: var(--radius-md);
-        background: var(--bg);
-        color: var(--text-muted);
-        font-size: 13px;
-        cursor: pointer;
-      }
-      #picker-cancel:hover {
-        background: var(--surface-hover);
-      }
-      #picker-connect {
-        padding: 8px 16px;
-        border: none;
-        border-radius: var(--radius-md);
-        background: var(--accent);
-        color: var(--accent-text);
-        font-size: 13px;
-        font-weight: 600;
-        cursor: pointer;
-      }
-      #picker-connect:hover:not(:disabled) {
-        background: var(--accent-hover);
-      }
-      #picker-connect:disabled {
-        opacity: 0.4;
-        cursor: default;
-      }
       .webhid-device-item {
         margin-bottom: 8px;
       }
@@ -95,8 +67,17 @@
       </div>
       <div id="picker-list" class="webhid-device-list" role="list" aria-live="polite"></div>
       <div class="picker-footer">
-        <button id="picker-cancel" data-i18n="pickerCancel">Cancel</button>
-        <button id="picker-connect" disabled data-i18n="pickerConnect">Connect</button>
+        <button id="picker-cancel" class="webhid-cancel-button" data-i18n="pickerCancel">
+          Cancel
+        </button>
+        <button
+          id="picker-connect"
+          class="webhid-connect-button primary"
+          disabled
+          data-i18n="pickerConnect"
+        >
+          Connect
+        </button>
       </div>
     </div>
     <script src="../../../../js/utils/bootstrap.js"></script>

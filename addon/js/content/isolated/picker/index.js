@@ -137,6 +137,14 @@
         syncNativeTheme(this.host)
         this.hideGeneration++
 
+        this.dialog.querySelector('#webhidConnectBtn').disabled = true
+        this.dialog.querySelectorAll('.webhid-device-radio:checked').forEach((radio) => {
+          radio.checked = false
+        })
+        this.dialog.querySelectorAll('.webhid-device-item.selected').forEach((item) => {
+          item.classList.remove('selected')
+        })
+
         this.filters = filters
         this.exclusionFilters = exclusionFilters
 

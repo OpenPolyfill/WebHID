@@ -131,7 +131,8 @@
 }
 
 .webhid-device-item.selected {
-  border-color: var(--accent);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
   background: var(--accent-selected);
 }
 
@@ -176,41 +177,55 @@
   gap: 12px;
 }
 
-.webhid-cancel-button {
-  padding: 12px 24px;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
-  background: var(--bg);
-  color: var(--text-muted);
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.webhid-cancel-button:hover {
-  background: var(--surface-hover);
-  border-color: var(--border-strong);
-}
-
-.webhid-connect-button {
-  padding: 12px 24px;
-  border: none;
-  border-radius: var(--radius-md);
-  background: var(--accent);
-  color: var(--accent-text);
-  font-size: 14px;
+button.webhid-cancel-button,
+button.webhid-connect-button.primary {
+  min-height: var(--button-min-height, 32px);
+  padding: var(--button-padding, 6px 16px);
+  border: 1px solid transparent;
+  border-radius: var(--button-border-radius, var(--radius-md));
+  font-size: var(--button-font-size, var(--font-size-root, 14px));
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.2s;
+  transition:
+    background-color 0.15s,
+    border-color 0.15s;
 }
 
-.webhid-connect-button:hover:not(:disabled) {
-  background: var(--accent-hover);
+button.webhid-cancel-button {
+  background: transparent;
+  color: var(--text);
+  border-color: transparent;
 }
 
-.webhid-connect-button:disabled {
-  opacity: 0.4;
+button.webhid-cancel-button:enabled:hover {
+  background: var(--button-background-color-hover, var(--surface-hover));
+  color: var(--button-text-color-hover, var(--text));
+  border-color: transparent;
+}
+
+button.webhid-connect-button.primary {
+  background: var(--button-background-color-primary, var(--accent));
+  color: var(--button-text-color-primary, var(--accent-text));
+  border-color: var(--button-border-color-primary, transparent);
+}
+
+button.webhid-connect-button.primary:hover:not(:disabled) {
+  background: var(--button-background-color-primary-hover, var(--accent-hover));
+  color: var(--button-text-color-primary-hover, var(--accent-text));
+  border-color: var(--button-border-color-primary-hover, transparent);
+}
+
+button.webhid-connect-button.primary:disabled {
+  background: var(
+    --button-background-color-primary-disabled,
+    var(--button-background-color-disabled, var(--surface-hover))
+  );
+  color: var(
+    --button-text-color-primary-disabled,
+    var(--button-text-color-disabled, var(--text-muted))
+  );
+  border-color: var(--button-border-color-primary-disabled, transparent);
+  opacity: 0.6;
   cursor: default;
 }
 

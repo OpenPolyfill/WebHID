@@ -25,6 +25,15 @@
         ? colors.accentActive ||
           'color-mix(in srgb, var(--color-accent-primary) 70%, var(--in-content-page-color))'
         : '',
+      '--button-background-color-primary': colors.accent,
+      '--button-background-color-primary-hover': colors.accent
+        ? colors.accentHover ||
+          'color-mix(in srgb, var(--color-accent-primary) 85%, var(--in-content-page-color))'
+        : '',
+      '--button-background-color-primary-active': colors.accent
+        ? colors.accentActive ||
+          'color-mix(in srgb, var(--color-accent-primary) 70%, var(--in-content-page-color))'
+        : '',
       '--in-content-page-background': colors.background,
       '--in-content-page-color': colors.foreground,
       '--background-color-box': colors.surface,
@@ -38,7 +47,9 @@
       '--border-light': colors.border,
       '--border-default': colors.border,
       '--border-strong': colors.border,
-      '--accent-hover': colors.accentHover
+      '--accent-hover': colors.accent
+        ? colors.accentHover || 'color-mix(in srgb, var(--accent) 85%, var(--text))'
+        : ''
     }
     for (const [name, value] of Object.entries(properties)) {
       if (value) target.style.setProperty(name, value)
