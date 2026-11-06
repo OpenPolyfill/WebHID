@@ -1,21 +1,23 @@
 <template id="webhid-picker-template">
   <style>
+    @import url('chrome://global/skin/in-content/common.css');
+
     :host {
-      --bg: Canvas;
-      --text: CanvasText;
-      --text-muted: GrayText;
-      --accent: AccentColor;
-      --accent-text: AccentColorText;
+      --bg: var(--in-content-page-background, Canvas);
+      --text: var(--in-content-page-color, CanvasText);
+      --text-muted: var(--text-color-deemphasized, GrayText);
+      --accent: var(--color-accent-primary, AccentColor);
+      --accent-text: var(--button-text-color-primary, AccentColorText);
       --danger: #c00;
       --overlay: rgba(0, 0, 0, 0.45);
-      --surface-raised: color-mix(in srgb, var(--bg), var(--text) 4%);
-      --surface-hover: color-mix(in srgb, var(--bg), var(--text) 6%);
-      --border-subtle: color-mix(in srgb, var(--text), transparent 88%);
-      --border-light: color-mix(in srgb, var(--text), transparent 85%);
-      --border-default: color-mix(in srgb, var(--text), transparent 80%);
-      --border-strong: color-mix(in srgb, var(--text), transparent 75%);
-      --accent-hover: color-mix(in srgb, var(--accent), var(--text) 20%);
-      --accent-surface: color-mix(in srgb, var(--bg), var(--accent) 10%);
+      --surface-raised: var(--background-color-box, color-mix(in srgb, var(--bg), var(--text) 4%));
+      --surface-hover: var(--in-content-button-background-hover, color-mix(in srgb, var(--bg), var(--text) 6%));
+      --border-subtle: var(--in-content-border-color, color-mix(in srgb, var(--text), transparent 88%));
+      --border-light: var(--in-content-border-color, color-mix(in srgb, var(--text), transparent 85%));
+      --border-default: var(--in-content-box-border-color, color-mix(in srgb, var(--text), transparent 80%));
+      --border-strong: var(--in-content-box-border-color, color-mix(in srgb, var(--text), transparent 75%));
+      --accent-hover: var(--color-accent-primary-hover, color-mix(in srgb, var(--accent), var(--text) 20%));
+      --accent-surface: var(--in-content-item-hover, color-mix(in srgb, var(--bg), var(--accent) 10%));
       --accent-selected: color-mix(in srgb, var(--bg), var(--accent) 20%);
       --accent-paired: color-mix(in srgb, var(--bg), var(--accent) 15%);
       --danger-bg: color-mix(in srgb, var(--bg), var(--danger) 10%);

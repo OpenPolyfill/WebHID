@@ -311,6 +311,14 @@ async function build() {
           ],
           script: 'experiments/webhidNativePicker/api.js'
         }
+      },
+      webhidNativeTheme: {
+        schema: 'experiments/webhidNativeTheme/schema.json',
+        parent: {
+          scopes: ['addon_parent'],
+          paths: [['webhidNativeTheme', 'getTokens']],
+          script: 'experiments/webhidNativeTheme/api.js'
+        }
       }
     }
   }

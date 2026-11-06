@@ -13,7 +13,6 @@
     "webRequestBlocking",
     "webRequestFilterResponse",
     "notifications",
-    "theme",
     "<all_urls>"
   ],
   "background": {
@@ -83,7 +82,7 @@
         "js/utils/device-filters.js",
         "js/utils/device.js",
         "js/utils/settings.js",
-        "js/utils/theme-sync.js",
+        "js/utils/native-theme.js",
         "js/content/isolated/picker/index.js",
         "js/content/isolated/bridge.js"
       ],

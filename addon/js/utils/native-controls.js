@@ -7,7 +7,17 @@
       const shadow = this.attachShadow({ mode: 'open' })
       shadow.innerHTML = `
         <link rel="stylesheet" href="chrome://global/content/elements/moz-toggle.css">
-        <button type="button" class="toggle-button" part="button" aria-pressed="false"></button>
+        <button
+          type="button"
+          class="toggle-button"
+          part="button"
+          aria-pressed="false"
+          style="
+            --toggle-background-color-pressed: var(--accent, AccentColor);
+            --toggle-background-color-pressed-hover: var(--accent-hover, var(--accent, AccentColor));
+            --toggle-background-color-pressed-active: var(--accent-hover, var(--accent, AccentColor));
+          "
+        ></button>
       `
       this.button = shadow.querySelector('button')
       this.button.addEventListener('click', () => {

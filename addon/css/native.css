@@ -1,6 +1,6 @@
 :root {
-  --bg: var(--in-content-page-background);
-  --text: var(--in-content-page-color);
+  --bg: var(--in-content-page-background, Canvas);
+  --text: var(--in-content-page-color, CanvasText);
   --text-muted: var(--text-color-deemphasized, GrayText);
   --accent: var(--color-accent-primary, AccentColor);
   --accent-text: var(--button-text-color-primary, AccentColorText);
@@ -9,14 +9,14 @@
   --warn: #e6a700;
 
   --surface-raised: var(--background-color-box, var(--bg));
-  --surface-hover: var(--in-content-button-background-hover);
-  --border-subtle: var(--in-content-border-color);
-  --border-light: var(--in-content-border-color);
-  --border-default: var(--in-content-box-border-color);
-  --border-strong: var(--in-content-box-border-color);
+  --surface-hover: var(--in-content-button-background-hover, color-mix(in srgb, var(--bg), var(--text) 6%));
+  --border-subtle: var(--in-content-border-color, color-mix(in srgb, var(--text), transparent 88%));
+  --border-light: var(--in-content-border-color, color-mix(in srgb, var(--text), transparent 85%));
+  --border-default: var(--in-content-box-border-color, color-mix(in srgb, var(--text), transparent 80%));
+  --border-strong: var(--in-content-box-border-color, color-mix(in srgb, var(--text), transparent 75%));
 
   --accent-hover: var(--color-accent-primary-hover, var(--accent));
-  --accent-surface: var(--in-content-item-hover);
+  --accent-surface: var(--in-content-item-hover, color-mix(in srgb, var(--bg), var(--accent) 10%));
   --accent-selected: color-mix(in srgb, var(--bg), var(--accent) 20%);
   --accent-paired: color-mix(in srgb, var(--bg), var(--accent) 15%);
   --danger-bg: color-mix(in srgb, var(--bg), var(--danger) 10%);
@@ -103,9 +103,9 @@ webhid-radio-group .seg-option input:focus-visible + .seg-label {
 .btn-revoke {
   background: var(
     --button-background-color-destructive,
-    var(--in-content-danger-button-background)
+    var(--in-content-danger-button-background, var(--danger))
   );
-  color: var(--button-text-color-destructive, var(--in-content-primary-button-text-color));
+  color: var(--button-text-color-destructive, var(--in-content-primary-button-text-color, Canvas));
   border-color: var(--button-border-color-destructive, transparent);
   border-radius: var(--button-border-radius, var(--radius-sm));
   white-space: nowrap;
@@ -115,7 +115,7 @@ webhid-radio-group .seg-option input:focus-visible + .seg-label {
 .btn-revoke:hover {
   background: var(
     --button-background-color-destructive-hover,
-    var(--in-content-danger-button-background-hover)
+    var(--in-content-danger-button-background-hover, var(--danger))
   );
   color: var(--button-text-color-destructive-hover, var(--button-text-color-destructive));
   border-color: var(--button-border-color-destructive-hover, transparent);

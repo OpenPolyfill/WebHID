@@ -8,11 +8,7 @@
   const groupDevices = webhid.import('groupDevices')
   const groupIdFor = webhid.import('groupIdFor')
   const applyDeviceIcon = webhid.import('applyDeviceIcon')
-  const syncBrowserTheme = webhid.import('syncBrowserTheme')
   logger.initLogger('picker-popup')
-
-  syncBrowserTheme()
-  if (browser.theme) browser.theme.onUpdated.addListener(syncBrowserTheme)
 
   localizeHTML(document)
 

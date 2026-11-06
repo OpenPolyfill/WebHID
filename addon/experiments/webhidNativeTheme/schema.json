@@ -1,0 +1,27 @@
+[
+  {
+    "namespace": "webhidNativeTheme",
+    "functions": [
+      {
+        "name": "getTokens",
+        "type": "function",
+        "async": true,
+        "parameters": [],
+        "returns": {
+          "type": "object",
+          "properties": {
+            "accent": { "type": "string", "optional": true },
+            "accentHover": { "type": "string", "optional": true },
+            "accentActive": { "type": "string", "optional": true },
+            "background": { "type": "string", "optional": true },
+            "foreground": { "type": "string", "optional": true },
+            "surface": { "type": "string", "optional": true },
+            "border": { "type": "string", "optional": true },
+            "focus": { "type": "string", "optional": true },
+            "scheme": { "type": "string", "optional": true }
+          }
+        }
+      }
+    ]
+  }
+]

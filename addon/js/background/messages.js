@@ -54,6 +54,7 @@
   const NativeMessaging = webhid.import('NativeMessaging')
   const groupDevices = webhid.import('groupDevices')
   const groupIdFor = webhid.import('groupIdFor')
+  const nativeThemeApi = browser.webhidNativeTheme
   const privilegedPickerApi = browser.webhidNativePicker
   const privilegedPicker = privilegedPickerApi
     ? new globalThis.WebHidNativePickerHelper({
@@ -1681,6 +1682,22 @@
    * @param {object} request
    * @param {object} sender
    * @param {function(*): void} sendResponse
+   * @param {object} [port]
+   * @returns {boolean}
+   */
+  function handleGetNativeThemeTokens(request, sender, sendResponse, port) {
+    if (port || !nativeThemeApi) {
+      sendResponse(null)
+      return false
+    }
+    nativeThemeApi.getTokens().then(sendResponse, () => sendResponse(null))
+    return true
+  }
+
+  /**
+   * @param {object} request
+   * @param {object} sender
+   * @param {function(*): void} sendResponse
    * @param {object} port
    * @returns {boolean}
    */
@@ -2002,6 +2019,7 @@
     setDataPlaneStatus: handleSetDataPlaneStatus,
     deviceCountChanged: handleDeviceCountChanged,
     getPickerCapabilities: handleGetPickerCapabilities,
+    getNativeThemeTokens: handleGetNativeThemeTokens,
     showPageAction: handleShowPageAction,
     getDeviceCache: handleGetDeviceCache,
     getDeviceInfo: handleGetDeviceInfo,

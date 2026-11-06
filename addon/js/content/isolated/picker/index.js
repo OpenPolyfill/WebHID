@@ -11,7 +11,7 @@
   const groupDevices = globalThis.webhid.import('groupDevices')
   const groupIdFor = globalThis.webhid.import('groupIdFor')
   const applyDeviceIcon = globalThis.webhid.import('applyDeviceIcon')
-  const syncBrowserTheme = globalThis.webhid.import('syncBrowserTheme')
+  const syncNativeTheme = globalThis.webhid.import('syncNativeTheme')
   logger.initLogger('picker')
 
   /** @typedef {import("../main/types.js").HIDDeviceInfo} HIDDeviceInfo */
@@ -67,8 +67,7 @@
       this.shadow.appendChild(template.content.cloneNode(true))
       localizeHTML(this.shadow)
 
-      syncBrowserTheme(this.host)
-      if (browser.theme) browser.theme.onUpdated.addListener(() => syncBrowserTheme(this.host))
+      syncNativeTheme(this.host)
 
       this.dialog = this.shadow.querySelector('.webhid-modal')
 
@@ -135,6 +134,7 @@
 
       try {
         await this.fragmentReady
+        syncNativeTheme(this.host)
         this.hideGeneration++
 
         this.filters = filters

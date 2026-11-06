@@ -12,8 +12,7 @@
     "webRequest",
     "webRequestBlocking",
     "webRequestFilterResponse",
-    "notifications",
-    "theme"
+    "notifications"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -90,7 +89,7 @@
         "js/utils/device-filters.js",
         "js/utils/device.js",
         "js/utils/settings.js",
-        "js/utils/theme-sync.js",
+        "js/utils/native-theme.js",
         "js/content/isolated/picker/index.js",
         "js/utils/input-report.js",
         "js/content/isolated/bridge.js"
