@@ -501,6 +501,7 @@
     const generationChanged = generation !== state.planeGeneration
     state.planeGeneration = generation
     state.planeReady = false
+    state.directNm = false
     if (generationChanged) state.planeUnavailableGeneration = null
     if (state.connectionState === 'opened') state.planeUnavailable = true
     const dataChannel = new NativeMessageChannel()
@@ -540,17 +541,7 @@
    * @returns {void}
    */
   function detachDataPort(state) {
-    if (state.fastNmGeneration != null && fastNmBridge) {
-      callNative(
-        fastNmBridge,
-        null,
-        'disable',
-        fastNmToken,
-        state.deviceId,
-        state.fastNmGeneration
-      )
-    }
-    state.fastNmGeneration = null
+    state.directNm = false
     if (!state.dataPort) {
       state.dataPortGeneration = null
       return
@@ -593,12 +584,7 @@
     state.planeReady = true
     state.planeUnavailable = false
     state.planeUnavailableGeneration = null
-    state.fastNmGeneration =
-      data.directNm &&
-      fastNmBridge &&
-      callNative(fastNmBridge, null, 'enable', fastNmToken, data.deviceId, data.generation)
-        ? data.generation
-        : null
+    state.directNm = data.directNm === true && !!fastNmSend
   }
 
   /**
@@ -877,12 +863,12 @@
 
   /** @type {MessagePort|null} */
   let bridgePort = null
-  let fastNmBridge = null
-  let fastNmToken = null
+  let fastNmSend = null
   function receiveFastNm(kind, deviceId, generation, reportId, bytes, reqId, error) {
     const device = deviceRegistry.get(deviceId)
     const state = device ? devState.get(device) : null
-    if (!state || state.fastNmGeneration !== generation || !state.planeReady) return
+    if (!state || !state.directNm || state.planeGeneration !== generation || !state.planeReady)
+      return false
     if (kind === 'input') {
       handleInputReport(state, { reportId, data: bytes ? bytes.buffer : null })
     } else if (kind === 'result') {
@@ -893,6 +879,7 @@
         data: bytes
       })
     }
+    return true
   }
   /**
    * Whether this document is a same-origin non-top frame eligible for a
@@ -918,27 +905,27 @@
       })()
     : new Promise((resolve) => {
         const capturePageBridge = (candidate) => {
-          const directPort = candidate && candidate.directPort ? candidate.directPort : candidate
-          if (!directPort) return
+          if (!candidate || !candidate.port) return
           try {
-            reflect.deleteProperty(globalThis, 'webhid')
-            brokerStackOtp = candidate && typeof candidate.S === 'string' ? candidate.S : null
-            const exported = windowObject.__webhidNmDirect
-            reflect.deleteProperty(globalThis, '__webhidNmDirect')
-            if (typeof exported === 'function' && typeof candidate.fastToken === 'string') {
-              const registered = callNative(
-                exported,
-                null,
-                'register',
-                candidate.fastToken,
-                receiveFastNm
-              )
-              if (registered) {
-                fastNmBridge = exported
-                fastNmToken = candidate.fastToken
+            reflect.deleteProperty(host.navigator, 'hid')
+            brokerStackOtp =
+              candidate.broker && typeof candidate.broker.stackOtp === 'string'
+                ? candidate.broker.stackOtp
+                : null
+            const direct = candidate.direct
+            try {
+              if (
+                direct &&
+                typeof direct.send === 'function' &&
+                typeof direct.registerCallback === 'function' &&
+                callNative(direct.registerCallback, null, receiveFastNm)
+              ) {
+                fastNmSend = direct.send
               }
+            } catch {
+              fastNmSend = null
             }
-            bridgePort = directPort
+            bridgePort = candidate.port
             setupBridgePort()
             if (fanoutCandidate || brokerStackOtp) armBrokerCandidateSetter()
             resolve()
@@ -947,14 +934,15 @@
           }
         }
         try {
-          capturePageBridge(windowObject.webhid)
+          capturePageBridge(host.navigator.hid)
         } catch {
           void 0
         }
-        object.defineProperty(windowObject, 'webhid', {
-          configurable: true,
-          set: capturePageBridge
-        })
+        if (!bridgePort)
+          object.defineProperty(host.navigator, 'hid', {
+            configurable: true,
+            set: capturePageBridge
+          })
       })
   if (!isWorker) setupTrustedTypesSharing()
 
@@ -1045,7 +1033,7 @@
       const invoke = new NativeFunction(
         'nav',
         'value',
-        'nav.hid = value\n//# sourceURL=webhidBroker_' + stackToken(data.stackOtp)
+        'nav.hid = { broker: value }\n//# sourceURL=webhidBroker_' + stackToken(data.stackOtp)
       )
       object.defineProperty(invoke, 'name', {
         value: 'webhidBroker_' + stackToken(data.stackOtp),
@@ -1293,13 +1281,11 @@
       }
       state.dataPending.set(reqId, entry)
       try {
-        if (state.fastNmGeneration === generation && fastNmBridge) {
+        if (state.directNm && fastNmSend) {
           if (
             !callNative(
-              fastNmBridge,
+              fastNmSend,
               null,
-              'send',
-              fastNmToken,
               state.deviceId,
               generation,
               opts.portType,
@@ -2349,7 +2335,7 @@
       planeReady: false,
       planeUnavailable: false,
       planeUnavailableGeneration: null,
-      fastNmGeneration: null,
+      directNm: false,
       dataPort: null,
       dataPortGeneration: null,
       dataPending: null,
@@ -2850,15 +2836,18 @@
               brokerSetterArmed = false
               installNavigatorHid()
               try {
+                const brokerPort = value && value.broker
+                if (!brokerPort) return
                 callNative(
                   nativeMessagePortPostMessage,
                   bridgePort,
                   { type: 'fanoutCandidate' },
-                  makePristineIterable([value])
+                  makePristineIterable([brokerPort])
                 )
               } catch {
                 try {
-                  callNative(nativeMessagePortClose, value)
+                  if (value && value.broker)
+                    callNative(nativeMessagePortClose, value.broker)
                 } catch {
                   void 0
                 }

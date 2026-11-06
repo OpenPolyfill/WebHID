@@ -14,12 +14,10 @@
   logger.initLogger('bridge')
   const frameInstanceId = 'frame-' + crypto.randomUUID()
   const pageChannel = new MessageChannel()
-  const fastToken = crypto.randomUUID()
   const fastReplyPorts = new Map()
-  const fastEnabledGenerations = new Map()
   let fastSink = null
   function deliverFastPayload(kind, deviceId, generation, reportId, data, reqId, error) {
-    if (!fastSink) return
+    if (!fastSink) return false
     const bytes =
       data == null
         ? null
@@ -28,7 +26,7 @@
             data.byteLength === data.buffer.byteLength
           ? data
           : new Uint8Array(data)
-    fastSink(
+    return fastSink(
       kind,
       deviceId,
       generation,
@@ -58,62 +56,35 @@
     fastReplyPorts.set(key, { generation, port })
     return port
   }
-  globalThis.exportFunction(
-    (command, token, a, b, c, d, e, f) => {
-      if (token !== fastToken) return false
-      if (command === 'register') {
-        if (fastSink) return false
-        fastSink = a
-        return true
-      }
-      if (command === 'disable') {
-        const context = ownContext()
-        if (!context) return false
-        const key = planeKeyForClient(context, a, 'window')
-        if (fastEnabledGenerations.get(key) === b) fastEnabledGenerations.delete(key)
-        return true
-      }
-      if (command === 'enable') {
-        const context = ownContext()
-        const sessions = clientSessions.get(pagePort)
-        if (!context || context.destroyed || !sessions || !sessions.has(a)) return false
-        const key = planeKeyForClient(context, a, 'window')
-        if (
-          spawnGen.get(key) !== b ||
-          readyGenerations.get(key) !== b ||
-          !nmPlanes.has(key) ||
-          workers.has(key) ||
-          inPageDevices.has(key) ||
-          brokerAttachments.has(key) ||
-          brokerAttachedKeys.has(key)
-        )
-          return false
-        fastEnabledGenerations.set(key, b)
-        return true
-      }
-      if (command !== 'send' || !fastSink) return false
-      const context = ownContext()
-      const sessions = clientSessions.get(pagePort)
-      if (!context || context.destroyed || !sessions || !sessions.has(a)) return false
-      const key = planeKeyForClient(context, a, 'window')
-      if (
-        spawnGen.get(key) !== b ||
-        fastEnabledGenerations.get(key) !== b ||
-        !nmPlanes.has(key) ||
-        workers.has(key) ||
-        inPageDevices.has(key) ||
-        brokerAttachments.has(key) ||
-        brokerAttachedKeys.has(key)
-      )
-        return false
-      const msg = { type: c, reqId: d, reportId: e }
-      if (f != null) msg.data = new Uint8Array(f)
-      onDataPortMessage(context, a, msg, fastReplyPort(context, a, key, b))
-      return true
-    },
-    window.wrappedJSObject,
-    { defineAs: '__webhidNmDirect' }
-  )
+  function isFastNmPlane(context, key, generation) {
+    return (
+      !context.destroyed &&
+      spawnGen.get(key) === generation &&
+      readyGenerations.get(key) === generation &&
+      nmPlanes.has(key) &&
+      !workers.has(key) &&
+      !inPageDevices.has(key) &&
+      !brokerAttachments.has(key) &&
+      !brokerAttachedKeys.has(key)
+    )
+  }
+  function registerFastCallback(callback) {
+    if (fastSink || typeof callback !== 'function') return false
+    fastSink = callback
+    return true
+  }
+  function sendFastNm(deviceId, generation, type, reqId, reportId, payload) {
+    if (!fastSink) return false
+    const context = ownContext()
+    const sessions = clientSessions.get(pagePort)
+    if (!context || !sessions || !sessions.has(deviceId)) return false
+    const key = planeKeyForClient(context, deviceId, 'window')
+    if (!isFastNmPlane(context, key, generation)) return false
+    const msg = { type, reqId, reportId }
+    if (payload != null) msg.data = new Uint8Array(payload)
+    onDataPortMessage(context, deviceId, msg, fastReplyPort(context, deviceId, key, generation))
+    return true
+  }
   const fanoutCandidate = (function () {
     if (window === window.top) return false
     const origin = window.location.origin
@@ -126,14 +97,22 @@
     return true
   })()
   let stackOtp = fanoutCandidate ? crypto.randomUUID() : null
-  const bootstrapValue = {
-    directPort: pageChannel.port2,
-    fastToken,
-    ...(fanoutCandidate ? { S: stackOtp } : {})
-  }
-  window.wrappedJSObject.webhid = globalThis.cloneInto(bootstrapValue, window, {
+  const bootstrapValue = globalThis.cloneInto({
+    port: pageChannel.port2,
+    direct: {},
+    ...(fanoutCandidate ? { broker: { stackOtp } } : {})
+  }, window, {
     wrapReflectors: true
   })
+  try {
+    globalThis.exportFunction(sendFastNm, bootstrapValue.direct, { defineAs: 'send' })
+    globalThis.exportFunction(registerFastCallback, bootstrapValue.direct, {
+      defineAs: 'registerCallback'
+    })
+  } catch (e) {
+    logger.debug('direct NM handoff failed', e)
+  }
+  window.wrappedJSObject.navigator.hid = bootstrapValue
   const pagePort = pageChannel.port1
   const controlQueue = []
   let controlPort = null
@@ -1344,7 +1323,6 @@
     deviceTransports.delete(key)
     nmPlanes.delete(key)
     fastReplyPorts.delete(key)
-    fastEnabledGenerations.delete(key)
     planeReadiness.delete(key)
     readyGenerations.delete(key)
     maybeDisconnectRuntimeDataPort(deviceId)
@@ -3666,11 +3644,10 @@
         try {
           const data = messageEvent.data
           const copy = data != null && ArrayBuffer.isView(data) ? new Uint8Array(data) : data
-          if (
+          const fastDelivered =
             port === pagePort &&
             fastSink &&
-            fastEnabledGenerations.get(key) === spawnGen.get(key)
-          ) {
+            isFastNmPlane(context, key, spawnGen.get(key)) &&
             deliverFastPayload(
               'input',
               messageEvent.deviceId,
@@ -3678,7 +3655,7 @@
               messageEvent.reportId,
               copy
             )
-          } else {
+          if (!fastDelivered) {
             port.postMessage({
               type: 'event',
               event: { ...messageEvent, data: copy }
@@ -3756,19 +3733,19 @@
     if (!port) return
     const status = response ? response.s : 500
     if (msg.type === 'receiveFeature') {
-      if (status === 403) {
+      if (!http.isOk(status)) {
         try {
           port.postMessage({
             type: 'featureResult',
             reqId: msg.reqId,
-            error: 'blocked'
+            error: status === 403 ? 'blocked' : 'receive failed'
           })
         } catch (e) {
-          logger.debug('postMessage featureResult blocked failed', e)
+          logger.debug('postMessage featureResult failed', e)
         }
         return
       }
-      const data = http.isOk(status) && response.d ? response.d : null
+      const data = response.d || null
       try {
         port.postMessage({
           type: 'featureResult',
