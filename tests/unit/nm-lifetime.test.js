@@ -112,7 +112,7 @@ function loadNativeMessaging({ deferHandshake = false } = {}) {
           }
         if (name === 'content-ports') {
           return {
-            postToContentPorts(_tabId, message, dataPortName) {
+            postToNamedContentPorts(dataPortName, message) {
               if (!message.event) return new Set()
               const event = message.event
               packedReports.push({
@@ -120,11 +120,13 @@ function loadNativeMessaging({ deferHandshake = false } = {}) {
                 event: {
                   eventType: event.eventType,
                   deviceId: event.deviceId,
-                  reportId: event.reportId,
                   data: Array.from(event.data)
                 }
               })
-              return new Set([dataPortName])
+              return true
+            },
+            postToContentPorts() {
+              return new Set()
             },
             postToContentPort() {}
           }
@@ -143,7 +145,8 @@ function loadNativeMessaging({ deferHandshake = false } = {}) {
 
 test('packed NM input reports reach their device data port', () => {
   const { nativeMessaging, packedReports } = loadNativeMessaging()
-  const frame = Buffer.from([1, 42, 0, 0, 0, 7, 3, 0, 0x11, 0x22, 0x33]).toString('base64')
+  const bytes = [1, 42, 0, 0, 0, 7, 3, 0, 0x11, 0x22, 0x33, 8, 2, 0, 0x44, 0x55]
+  const frame = Buffer.from(bytes).toString('base64')
 
   nativeMessaging.handleNativeMessage({ d: frame })
 
@@ -151,10 +154,9 @@ test('packed NM input reports reach their device data port', () => {
     {
       dataPortName: 'webhid-data:42',
       event: {
-        eventType: 'input_report',
+        eventType: 'input_report_batch',
         deviceId: 42,
-        reportId: 7,
-        data: [0x11, 0x22, 0x33]
+        data: bytes
       }
     }
   ])

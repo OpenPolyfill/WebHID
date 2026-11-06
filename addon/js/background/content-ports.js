@@ -44,6 +44,26 @@
     return reached
   }
   /**
+   * Sends a message to every registered port with an exact name.
+   * @param {string} portName
+   * @param {object} message
+   * @returns {boolean}
+   */
+  function postToNamedContentPorts(portName, message) {
+    const selectedPorts = portsByName.get(portName)
+    if (!selectedPorts) return false
+    let delivered = false
+    for (const port of selectedPorts) {
+      try {
+        port.postMessage(message)
+        delivered = true
+      } catch {
+        removeContentPort(port)
+      }
+    }
+    return delivered
+  }
+  /**
    * Sends one message to a registered exact endpoint.
    * @param {object} port
    * @param {object} message
@@ -57,5 +77,10 @@
       removeContentPort(port)
     }
   }
-  webhid.export('content-ports', { registerContentPort, postToContentPorts, postToContentPort })
+  webhid.export('content-ports', {
+    registerContentPort,
+    postToContentPorts,
+    postToNamedContentPorts,
+    postToContentPort
+  })
 })()

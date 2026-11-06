@@ -100,6 +100,7 @@
   const arrayBufferGetters = types.ArrayBuffer.proto.getters
   const dataViewGetters = types.DataView.proto.getters
   const uint8ArrayGetters = types.Uint8Array.proto.getters
+  const uint8ArrayOps = types.Uint8Array.proto.methods
   const nativeArrayBufferIsView = types.ArrayBuffer.getStaticDescriptor('isView').value
   const callNative = (fn, receiver, ...args) => reflect.apply(fn, receiver, args)
   const rejectWebIDLPromise = (error) => callNative(nativePromiseReject, NativePromise, error)
@@ -871,6 +872,8 @@
       return false
     if (kind === 'input') {
       handleInputReport(state, { reportId, data: bytes ? bytes.buffer : null })
+    } else if (kind === 'batch') {
+      handlePackedInputBatch(state, bytes)
     } else if (kind === 'result') {
       onDataPortMessage(state, {
         type: reportId,
@@ -1066,6 +1069,11 @@
     },
     event: (data) => {
       dispatchDeviceEvent(data.event)
+    },
+    packedInputBatch: (data) => {
+      const device = deviceRegistry.get(data.deviceId)
+      const state = device ? devState.get(device) : null
+      if (state) handlePackedInputBatch(state, data.data)
     }
   }
 
@@ -2097,6 +2105,33 @@
   }
 
   /**
+   * Dispatches reports from a packed Native Messaging input frame.
+   * @param {object} state
+   * @param {Uint8Array} frame
+   * @returns {void}
+   */
+  function handlePackedInputBatch(state, frame) {
+    if (!frame) return
+    const bytes = frame instanceof NativeUint8Array ? frame : new NativeUint8Array(frame)
+    if (bytes.length < 8 || bytes[0] !== 0x01) return
+    const deviceId = (bytes[1] | (bytes[2] << 8) | (bytes[3] << 16) | (bytes[4] << 24)) >>> 0
+    if (deviceId !== state.deviceId && stringConstructor(deviceId) !== state.deviceId) return
+    const buffer = uint8ArrayGetters.buffer(bytes)
+    const offset = uint8ArrayGetters.byteOffset(bytes)
+    let cursor = 5
+    while (cursor + 3 <= bytes.length) {
+      const reportId = bytes[cursor]
+      const length = bytes[cursor + 1] | (bytes[cursor + 2] << 8)
+      cursor += 3
+      if (cursor + length > bytes.length) break
+      const payload = new NativeUint8Array(length)
+      uint8ArrayOps.set(payload, new NativeUint8Array(buffer, offset + cursor, length))
+      handleInputReport(state, { reportId, data: uint8ArrayGetters.buffer(payload) })
+      cursor += length
+    }
+  }
+
+  /**
    * @param {object} state
    * @returns {void}
    */
@@ -2117,6 +2152,7 @@
     featureResult: handleReportResult,
     inputReportBatch: handleInputReportBatch,
     inputReport: handleInputReport,
+    packedInputBatch: (state, data) => handlePackedInputBatch(state, data.data),
     disconnect: handleDataPortDisconnectEvent
   }
 
@@ -2846,8 +2882,7 @@
                 )
               } catch {
                 try {
-                  if (value && value.broker)
-                    callNative(nativeMessagePortClose, value.broker)
+                  if (value && value.broker) callNative(nativeMessagePortClose, value.broker)
                 } catch {
                   void 0
                 }

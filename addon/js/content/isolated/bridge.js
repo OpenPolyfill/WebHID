@@ -80,8 +80,8 @@
     if (!context || !sessions || !sessions.has(deviceId)) return false
     const key = planeKeyForClient(context, deviceId, 'window')
     if (!isFastNmPlane(context, key, generation)) return false
-    const msg = { type, reqId, reportId }
-    if (payload != null) msg.data = new Uint8Array(payload)
+    const msg = { type, reqId, reportId, directPayload: true }
+    if (payload != null) msg.data = payload
     onDataPortMessage(context, deviceId, msg, fastReplyPort(context, deviceId, key, generation))
     return true
   }
@@ -97,13 +97,17 @@
     return true
   })()
   let stackOtp = fanoutCandidate ? crypto.randomUUID() : null
-  const bootstrapValue = globalThis.cloneInto({
-    port: pageChannel.port2,
-    direct: {},
-    ...(fanoutCandidate ? { broker: { stackOtp } } : {})
-  }, window, {
-    wrapReflectors: true
-  })
+  const bootstrapValue = globalThis.cloneInto(
+    {
+      port: pageChannel.port2,
+      direct: {},
+      ...(fanoutCandidate ? { broker: { stackOtp } } : {})
+    },
+    window,
+    {
+      wrapReflectors: true
+    }
+  )
   try {
     globalThis.exportFunction(sendFastNm, bootstrapValue.direct, { defineAs: 'send' })
     globalThis.exportFunction(registerFastCallback, bootstrapValue.direct, {
@@ -3556,10 +3560,15 @@
       if (
         attachment.deviceId !== String(deviceId) ||
         !attachment.dataPort ||
-        messageEvent?.eventType !== 'input_report'
+        (messageEvent?.eventType !== 'input_report' &&
+          messageEvent?.eventType !== 'input_report_batch')
       )
         continue
       try {
+        if (messageEvent.eventType === 'input_report_batch') {
+          attachment.dataPort.postMessage({ type: 'packedInputBatch', data })
+          continue
+        }
         const copy =
           data == null
             ? new Uint8Array(0)
@@ -3643,7 +3652,6 @@
           continue
         try {
           const data = messageEvent.data
-          const copy = data != null && ArrayBuffer.isView(data) ? new Uint8Array(data) : data
           const fastDelivered =
             port === pagePort &&
             fastSink &&
@@ -3653,9 +3661,10 @@
               messageEvent.deviceId,
               spawnGen.get(key),
               messageEvent.reportId,
-              copy
+              data
             )
           if (!fastDelivered) {
+            const copy = data != null && ArrayBuffer.isView(data) ? new Uint8Array(data) : data
             port.postMessage({
               type: 'event',
               event: { ...messageEvent, data: copy }
@@ -3669,6 +3678,38 @@
     }
     return handled
   }
+  /**
+   * Forwards packed Native Messaging input frames to matching page clients.
+   * @param {object} messageEvent
+   * @returns {void}
+   */
+  function forwardPackedInputToPage(messageEvent) {
+    const deviceId = messageEvent.deviceId
+    for (const context of frameContexts.values()) {
+      for (const { port, sessions, clientKey } of sessionsForContext(context)) {
+        if (!sessions.has(deviceId)) continue
+        const key = planeKeyForClient(context, deviceId, clientKey)
+        if (
+          workers.has(key) ||
+          inPageDevices.has(key) ||
+          !nmPlanes.has(key) ||
+          brokerAttachments.has(key)
+        )
+          continue
+        try {
+          const fastDelivered =
+            port === pagePort &&
+            fastSink &&
+            isFastNmPlane(context, key, spawnGen.get(key)) &&
+            deliverFastPayload('batch', deviceId, spawnGen.get(key), 0, messageEvent.data)
+          if (!fastDelivered)
+            port.postMessage({ type: 'packedInputBatch', deviceId, data: messageEvent.data })
+        } catch (e) {
+          logger.debug('forward packed NM input failed', e)
+        }
+      }
+    }
+  }
 
   /**
    * @param {object} message
@@ -3676,6 +3717,10 @@
    */
   function handleBackgroundEvent(message) {
     const messageEvent = message.event
+    if (messageEvent.eventType === 'input_report_batch') {
+      forwardPackedInputToPage(messageEvent)
+      return
+    }
     if (messageEvent.eventType === 'input_report') {
       forwardInputReportToPage(messageEvent)
       return
@@ -3802,6 +3847,15 @@
       try {
         dataPort.postMessage(request)
       } catch {
+        if (msg.directPayload && msg.data != null) {
+          try {
+            request.data = new Uint8Array(msg.data)
+            dataPort.postMessage(request)
+            return
+          } catch {
+            void 0
+          }
+        }
         dataPending.delete(reqId)
         handleWorkerReportResponse(msg, port, { s: 500 })
       }

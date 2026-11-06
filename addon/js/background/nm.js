@@ -21,7 +21,8 @@
     forTabsOfOrigin
   } = webhid.import('bgStateOps')
   const http = webhid.import('http')
-  const { postToContentPorts, postToContentPort } = webhid.import('content-ports')
+  const { postToContentPorts, postToNamedContentPorts, postToContentPort } =
+    webhid.import('content-ports')
   const NM_HOST_FORWARDER = 'webhid.forwarder_nm_host'
   const NM_HOST_DAEMON = 'webhid.daemon_nm_host'
   /**
@@ -64,18 +65,21 @@
         if (request.deadline < nextDeadline) nextDeadline = request.deadline
       }
       if (!Number.isFinite(nextDeadline)) return
-      this.requestTimeoutTimer = setTimeout(() => {
-        this.requestTimeoutTimer = null
-        const now = Date.now()
-        for (const [id, request] of this.pending) {
-          if (request.deadline > now) continue
-          this.pending.delete(id)
-          if (request.trackLateOpen) this.lateOpenRequests.add(id)
-          logger.warn('NM request n=' + id + ' timed out')
-          request.reject(new Error('NM request timed out'))
-        }
-        this.scheduleRequestTimeout()
-      }, Math.max(1, nextDeadline - Date.now()))
+      this.requestTimeoutTimer = setTimeout(
+        () => {
+          this.requestTimeoutTimer = null
+          const now = Date.now()
+          for (const [id, request] of this.pending) {
+            if (request.deadline > now) continue
+            this.pending.delete(id)
+            if (request.trackLateOpen) this.lateOpenRequests.add(id)
+            logger.warn('NM request n=' + id + ' timed out')
+            request.reject(new Error('NM request timed out'))
+          }
+          this.scheduleRequestTimeout()
+        },
+        Math.max(1, nextDeadline - Date.now())
+      )
     },
 
     /**
@@ -278,7 +282,7 @@
         this.scheduleRequestTimeout()
         try {
           const message = buildMessage(id)
-          logger.debug(describe(message, id))
+          if (logger.level >= 3) logger.debug(describe(message, id))
           this.port.postMessage(message)
         } catch (e) {
           this.pending.delete(id)
@@ -340,8 +344,8 @@
       this.handshakePromise = promise
       return promise
     },
-    async sendReport(deviceId, reportId, data) {
-      return await this.sendPacked((reqId) =>
+    sendReport(deviceId, reportId, data) {
+      return this.sendPacked((reqId) =>
         buildPackedSend(PKG_SEND_REPORT, reqId, deviceId, reportId, data)
       )
     },
@@ -354,8 +358,8 @@
       if (resp && typeof resp.d === 'string') resp.d = Uint8Array.fromBase64(resp.d)
       return resp
     },
-    async sendFeatureReport(deviceId, reportId, data) {
-      return await this.sendPacked((reqId) =>
+    sendFeatureReport(deviceId, reportId, data) {
+      return this.sendPacked((reqId) =>
         buildPackedSend(PKG_SEND_FEATURE_REPORT, reqId, deviceId, reportId, data)
       )
     },
@@ -372,35 +376,15 @@
         if (bin.length < 8 || bin[0] !== PKG_INPUT_REPORT) return
         const deviceId = (bin[1] | (bin[2] << 8) | (bin[3] << 16) | (bin[4] << 24)) >>> 0
         const dataPortName = 'webhid-data:' + deviceId
-        let offset = 5
-        while (offset + 3 <= bin.length) {
-          const reportId = bin[offset]
-          const payloadLen = bin[offset + 1] | (bin[offset + 2] << 8)
-          offset += 3
-          if (offset + payloadLen > bin.length) break
-          const payload = new Uint8Array(payloadLen)
-          if (payloadLen > 0) payload.set(bin.subarray(offset, offset + payloadLen))
-          offset += payloadLen
-          const event = {
-            eventType: 'input_report',
-            deviceId,
-            reportId,
-            data: payload
-          }
-          const dataPortReached = postToContentPorts(null, { event }, dataPortName)
-          if (dataPortReached.size > 0) continue
-          const targets = new Set(
-            collectDeviceSessionOwners(deviceId)
-              .map((owner) => owner.port)
-              .filter((port) => port != null)
-          )
-          for (const port of targets) {
-            const copy = payloadLen > 0 ? new Uint8Array(payload) : payload
-            postToContentPort(port, {
-              action: 'webhidDeviceEvent',
-              event: { ...event, data: copy }
-            })
-          }
+        const event = { eventType: 'input_report_batch', deviceId, data: bin }
+        if (postToNamedContentPorts(dataPortName, { event })) return
+        const targets = new Set(
+          collectDeviceSessionOwners(deviceId)
+            .map((owner) => owner.port)
+            .filter((port) => port != null)
+        )
+        for (const port of targets) {
+          postToContentPort(port, { action: 'webhidDeviceEvent', event })
         }
       } catch (e) {
         logger.warn('onPackedData: malformed frame dropped:', e.message)
