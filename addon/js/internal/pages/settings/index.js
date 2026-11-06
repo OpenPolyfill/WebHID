@@ -4,14 +4,11 @@
   const loadGlobalSettings = webhid.import('loadGlobalSettings')
   const saveGlobalSetting = webhid.import('saveGlobalSetting')
   const GLOBAL_DEFAULTS = webhid.import('GLOBAL_DEFAULTS')
-  const syncBrowserTheme = webhid.import('syncBrowserTheme')
   const initInfoPopovers = webhid.import('initInfoPopovers')
   logger.initLogger('settings')
 
-  syncBrowserTheme()
-  if (browser.theme) browser.theme.onUpdated.addListener(syncBrowserTheme)
-
   localizeHTML(document)
+  document.querySelectorAll('webhid-toggle').forEach((toggle) => toggle.sync())
   initInfoPopovers(document)
 
   const current = await loadGlobalSettings()
@@ -27,6 +24,7 @@
   ]) {
     document.getElementById(key).checked = current[key]
   }
+  document.querySelectorAll('webhid-toggle').forEach((toggle) => toggle.sync())
 
   const { applyPlaneRadios, updatePlaneVisibility, saveDataPlane, bindRadioGroup } = webhid
     .import('settingsUi')

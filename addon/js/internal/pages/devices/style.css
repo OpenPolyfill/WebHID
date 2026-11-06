@@ -60,18 +60,3 @@ body {
   font-family: var(--font-mono);
   margin-top: 1px;
 }
-
-.btn-revoke {
-  background: var(--danger-bg);
-  color: var(--danger);
-  border: 1px solid var(--danger-border);
-  border-radius: var(--radius-sm);
-  padding: 4px 10px;
-  cursor: pointer;
-  font-size: 0.8em;
-  white-space: nowrap;
-}
-
-.btn-revoke:hover {
-  background: var(--danger-hover-bg);
-}

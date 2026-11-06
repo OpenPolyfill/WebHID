@@ -3,8 +3,9 @@
   <head>
     <meta charset="utf-8" />
     <title>WebHID</title>
-    <link rel="stylesheet" href="../../../../css/theme.css" />
+    <link rel="stylesheet" href="chrome://global/skin/in-content/common.css" />
     <link rel="stylesheet" href="../../../../css/shared.css" />
+    <link rel="stylesheet" href="../../../../css/native.css" />
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
@@ -67,7 +68,7 @@
                 </p>
               </div>
             </div>
-            <div role="radiogroup" class="seg-group" aria-labelledby="popupDataPlane">
+            <webhid-radio-group class="seg-group" aria-labelledby="popupDataPlane">
               <label class="seg-option" data-i18n-attr="title:settingsDataPlaneWt">
                 <input
                   type="radio"
@@ -104,7 +105,7 @@
                 />
                 <span class="seg-label" data-i18n="segDataPlaneNm">NM</span>
               </label>
-            </div>
+            </webhid-radio-group>
           </div>
           <div class="setting">
             <div class="setting-info">
@@ -117,7 +118,7 @@
                 </p>
               </div>
             </div>
-            <div role="radiogroup" class="seg-group" aria-labelledby="popupDevicePickerMode">
+            <webhid-radio-group class="seg-group" aria-labelledby="popupDevicePickerMode">
               <label class="seg-option" data-i18n-attr="title:settingsDevicePickerModal">
                 <input
                   type="radio"
@@ -154,7 +155,7 @@
                 />
                 <span class="seg-label">Privileged doorhanger</span>
               </label>
-            </div>
+            </webhid-radio-group>
           </div>
           <div class="setting">
             <div class="setting-info">
@@ -165,14 +166,13 @@
                 </p>
               </div>
             </div>
-            <label class="toggle">
+            <webhid-toggle>
               <input
                 type="checkbox"
                 id="workerPolyfillEnabled"
                 aria-labelledby="popupWorkerPolyfill"
               />
-              <span class="slider" role="presentation"></span>
-            </label>
+            </webhid-toggle>
           </div>
           <div class="setting">
             <div class="setting-info">
@@ -185,14 +185,13 @@
                 </p>
               </div>
             </div>
-            <label class="toggle">
+            <webhid-toggle>
               <input
                 type="checkbox"
                 id="allowActivationlessRequestDevice"
                 aria-labelledby="popupAllowActivationless"
               />
-              <span class="slider" role="presentation"></span>
-            </label>
+            </webhid-toggle>
           </div>
           <div class="setting" id="workerSpawnMode-setting">
             <div class="setting-info">
@@ -203,7 +202,7 @@
                 </p>
               </div>
             </div>
-            <div role="radiogroup" class="seg-group" aria-labelledby="popupWorkerSpawnMode">
+            <webhid-radio-group class="seg-group" aria-labelledby="popupWorkerSpawnMode">
               <label class="seg-option" data-i18n-attr="title:settingsWorkerSpawnShadow">
                 <input
                   type="radio"
@@ -222,7 +221,7 @@
                 />
                 <span class="seg-label" data-i18n="segSpawnBlob">Blob</span>
               </label>
-            </div>
+            </webhid-radio-group>
           </div>
           <div class="setting">
             <div class="setting-info">
@@ -231,7 +230,7 @@
                 <p data-i18n-md="popupLogLevelDesc">Console output verbosity for this site</p>
               </div>
             </div>
-            <div role="radiogroup" class="seg-group" aria-labelledby="popupLogLevel">
+            <webhid-radio-group class="seg-group" aria-labelledby="popupLogLevel">
               <label class="seg-option" data-i18n-attr="title:logLevelError">
                 <input
                   type="radio"
@@ -268,7 +267,7 @@
                 />
                 <span class="seg-label" data-i18n="logLevelDebug">Debug</span>
               </label>
-            </div>
+            </webhid-radio-group>
           </div>
           <div id="mac-privacy" class="setting" hidden>
             <div class="setting-info">
@@ -302,7 +301,7 @@
     <script src="../../../../js/utils/device-filters.js"></script>
     <script src="../../../../js/utils/device.js"></script>
     <script src="../../../../js/utils/settings.js"></script>
-    <script src="../../../../js/utils/theme-sync.js"></script>
+    <script src="../../../../js/utils/native-controls.js"></script>
     <script src="../../../../js/utils/popover.js"></script>
     <script src="../../../../js/utils/settings-ui.js"></script>
     <script src="index.js"></script>

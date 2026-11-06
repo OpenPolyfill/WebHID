@@ -7,22 +7,6 @@ body {
   padding: 8px 0;
 }
 
-.toggle {
-  width: 36px;
-  height: 20px;
-}
-
-.slider:before {
-  height: 14px;
-  width: 14px;
-  left: 3px;
-  bottom: 3px;
-}
-
-input:checked + .slider:before {
-  transform: translateX(16px);
-}
-
 #header {
   display: flex;
   align-items: center;
@@ -43,6 +27,8 @@ input:checked + .slider:before {
   justify-content: center;
   width: 24px;
   height: 24px;
+  min-height: 24px;
+  margin: 0;
   padding: 0;
   border: none;
   border-radius: var(--radius-sm);
@@ -72,6 +58,8 @@ input:checked + .slider:before {
   justify-content: flex-end;
   gap: 4px;
   width: 100%;
+  min-height: 24px;
+  margin: 0;
   padding: 2px 4px;
   border: none;
   border-radius: var(--radius-sm);
@@ -86,7 +74,6 @@ input:checked + .slider:before {
 .origin-picker-button:focus-visible {
   background: var(--accent-surface);
   color: var(--accent);
-  outline: none;
 }
 
 .origin-picker-button.has-list {
@@ -278,21 +265,6 @@ input:checked + .slider:before {
   color: var(--text-muted);
   font-family: var(--font-mono);
   margin-top: 1px;
-}
-
-.btn-revoke {
-  background: var(--danger-bg);
-  color: var(--danger);
-  border: 1px solid var(--danger-border);
-  border-radius: var(--radius-sm);
-  padding: 4px 10px;
-  cursor: pointer;
-  font-size: 0.8em;
-  white-space: nowrap;
-}
-
-.btn-revoke:hover {
-  background: var(--danger-hover-bg);
 }
 
 #device-list {

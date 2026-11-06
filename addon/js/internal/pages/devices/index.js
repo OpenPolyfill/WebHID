@@ -5,11 +5,7 @@
   const groupDevices = webhid.import('groupDevices')
   const t = webhid.import('t')
   const localizeHTML = webhid.import('localizeHTML')
-  const syncBrowserTheme = webhid.import('syncBrowserTheme')
   logger.initLogger('devices')
-
-  syncBrowserTheme()
-  if (browser.theme) browser.theme.onUpdated.addListener(syncBrowserTheme)
 
   localizeHTML(document)
 

@@ -10,14 +10,11 @@
   const GLOBAL_DEFAULTS = webhid.import('GLOBAL_DEFAULTS')
   const settingsUi = webhid.import('settingsUi')
   const saveSiteSetting = webhid.import('saveSiteSetting')
-  const syncBrowserTheme = webhid.import('syncBrowserTheme')
   const initInfoPopovers = webhid.import('initInfoPopovers')
   logger.initLogger('popup')
 
-  syncBrowserTheme()
-  if (browser.theme) browser.theme.onUpdated.addListener(syncBrowserTheme)
-
   localizeHTML(document)
+  document.querySelectorAll('webhid-toggle').forEach((toggle) => toggle.sync())
   initInfoPopovers(document)
   const globalSettings = await loadGlobalSettings()
   const pickerCapabilities = await browser.runtime.sendMessage({
@@ -305,6 +302,7 @@
     /** @type {HTMLInputElement} */
     document.getElementById('allowActivationlessRequestDevice').checked =
       settings.allowActivationlessRequestDevice || false
+    document.querySelectorAll('webhid-toggle').forEach((toggle) => toggle.sync())
     refreshPlaneVisibility()
   }
 

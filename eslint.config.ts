@@ -59,6 +59,8 @@ export default tseslint.config(
         document: 'readonly',
         window: 'readonly',
         Window: 'readonly',
+        HTMLElement: 'readonly',
+        customElements: 'readonly',
         Worker: 'readonly',
         Navigator: 'readonly',
         Event: 'readonly',

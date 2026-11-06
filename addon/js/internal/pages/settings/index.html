@@ -3,8 +3,9 @@
   <head>
     <meta charset="utf-8" />
     <title data-i18n="settingsTitle">WebHID Settings</title>
-    <link rel="stylesheet" href="../../../../css/theme.css" />
+    <link rel="stylesheet" href="chrome://global/skin/in-content/common.css" />
     <link rel="stylesheet" href="../../../../css/shared.css" />
+    <link rel="stylesheet" href="../../../../css/native.css" />
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
@@ -22,10 +23,9 @@
             </p>
           </div>
         </div>
-        <label class="toggle">
+        <webhid-toggle>
           <input type="checkbox" id="daemonAsNmHost" aria-labelledby="settingsDaemonAsNmHost" />
-          <span class="slider" role="presentation"></span>
-        </label>
+        </webhid-toggle>
       </div>
       <div class="setting">
         <div class="setting-info">
@@ -37,10 +37,9 @@
             </p>
           </div>
         </div>
-        <label class="toggle">
+        <webhid-toggle>
           <input type="checkbox" id="hidePageAction" aria-labelledby="settingsHidePageAction" />
-          <span class="slider" role="presentation"></span>
-        </label>
+        </webhid-toggle>
       </div>
 
       <div class="setting">
@@ -55,7 +54,7 @@
             </p>
           </div>
         </div>
-        <div role="radiogroup" class="seg-group" aria-labelledby="settingsDataPlane">
+        <webhid-radio-group class="seg-group" aria-labelledby="settingsDataPlane">
           <label class="seg-option" data-i18n-attr="title:settingsDataPlaneWt">
             <input
               type="radio"
@@ -92,7 +91,7 @@
             />
             <span class="seg-label" data-i18n="segDataPlaneNm">Native Messaging</span>
           </label>
-        </div>
+        </webhid-radio-group>
       </div>
       <div class="setting">
         <div class="setting-info">
@@ -103,12 +102,12 @@
             <p data-i18n-md="settingsDevicePickerModeDesc">
               <strong>Modal</strong>: shadow-DOM overlay on the page when
               <code>requestDevice()</code> is called (default).<br /><strong>Page Action</strong>:
-              URL-bar popup picker; the user clicks the icon to open it.<br /><strong>Window</strong>:
-              separate popup window.
+              URL-bar popup picker; the user clicks the icon to open it.<br /><strong>Window</strong
+              >: separate popup window.
             </p>
           </div>
         </div>
-        <div role="radiogroup" class="seg-group" aria-labelledby="settingsDevicePickerMode">
+        <webhid-radio-group class="seg-group" aria-labelledby="settingsDevicePickerMode">
           <label class="seg-option" data-i18n-attr="title:settingsDevicePickerModal">
             <input
               type="radio"
@@ -149,7 +148,7 @@
             />
             <span class="seg-label">Privileged doorhanger</span>
           </label>
-        </div>
+        </webhid-radio-group>
       </div>
       <div class="setting">
         <div class="setting-info">
@@ -162,14 +161,13 @@
             </p>
           </div>
         </div>
-        <label class="toggle">
+        <webhid-toggle>
           <input
             type="checkbox"
             id="workerPolyfillEnabled"
             aria-labelledby="settingsWorkerPolyfill"
           />
-          <span class="slider" role="presentation"></span>
-        </label>
+        </webhid-toggle>
       </div>
       <div class="setting">
         <div class="setting-info">
@@ -183,14 +181,13 @@
             </p>
           </div>
         </div>
-        <label class="toggle">
+        <webhid-toggle>
           <input
             type="checkbox"
             id="allowActivationlessRequestDevice"
             aria-labelledby="settingsAllowActivationless"
           />
-          <span class="slider" role="presentation"></span>
-        </label>
+        </webhid-toggle>
       </div>
       <div class="setting" id="workerSpawnMode-setting">
         <div class="setting-info">
@@ -210,7 +207,7 @@
             </p>
           </div>
         </div>
-        <div role="radiogroup" class="seg-group" aria-labelledby="settingsWorkerSpawnMode">
+        <webhid-radio-group class="seg-group" aria-labelledby="settingsWorkerSpawnMode">
           <label class="seg-option" data-i18n-attr="title:settingsWorkerSpawnShadow">
             <input
               type="radio"
@@ -229,7 +226,7 @@
             />
             <span class="seg-label" data-i18n="segSpawnBlob">Blob + CSP rewrite</span>
           </label>
-        </div>
+        </webhid-radio-group>
       </div>
       <div class="setting">
         <div class="setting-info">
@@ -241,7 +238,7 @@
             </p>
           </div>
         </div>
-        <div role="radiogroup" class="seg-group" aria-labelledby="settingsLogLevel">
+        <webhid-radio-group class="seg-group" aria-labelledby="settingsLogLevel">
           <label class="seg-option" data-i18n-attr="title:logLevelError">
             <input
               type="radio"
@@ -278,7 +275,7 @@
             />
             <span class="seg-label" data-i18n="logLevelDebug">Debug</span>
           </label>
-        </div>
+        </webhid-radio-group>
       </div>
       <div class="status" id="status" role="status" aria-live="polite"></div>
     </main>
@@ -288,7 +285,7 @@
     <script src="../../../../js/utils/http.js"></script>
     <script src="../../../../js/utils/logger.js"></script>
     <script src="../../../../js/utils/settings.js"></script>
-    <script src="../../../../js/utils/theme-sync.js"></script>
+    <script src="../../../../js/utils/native-controls.js"></script>
     <script src="../../../../js/utils/popover.js"></script>
     <script src="../../../../js/utils/settings-ui.js"></script>
     <script src="index.js"></script>
