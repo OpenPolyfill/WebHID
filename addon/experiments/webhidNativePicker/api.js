@@ -1,5 +1,9 @@
+const { PageActions } = ChromeUtils.importESModule('resource:///modules/PageActions.sys.mjs')
+
 class NativeDoorhanger {
   static notificationId = 'webHID-chooseDevice'
+  static anchorId = 'webHID-notification-icon'
+  static anchorProperty = 'webHID-popupnotificationanchor'
 
   #window
   #popup
@@ -13,13 +17,17 @@ class NativeDoorhanger {
   #label
   #empty
   #onUnload
+  #pageAction
 
-  constructor(window, onUnload) {
+  constructor(window, extensionId, onUnload) {
     this.#window = window
     this.#popup = window.PopupNotifications
+    this.#pageAction = PageActions.actions.find((action) => action.extensionID === extensionId)
     const doc = window.document
     const source = doc.getElementById('webSerial-choosePort-notification')
-    if (!source || !this.#popup) throw new Error('WebSerial doorhanger template unavailable')
+    if (!source || !this.#popup || !this.#pageAction) {
+      throw new Error('WebHID native picker UI unavailable')
+    }
     if (doc.getElementById(NativeDoorhanger.notificationId + '-notification')) {
       throw new Error('Native WebHID picker already initialized in this window')
     }
@@ -125,7 +133,29 @@ class NativeDoorhanger {
     }
   }
 
-  pump() {
+  releaseAnchor(entry) {
+    if (!entry.anchor) return
+    if (entry.browser[NativeDoorhanger.anchorProperty] === entry.anchor) {
+      delete entry.browser[NativeDoorhanger.anchorProperty]
+    }
+    entry.anchor = null
+  }
+
+  async pageActionAnchor() {
+    const actions = this.#window.BrowserPageActions
+    for (let attempt = 0; attempt < 12; attempt++) {
+      const button = actions.urlbarButtonNodeForActionID(this.#pageAction.id)
+      if (button && !button.hidden && button.getBoundingClientRect().width > 0) return button
+      await new Promise((resolve) => this.#window.setTimeout(resolve, 16))
+    }
+    try {
+      return actions.panelAnchorNodeForAction(this.#pageAction)
+    } catch {
+      return this.#window.document.getElementById('urlbar')
+    }
+  }
+
+  async pump() {
     if (this.#destroyed || this.#active || !this.#queue.length) return
     const entry = this.#queue.shift()
     if (!this.#requests.has(entry.key)) return this.pump()
@@ -142,12 +172,16 @@ class NativeDoorhanger {
     }
     entry.primaryAction = primaryAction
     try {
+      const anchor = await this.pageActionAnchor()
+      if (this.#destroyed || this.#active !== entry || !this.#requests.has(entry.key)) return
       this.render(entry)
+      entry.anchor = anchor
+      entry.browser[NativeDoorhanger.anchorProperty] = entry.anchor
       entry.notification = this.#popup.show(
         entry.browser,
         NativeDoorhanger.notificationId,
         entry.message,
-        'serial-notification-icon',
+        NativeDoorhanger.anchorId,
         primaryAction,
         [
           {
@@ -161,8 +195,9 @@ class NativeDoorhanger {
           name: entry.name,
           persistent: true,
           hideClose: true,
-          popupIconURL: 'chrome://browser/skin/notification-icons/serial.svg',
+          popupIconURL: this.#pageAction.getIconURL(this.#window),
           eventCallback: (topic) => {
+            if (topic === 'removed') this.releaseAnchor(entry)
             if (this.#active !== entry) return
             if (topic === 'showing') entry.phase = 'opening'
             if (topic === 'shown') entry.phase = 'open'
@@ -171,6 +206,7 @@ class NativeDoorhanger {
         }
       )
     } catch (error) {
+      this.releaseAnchor(entry)
       this.#requests.delete(entry.key)
       this.#active = null
       entry.reject(error)
@@ -246,7 +282,9 @@ this.webhidNativePicker = class extends ExtensionAPI {
             if (!window) throw new Error(`Browser window unavailable for tab ${input.tabId}`)
             let controller = this.controllers.get(window)
             if (!controller) {
-              controller = new NativeDoorhanger(window, () => this.controllers.delete(window))
+              controller = new NativeDoorhanger(window, context.extension.id, () =>
+                this.controllers.delete(window)
+              )
               this.controllers.set(window, controller)
             }
             const requestKey = keyFor(input)

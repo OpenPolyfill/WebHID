@@ -174,6 +174,9 @@
         privilegedPicker.cancel(tabId, request.requestId).catch(() => {})
       }
       pendingPicker.delete(tabId)
+      if (request.mode === 'privileged') {
+        pageActionVisibility.reconcile(tabId).catch(() => {})
+      }
     }
   }
   /**
@@ -1601,7 +1604,10 @@
     const req = tabId != null ? pendingPicker.get(tabId) : null
     if (req && req.requestId === request.requestId) {
       pendingPicker.delete(tabId)
-      if (req.mode === 'privileged') privilegedPicker.cancel(tabId, req.requestId).catch(() => {})
+      if (req.mode === 'privileged') {
+        privilegedPicker.cancel(tabId, req.requestId).catch(() => {})
+        pageActionVisibility.reconcile(tabId).catch(() => {})
+      }
       if (req.mode === 'pageAction') {
         restorePageAction(tabId)
         if (browser.notifications) browser.notifications.clear('webhid-picker').catch(() => {})
@@ -1615,9 +1621,11 @@
     const endpoint = frameEndpoints.get(req.port)
     if (!endpoint || endpoint.id !== req.ownerEndpointId || !endpointDocumentIsLive(endpoint)) {
       pendingPicker.delete(req.tabId)
+      pageActionVisibility.reconcile(req.tabId).catch(() => {})
       return
     }
     pendingPicker.delete(req.tabId)
+    pageActionVisibility.reconcile(req.tabId).catch(() => {})
     const selected = devices.length > 0
     postToContentPort(req.port, {
       action: 'pickerResult',
@@ -1628,9 +1636,17 @@
   }
 
   function startPrivilegedPicker(req) {
-    privilegedPicker
-      .show(req)
-      .then(({ devices }) => finishPrivilegedPicker(req, devices))
+    pageActionVisibility
+      .reconcile(req.tabId)
+      .then(() => {
+        if (pendingPicker.get(req.tabId) !== req) return null
+        return privilegedPicker.show(req)
+      })
+      .then((result) => {
+        if (!result) return
+        const { devices } = result
+        finishPrivilegedPicker(req, devices)
+      })
       .catch((error) => {
         logger.error('privileged picker failed', error)
         finishPrivilegedPicker(req, [])

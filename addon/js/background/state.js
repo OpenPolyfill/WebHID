@@ -48,8 +48,10 @@
   }
 
   function pageActionDesired(tabId) {
+    const pickerMode = pendingPicker.get(tabId)?.mode
     return (
-      pendingPicker.get(tabId)?.mode === 'pageAction' ||
+      pickerMode === 'pageAction' ||
+      pickerMode === 'privileged' ||
       (!pageActionVisibility.hidePageAction && pageActionVisibility.usedTabs.has(tabId))
     )
   }
