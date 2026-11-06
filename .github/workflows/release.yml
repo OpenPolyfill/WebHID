@@ -488,23 +488,57 @@ jobs:
         id: amo-notes
         shell: bash
         run: |
-          python3 - <<'EOF' >> "$GITHUB_OUTPUT"
-          import json, re
+          python3 - <<'EOF'
+          import os, re, uuid
+
           notes = open('notes.md', encoding='utf-8').read().strip()
           notes = re.sub(r'\s*\(\[[0-9a-f]{7}\]\([^)]*\)\)$', '', notes, flags=re.M)
           notes = re.sub(r'^### (.+)$', r'**\1**', notes, flags=re.M)
-          print('notes=' + json.dumps({'en-US': notes}))
+
+          delimiter = f"AMO_NOTES_{uuid.uuid4().hex}"
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+              output.write(f"notes<<{delimiter}\n{notes}\n{delimiter}\n")
           EOF
 
+      - name: Prepare signed XPI directory
+        run: mkdir -p signed
+
       - name: Upload to AMO
+        id: amo-sign
         uses: kewisch/action-web-ext@84a13bb9e1b6108c43788ba091c41ca1dba6ad45 # v2
         continue-on-error: true
         with:
           cmd: sign
           source: dist/webhid-addon-v${{ steps.variables.outputs.VERSION }}.xpi
+          artifacts: signed
           channel: listed
           sourceCode: source.zip
           releaseNotes: ${{ steps.amo-notes.outputs.notes }}
           apiKey: ${{ secrets.AMO_JWT_ISSUER }}
           apiSecret: ${{ secrets.AMO_JWT_SECRET }}
           timeout: 900000
+
+      - name: Prepare signed XPI
+        if: steps.amo-sign.outcome == 'success' && steps.amo-sign.outputs.target != ''
+        env:
+          SIGNED_XPI: ${{ steps.amo-sign.outputs.target }}
+          VERSION: ${{ steps.variables.outputs.VERSION }}
+        run: |
+          cp "$SIGNED_XPI" "signed/webhid-addon-v${VERSION}.xpi"
+          file "signed/webhid-addon-v${VERSION}.xpi"
+
+      - name: Generate attestation for signed XPI
+        if: steps.amo-sign.outcome == 'success' && steps.amo-sign.outputs.target != ''
+        uses: actions/attest@v4
+        with:
+          subject-path: signed/webhid-addon-v${{ steps.variables.outputs.VERSION }}.xpi
+
+      - name: Replace signed asset on release
+        if: steps.amo-sign.outcome == 'success' && steps.amo-sign.outputs.target != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          VERSION: ${{ steps.variables.outputs.VERSION }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh release upload "$RELEASE_TAG" "signed/webhid-addon-v${VERSION}.xpi" --clobber --repo "$REPO"
