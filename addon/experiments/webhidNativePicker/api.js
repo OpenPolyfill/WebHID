@@ -18,6 +18,7 @@ class NativeDoorhanger {
   #empty
   #onUnload
   #pageAction
+  #anchorOwner = null
 
   constructor(window, extensionId, onUnload) {
     this.#window = window
@@ -135,10 +136,31 @@ class NativeDoorhanger {
 
   releaseAnchor(entry) {
     if (!entry.anchor) return
-    if (entry.browser[NativeDoorhanger.anchorProperty] === entry.anchor) {
+    entry.anchor.removeEventListener('click', entry.anchorClick, true)
+    if (
+      this.#anchorOwner === entry &&
+      entry.browser[NativeDoorhanger.anchorProperty] === entry.anchor
+    ) {
       delete entry.browser[NativeDoorhanger.anchorProperty]
+      this.#anchorOwner = null
     }
     entry.anchor = null
+  }
+
+  focusPicker(entry) {
+    if (this.#active !== entry) return
+    if (this.#popup.panel.state === 'open') {
+      this.#menu.focus()
+      return
+    }
+    this.#popup.panel.addEventListener(
+      'popupshown',
+      () => {
+        if (this.#active === entry) this.#menu.focus()
+      },
+      { once: true }
+    )
+    entry.notification?.reshow()
   }
 
   async pageActionAnchor() {
@@ -176,6 +198,11 @@ class NativeDoorhanger {
       if (this.#destroyed || this.#active !== entry || !this.#requests.has(entry.key)) return
       this.render(entry)
       entry.anchor = anchor
+      entry.anchorClick = () => {
+        this.#window.setTimeout(() => this.focusPicker(entry), 0)
+      }
+      anchor.addEventListener('click', entry.anchorClick, true)
+      this.#anchorOwner = entry
       entry.browser[NativeDoorhanger.anchorProperty] = entry.anchor
       entry.notification = this.#popup.show(
         entry.browser,
@@ -200,7 +227,10 @@ class NativeDoorhanger {
             if (topic === 'removed') this.releaseAnchor(entry)
             if (this.#active !== entry) return
             if (topic === 'showing') entry.phase = 'opening'
-            if (topic === 'shown') entry.phase = 'open'
+            if (topic === 'shown') {
+              entry.phase = 'open'
+              if (!this.#menu.hidden) this.#menu.focus()
+            }
             if (topic === 'removed') this.settle(entry, null, false)
           }
         }

@@ -175,7 +175,7 @@
       }
       pendingPicker.delete(tabId)
       if (request.mode === 'privileged') {
-        pageActionVisibility.reconcile(tabId).catch(() => {})
+        restorePrivilegedPageAction(tabId)
       }
     }
   }
@@ -1549,6 +1549,14 @@
     ]).catch((e) => logger.debug('restore pageAction failed', e))
   }
 
+  function restorePrivilegedPageAction(tabId) {
+    if (!browser.pageAction || tabId == null) return
+    Promise.all([
+      pageActionVisibility.reconcile(tabId),
+      browser.pageAction.setPopup({ tabId, popup: 'js/internal/pages/popup/index.html' })
+    ]).catch((e) => logger.debug('restore privileged pageAction failed', e))
+  }
+
   /**
    * Opens the picker as a pageAction popup, alerting the user via a
    * notification when the requesting tab is not the active one.
@@ -1606,7 +1614,7 @@
       pendingPicker.delete(tabId)
       if (req.mode === 'privileged') {
         privilegedPicker.cancel(tabId, req.requestId).catch(() => {})
-        pageActionVisibility.reconcile(tabId).catch(() => {})
+        restorePrivilegedPageAction(tabId)
       }
       if (req.mode === 'pageAction') {
         restorePageAction(tabId)
@@ -1621,11 +1629,11 @@
     const endpoint = frameEndpoints.get(req.port)
     if (!endpoint || endpoint.id !== req.ownerEndpointId || !endpointDocumentIsLive(endpoint)) {
       pendingPicker.delete(req.tabId)
-      pageActionVisibility.reconcile(req.tabId).catch(() => {})
+      restorePrivilegedPageAction(req.tabId)
       return
     }
     pendingPicker.delete(req.tabId)
-    pageActionVisibility.reconcile(req.tabId).catch(() => {})
+    restorePrivilegedPageAction(req.tabId)
     const selected = devices.length > 0
     postToContentPort(req.port, {
       action: 'pickerResult',
@@ -1638,8 +1646,13 @@
   function startPrivilegedPicker(req) {
     pageActionVisibility
       .reconcile(req.tabId)
-      .then(() => {
+      .then(async () => {
         if (pendingPicker.get(req.tabId) !== req) return null
+        await browser.pageAction.setPopup({ tabId: req.tabId, popup: '' })
+        if (pendingPicker.get(req.tabId) !== req) {
+          restorePrivilegedPageAction(req.tabId)
+          return null
+        }
         return privilegedPicker.show(req)
       })
       .then((result) => {
