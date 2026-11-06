@@ -127,6 +127,13 @@ function collectRuntimeResources(add) {
   }
   const fragment = 'js/content/isolated/picker/fragment.html'
   if (existsSync(join(SRC, fragment))) add(fragment)
+
+  for (const page of [
+    'js/internal/pages/devices/index.html',
+    'js/internal/pages/picker/index.html'
+  ]) {
+    if (existsSync(join(SRC, page))) add(page)
+  }
 }
 
 function parseManifest(manifestInput) {
