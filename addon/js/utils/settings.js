@@ -46,7 +46,7 @@
   }
   /** @type {import("../types.js").SettingsDefaults} */
   const GLOBAL_DEFAULTS = {
-    dataPlane: types.WebTransport ? 'wt' : 'ws',
+    dataPlane: 'nm',
     logLevel: 1,
     daemonAsNmHost: false,
     hidePageAction: false,
