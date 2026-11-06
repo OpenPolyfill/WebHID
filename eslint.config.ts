@@ -98,6 +98,7 @@ export default tseslint.config(
     plugins: { jsdoc },
     rules: {
       'no-unused-vars': ['error', { varsIgnorePattern: '^_', argsIgnorePattern: '^_' }],
+      'no-underscore-dangle': 'error',
       'jsdoc/require-jsdoc': [
         'warn',
         {
