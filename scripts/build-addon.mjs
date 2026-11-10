@@ -305,6 +305,8 @@ async function build() {
   }
   const manifest = parseManifest(manifestPath)
   if (args.values.experimental) {
+    manifest.browser_specific_settings.gecko.update_url =
+      `https://github.com/OpenPolyfill/WebHID/releases/latest/download/webhid-addon-privileged-updates.json`
     manifest.experiment_apis = {
       webhidNativePicker: {
         schema: 'experiments/webhidNativePicker/schema.json',
