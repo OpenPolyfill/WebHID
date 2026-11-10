@@ -46,6 +46,78 @@ jobs:
           path: dist/webhid-addon-v${{ steps.variables.outputs.VERSION }}.xpi
           archive: false
 
+      - name: Build privileged XPI
+        run: |
+          npm run build:addon:experiment
+          npx web-ext build \
+            --source-dir dist/addon-experimental \
+            --artifacts-dir dist \
+            --filename webhid-addon-privileged-v${{ steps.variables.outputs.VERSION }}.xpi
+
+      - name: Checkout OpenPolyfill CA
+        uses: actions/checkout@v7
+        with:
+          repository: OpenPolyfill/xpi-manifest
+          path: xpi-manifest
+          sparse-checkout: certificates/openpolyfill-ca.pem
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Sign privileged XPI
+        id: privileged-sign
+        uses: OpenPolyfill/action-xpi-sign@v1
+        with:
+          source: dist/webhid-addon-privileged-v${{ steps.variables.outputs.VERSION }}.xpi
+          artifacts: dist/signed
+          privateKey: ${{ secrets.XPI_CA_PRIVATE_KEY_PEM }}
+          certificate: xpi-manifest/certificates/openpolyfill-ca.pem
+          expectedId: webhid@k4zoku.dev
+
+      - name: Generate privileged update manifest
+        env:
+          VERSION: ${{ steps.variables.outputs.VERSION }}
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          SIGNED_XPI: ${{ steps.privileged-sign.outputs.target }}
+          REPO: ${{ github.repository }}
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          version = os.environ['VERSION']
+          manifest = json.loads(Path('dist/addon-experimental/manifest.json').read_text())
+          if manifest['version'] != version:
+              raise ValueError(f"XPI version {manifest['version']} differs from release {version}")
+
+          signed = Path(os.environ['SIGNED_XPI'])
+          digest = hashlib.sha256(signed.read_bytes()).hexdigest()
+          url = (f"https://github.com/{os.environ['REPO']}/releases/download/"
+                 f"{os.environ['RELEASE_TAG']}/{signed.name}")
+          updates = {'addons': {'webhid@k4zoku.dev': {'updates': [{
+              'version': version,
+              'update_link': url,
+              'update_hash': f'sha256:{digest}',
+          }]}}}
+          Path('dist/webhid-addon-privileged-updates.json').write_text(
+              json.dumps(updates, indent=2) + '\n')
+          PY
+
+      - name: Upload privileged XPI artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: webhid-addon-privileged-v${{ steps.variables.outputs.VERSION }}.xpi
+          path: ${{ steps.privileged-sign.outputs.target }}
+          archive: false
+
+      - name: Upload privileged update manifest artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: webhid-addon-privileged-updates.json
+          path: dist/webhid-addon-privileged-updates.json
+          archive: false
+
   build:
     name: Build (${{ matrix.os }} ${{ matrix.arch }})
     strategy:
@@ -331,6 +403,18 @@ jobs:
           name: webhid-addon-v${{ steps.variables.outputs.VERSION }}.xpi
           path: dist/
 
+      - name: Download privileged XPI
+        uses: actions/download-artifact@v8
+        with:
+          name: webhid-addon-privileged-v${{ steps.variables.outputs.VERSION }}.xpi
+          path: dist/
+
+      - name: Download privileged update manifest
+        uses: actions/download-artifact@v8
+        with:
+          name: webhid-addon-privileged-updates.json
+          path: dist/
+
       - name: Download Linux x86_64
         uses: actions/download-artifact@v8
         with:
@@ -425,6 +509,7 @@ jobs:
         with:
           subject-path: |
             dist/*.xpi
+            dist/webhid-addon-privileged-updates.json
             webhid-*.zip
             artifacts-windows-x86_64-msi/*.msi
             artifacts-windows-aarch64-msi/*.msi
@@ -473,6 +558,7 @@ jobs:
           body_path: notes.md
           files: |
             dist/*.xpi
+            dist/webhid-addon-privileged-updates.json
             webhid-*.zip
             artifacts-windows-x86_64-msi/*.msi
             artifacts-windows-aarch64-msi/*.msi
