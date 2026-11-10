@@ -155,6 +155,9 @@
         if (typeof this.dialog.showModal === 'function') {
           this.dialog.style.display = ''
           await new Promise((resolve) => requestAnimationFrame(resolve))
+          if (!this.host.isConnected) {
+            document.documentElement.appendChild(this.host)
+          }
           this.dialog.showModal()
         } else {
           this.dialog.setAttribute('open', '')
