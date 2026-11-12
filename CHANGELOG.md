@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [3.3.4](https://github.com/OpenPolyfill/WebHID/compare/v3.3.3...v3.3.4) (2026-11-12)
+
+### Bug Fixes
+
+* **addon:** detached dom picker ([6115bc9](https://github.com/OpenPolyfill/WebHID/commit/6115bc97d57fca31a0a7a9902e21dbae1dedb40c))
+
+### CI/CD
+
+* add privileged signing ([21ac38e](https://github.com/OpenPolyfill/WebHID/commit/21ac38eb2735abd562f2835ad83a7c8b553c1fbd))
+
 ## [3.3.3](https://github.com/OpenPolyfill/WebHID/compare/v3.3.2...v3.3.3) (2026-11-06)
 
 ### CI/CD
