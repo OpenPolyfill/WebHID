@@ -142,12 +142,6 @@ jobs:
             apt_deps: ''
             rust_target: ''
             cargo_wrapper: ''
-          - os: macos-15
-            arch: universal
-            artifact_name: webhid-macos
-            apt_deps: ''
-            rust_target: ''
-            cargo_wrapper: ''
 
     runs-on: ${{ matrix.os }}
     env:
@@ -222,39 +216,6 @@ jobs:
           mv "dist/webhid-${{ steps.variables.outputs.VERSION }}-1.${{ matrix.arch }}.rpm" \
              "dist/webhid-linux-${{ matrix.arch }}-v${{ steps.variables.outputs.VERSION }}.rpm"
         shell: bash
-
-      - name: Prepare Artifacts (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          rustup target add x86_64-apple-darwin aarch64-apple-darwin
-          cargo build --release --manifest-path crates/Cargo.toml \
-          -p webhid-daemon -p webhid-native-messaging \
-          --target x86_64-apple-darwin --target aarch64-apple-darwin
-
-          mkdir -p crates/target/universal-apple-darwin/release
-          lipo -create \
-            crates/target/x86_64-apple-darwin/release/webhid-daemon \
-            crates/target/aarch64-apple-darwin/release/webhid-daemon \
-            -output crates/target/universal-apple-darwin/release/webhid-daemon
-          lipo -create \
-            crates/target/x86_64-apple-darwin/release/webhid-native-messaging \
-            crates/target/aarch64-apple-darwin/release/webhid-native-messaging \
-            -output crates/target/universal-apple-darwin/release/webhid-native-messaging
-
-          stage_macos() {
-            local src_dir="$1" out_dir="$2"
-            mkdir -p "$out_dir/bin" "$out_dir/manifests"
-            cp "$src_dir/webhid-daemon" "$out_dir/bin/"
-            cp "$src_dir/webhid-native-messaging" "$out_dir/bin/"
-            cp manifests/webhid.forwarder_nm_host.json "$out_dir/manifests/"
-            cp manifests/webhid.daemon_nm_host.json "$out_dir/manifests/"
-            cp packaging/macos/install.sh "$out_dir/install.sh"
-            cp packaging/macos/uninstall.sh "$out_dir/uninstall.sh"
-          }
-
-          stage_macos "crates/target/x86_64-apple-darwin/release" "artifacts-x86_64"
-          stage_macos "crates/target/aarch64-apple-darwin/release" "artifacts-aarch64"
-          stage_macos "crates/target/universal-apple-darwin/release" "artifacts-universal"
 
       - name: Build Windows binaries (both archs)
         if: runner.os == 'Windows'
@@ -356,27 +317,6 @@ jobs:
           path: dist/webhid-linux-${{ matrix.arch }}-v${{ steps.variables.outputs.VERSION }}.rpm
           archive: false
 
-      - name: Upload macOS x86_64
-        if: runner.os == 'macOS'
-        uses: actions/upload-artifact@v7
-        with:
-          name: webhid-macos-x86_64-v${{ steps.variables.outputs.VERSION }}
-          path: artifacts-x86_64/
-
-      - name: Upload macOS aarch64
-        if: runner.os == 'macOS'
-        uses: actions/upload-artifact@v7
-        with:
-          name: webhid-macos-aarch64-v${{ steps.variables.outputs.VERSION }}
-          path: artifacts-aarch64/
-
-      - name: Upload macOS universal
-        if: runner.os == 'macOS'
-        uses: actions/upload-artifact@v7
-        with:
-          name: webhid-macos-universal-v${{ steps.variables.outputs.VERSION }}
-          path: artifacts-universal/
-
   release:
     name: Create GitHub Release
     needs: [build-addon, build]
@@ -451,24 +391,6 @@ jobs:
           name: webhid-windows-aarch64-v${{ steps.variables.outputs.VERSION }}.msi
           path: artifacts-windows-aarch64-msi/
 
-      - name: Download macOS x86_64
-        uses: actions/download-artifact@v8
-        with:
-          name: webhid-macos-x86_64-v${{ steps.variables.outputs.VERSION }}
-          path: artifacts-macos-x86_64/
-
-      - name: Download macOS aarch64
-        uses: actions/download-artifact@v8
-        with:
-          name: webhid-macos-aarch64-v${{ steps.variables.outputs.VERSION }}
-          path: artifacts-macos-aarch64/
-
-      - name: Download macOS universal
-        uses: actions/download-artifact@v8
-        with:
-          name: webhid-macos-universal-v${{ steps.variables.outputs.VERSION }}
-          path: artifacts-macos-universal/
-
       - name: Download Linux x86_64 .deb
         uses: actions/download-artifact@v8
         with:
@@ -500,9 +422,6 @@ jobs:
           cd artifacts-linux-aarch64  && zip -r "../webhid-linux-aarch64-${VER}.zip"  . && cd ..
           cd artifacts-windows-x86_64 && zip -r "../webhid-windows-x86_64-${VER}.zip" . && cd ..
           cd artifacts-windows-aarch64 && zip -r "../webhid-windows-aarch64-${VER}.zip" . && cd ..
-          cd artifacts-macos-x86_64    && zip -r "../webhid-macos-x86_64-${VER}.zip"    . && cd ..
-          cd artifacts-macos-aarch64   && zip -r "../webhid-macos-aarch64-${VER}.zip"   . && cd ..
-          cd artifacts-macos-universal && zip -r "../webhid-macos-universal-${VER}.zip" . && cd ..
 
       - name: Generate artifact attestations
         uses: actions/attest@v4
@@ -628,3 +547,143 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           gh release upload "$RELEASE_TAG" "signed/webhid-addon-v${VERSION}.xpi" --clobber --repo "$REPO"
+
+  macos:
+    name: Build macOS assets
+    runs-on: macos-15
+    outputs:
+      version: ${{ steps.variables.outputs.VERSION }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Define variables
+        id: variables
+        shell: bash
+        run: |
+          git config --global --add safe.directory "${GITHUB_WORKSPACE}"
+          echo "VERSION=$(git describe --tags | sed 's/^v//;s/_/./;s/\([^-]*-g\)/r\1/;s/-/./g')" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          targets: x86_64-apple-darwin,aarch64-apple-darwin
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+        with:
+          workspaces: crates -> target
+
+      - name: Build macOS release artifacts
+        shell: bash
+        run: |
+          cargo build --release --manifest-path crates/Cargo.toml \
+            -p webhid-daemon -p webhid-native-messaging \
+            --target x86_64-apple-darwin --target aarch64-apple-darwin
+
+          mkdir -p crates/target/universal-apple-darwin/release
+          lipo -create \
+            crates/target/x86_64-apple-darwin/release/webhid-daemon \
+            crates/target/aarch64-apple-darwin/release/webhid-daemon \
+            -output crates/target/universal-apple-darwin/release/webhid-daemon
+          lipo -create \
+            crates/target/x86_64-apple-darwin/release/webhid-native-messaging \
+            crates/target/aarch64-apple-darwin/release/webhid-native-messaging \
+            -output crates/target/universal-apple-darwin/release/webhid-native-messaging
+
+          stage_macos() {
+            local src_dir="$1" out_dir="$2"
+            mkdir -p "$out_dir/bin" "$out_dir/manifests"
+            cp "$src_dir/webhid-daemon" "$out_dir/bin/"
+            cp "$src_dir/webhid-native-messaging" "$out_dir/bin/"
+            cp manifests/webhid.forwarder_nm_host.json "$out_dir/manifests/"
+            cp manifests/webhid.daemon_nm_host.json "$out_dir/manifests/"
+            cp packaging/macos/install.sh "$out_dir/install.sh"
+            cp packaging/macos/uninstall.sh "$out_dir/uninstall.sh"
+          }
+
+          stage_macos "crates/target/x86_64-apple-darwin/release" "artifacts-x86_64"
+          stage_macos "crates/target/aarch64-apple-darwin/release" "artifacts-aarch64"
+          stage_macos "crates/target/universal-apple-darwin/release" "artifacts-universal"
+
+      - name: Package macOS artifacts
+        env:
+          VERSION: ${{ steps.variables.outputs.VERSION }}
+        shell: bash
+        run: |
+          VER="v${VERSION}"
+          cd artifacts-x86_64 && zip -r "../webhid-macos-x86_64-${VER}.zip" . && cd ..
+          cd artifacts-aarch64 && zip -r "../webhid-macos-aarch64-${VER}.zip" . && cd ..
+          cd artifacts-universal && zip -r "../webhid-macos-universal-${VER}.zip" . && cd ..
+
+      - name: Generate artifact attestations
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            webhid-macos-x86_64-v${{ steps.variables.outputs.VERSION }}.zip
+            webhid-macos-aarch64-v${{ steps.variables.outputs.VERSION }}.zip
+            webhid-macos-universal-v${{ steps.variables.outputs.VERSION }}.zip
+
+      - name: Upload macOS x86_64 artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: webhid-macos-x86_64-v${{ steps.variables.outputs.VERSION }}.zip
+          path: webhid-macos-x86_64-v${{ steps.variables.outputs.VERSION }}.zip
+          archive: false
+
+      - name: Upload macOS aarch64 artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: webhid-macos-aarch64-v${{ steps.variables.outputs.VERSION }}.zip
+          path: webhid-macos-aarch64-v${{ steps.variables.outputs.VERSION }}.zip
+          archive: false
+
+      - name: Upload macOS universal artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: webhid-macos-universal-v${{ steps.variables.outputs.VERSION }}.zip
+          path: webhid-macos-universal-v${{ steps.variables.outputs.VERSION }}.zip
+          archive: false
+
+  attach-macos-release:
+    name: Attach macOS assets to GitHub release
+    needs: [macos, release]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download macOS x86_64 artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: webhid-macos-x86_64-v${{ needs.macos.outputs.version }}.zip
+          path: dist/
+
+      - name: Download macOS aarch64 artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: webhid-macos-aarch64-v${{ needs.macos.outputs.version }}.zip
+          path: dist/
+
+      - name: Download macOS universal artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: webhid-macos-universal-v${{ needs.macos.outputs.version }}.zip
+          path: dist/
+
+      - name: Attach macOS assets to GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          REPO: ${{ github.repository }}
+          VERSION: ${{ needs.macos.outputs.version }}
+        shell: bash
+        run: |
+          gh release upload "$RELEASE_TAG" \
+            "dist/webhid-macos-x86_64-v${VERSION}.zip" \
+            "dist/webhid-macos-aarch64-v${VERSION}.zip" \
+            "dist/webhid-macos-universal-v${VERSION}.zip" \
+            --clobber --repo "$REPO"
