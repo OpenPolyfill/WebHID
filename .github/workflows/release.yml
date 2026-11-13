@@ -555,8 +555,6 @@ jobs:
       version: ${{ steps.variables.outputs.VERSION }}
     permissions:
       contents: read
-      id-token: write
-      attestations: write
     steps:
       - uses: actions/checkout@v7
         with:
@@ -610,44 +608,23 @@ jobs:
           stage_macos "crates/target/aarch64-apple-darwin/release" "artifacts-aarch64"
           stage_macos "crates/target/universal-apple-darwin/release" "artifacts-universal"
 
-      - name: Package macOS artifacts
-        env:
-          VERSION: ${{ steps.variables.outputs.VERSION }}
-        shell: bash
-        run: |
-          VER="v${VERSION}"
-          cd artifacts-x86_64 && zip -r "../webhid-macos-x86_64-${VER}.zip" . && cd ..
-          cd artifacts-aarch64 && zip -r "../webhid-macos-aarch64-${VER}.zip" . && cd ..
-          cd artifacts-universal && zip -r "../webhid-macos-universal-${VER}.zip" . && cd ..
-
-      - name: Generate artifact attestations
-        uses: actions/attest@v4
-        with:
-          subject-path: |
-            webhid-macos-x86_64-v${{ steps.variables.outputs.VERSION }}.zip
-            webhid-macos-aarch64-v${{ steps.variables.outputs.VERSION }}.zip
-            webhid-macos-universal-v${{ steps.variables.outputs.VERSION }}.zip
-
-      - name: Upload macOS x86_64 artifact
+      - name: Upload macOS x86_64
         uses: actions/upload-artifact@v7
         with:
-          name: webhid-macos-x86_64-v${{ steps.variables.outputs.VERSION }}.zip
-          path: webhid-macos-x86_64-v${{ steps.variables.outputs.VERSION }}.zip
-          archive: false
+          name: webhid-macos-x86_64-v${{ steps.variables.outputs.VERSION }}
+          path: artifacts-x86_64/
 
-      - name: Upload macOS aarch64 artifact
+      - name: Upload macOS aarch64
         uses: actions/upload-artifact@v7
         with:
-          name: webhid-macos-aarch64-v${{ steps.variables.outputs.VERSION }}.zip
-          path: webhid-macos-aarch64-v${{ steps.variables.outputs.VERSION }}.zip
-          archive: false
+          name: webhid-macos-aarch64-v${{ steps.variables.outputs.VERSION }}
+          path: artifacts-aarch64/
 
-      - name: Upload macOS universal artifact
+      - name: Upload macOS universal
         uses: actions/upload-artifact@v7
         with:
-          name: webhid-macos-universal-v${{ steps.variables.outputs.VERSION }}.zip
-          path: webhid-macos-universal-v${{ steps.variables.outputs.VERSION }}.zip
-          archive: false
+          name: webhid-macos-universal-v${{ steps.variables.outputs.VERSION }}
+          path: artifacts-universal/
 
   attach-macos-release:
     name: Attach macOS assets to GitHub release
@@ -655,24 +632,44 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
-      - name: Download macOS x86_64 artifact
+      - name: Download macOS x86_64
         uses: actions/download-artifact@v8
         with:
-          name: webhid-macos-x86_64-v${{ needs.macos.outputs.version }}.zip
-          path: dist/
+          name: webhid-macos-x86_64-v${{ needs.macos.outputs.version }}
+          path: artifacts-macos-x86_64/
 
-      - name: Download macOS aarch64 artifact
+      - name: Download macOS aarch64
         uses: actions/download-artifact@v8
         with:
-          name: webhid-macos-aarch64-v${{ needs.macos.outputs.version }}.zip
-          path: dist/
+          name: webhid-macos-aarch64-v${{ needs.macos.outputs.version }}
+          path: artifacts-macos-aarch64/
 
-      - name: Download macOS universal artifact
+      - name: Download macOS universal
         uses: actions/download-artifact@v8
         with:
-          name: webhid-macos-universal-v${{ needs.macos.outputs.version }}.zip
-          path: dist/
+          name: webhid-macos-universal-v${{ needs.macos.outputs.version }}
+          path: artifacts-macos-universal/
+
+      - name: Package macOS artifacts
+        env:
+          VERSION: ${{ needs.macos.outputs.version }}
+        shell: bash
+        run: |
+          VER="v${VERSION}"
+          cd artifacts-macos-x86_64 && zip -r "../webhid-macos-x86_64-${VER}.zip" . && cd ..
+          cd artifacts-macos-aarch64 && zip -r "../webhid-macos-aarch64-${VER}.zip" . && cd ..
+          cd artifacts-macos-universal && zip -r "../webhid-macos-universal-${VER}.zip" . && cd ..
+
+      - name: Generate artifact attestations
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            webhid-macos-x86_64-v${{ needs.macos.outputs.version }}.zip
+            webhid-macos-aarch64-v${{ needs.macos.outputs.version }}.zip
+            webhid-macos-universal-v${{ needs.macos.outputs.version }}.zip
 
       - name: Attach macOS assets to GitHub release
         env:
@@ -683,7 +680,7 @@ jobs:
         shell: bash
         run: |
           gh release upload "$RELEASE_TAG" \
-            "dist/webhid-macos-x86_64-v${VERSION}.zip" \
-            "dist/webhid-macos-aarch64-v${VERSION}.zip" \
-            "dist/webhid-macos-universal-v${VERSION}.zip" \
+            "webhid-macos-x86_64-v${VERSION}.zip" \
+            "webhid-macos-aarch64-v${VERSION}.zip" \
+            "webhid-macos-universal-v${VERSION}.zip" \
             --clobber --repo "$REPO"
