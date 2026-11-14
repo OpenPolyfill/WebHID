@@ -10,8 +10,6 @@
   const {
     deviceCache,
     pendingPicker,
-    permissionsPolicy,
-    frameDelegations,
     frameEndpoints,
     pageActionVisibility,
     cspFrameNavigations,
@@ -50,7 +48,8 @@
     closeForCleanup,
     closeFrameSessions
   } = webhid.import('bgStateOps')
-  const { urlOrigin, frameKey, documentFrameKey } = webhid.import('bgCsp')
+  const { urlOrigin, frameKey } = webhid.import('bgCsp')
+  const permissionRegistry = webhid.import('bgPermissionRegistry')
   const NativeMessaging = webhid.import('NativeMessaging')
   const groupDevices = webhid.import('groupDevices')
   const groupIdFor = webhid.import('groupIdFor')
@@ -161,6 +160,9 @@
         ).catch((e) => logger.debug('scope transition cleanup failed', e))
       }
       sendEndpointMetadata(endpoint)
+      permissionRegistry.syncFrame(endpoint).catch((e) =>
+        logger.debug('permission state sync failed', e)
+      )
     }
   }
   /**
@@ -181,23 +183,6 @@
     }
   }
   /**
-   * @param {object} endpoint
-   * @returns {boolean}
-   */
-  function hasOtherLiveEndpoint(endpoint) {
-    for (const candidate of frameEndpoints.values()) {
-      if (
-        candidate !== endpoint &&
-        !candidate.retired &&
-        candidate.tabId === endpoint.tabId &&
-        candidate.frameId === endpoint.frameId &&
-        candidate.documentId === endpoint.documentId
-      )
-        return true
-    }
-    return false
-  }
-  /**
    * Retires one real exact-frame endpoint and all state owned by its
    * document lifetime.
    * @param {object} endpoint
@@ -206,15 +191,8 @@
   function retireEndpoint(endpoint) {
     if (endpoint.retired) return null
     clearPendingPickerForEndpoint(endpoint)
-    const preserveDocumentState = hasOtherLiveEndpoint(endpoint)
     endpoint.retired = true
     if (frameEndpoints.get(endpoint.port) === endpoint) frameEndpoints.delete(endpoint.port)
-    cancelEndpointDelegations(endpoint)
-    const exactKey = documentFrameKey(endpoint.tabId, endpoint.frameId, endpoint.documentId)
-    if (!preserveDocumentState) {
-      frameDelegations.delete(exactKey)
-      permissionsPolicy.delete(exactKey)
-    }
     return purgeFrame(endpoint.tabId, endpoint.frameKey, (deviceId, token) =>
       NativeMessaging.closeDevice(deviceId, token)
     ).catch((e) => logger.debug('frame endpoint cleanup failed', e))
@@ -352,69 +330,6 @@
   function endpointForSender(request, sender, port) {
     return endpointForRequest(request, port)
   }
-  const delegationPending = new Map()
-  let nextDelegationId = 0
-  /**
-   * Resolves the parent endpoint for an exact child document.
-   * @param {object} endpoint
-   * @returns {object|null}
-   */
-  function parentEndpointFor(endpoint) {
-    const entry = policyEntryForDocument(
-      endpoint.tabId,
-      endpoint.frameId,
-      endpoint.documentId,
-      endpoint.origin
-    )
-    const parentFrameId = entry && entry.parentFrameId >= 0 ? entry.parentFrameId : 0
-    const parentDocumentId = entry && entry.parentDocumentId
-    if (endpoint.frameId === 0) return null
-    for (const candidate of frameEndpoints.values()) {
-      if (
-        candidate.tabId === endpoint.tabId &&
-        candidate.frameId === parentFrameId &&
-        (!parentDocumentId || candidate.documentId === parentDocumentId) &&
-        candidate.documentId &&
-        candidate !== endpoint &&
-        candidate.port !== endpoint.port
-      )
-        return candidate
-    }
-    return null
-  }
-  /**
-   * Queries the exact parent endpoint for iframe delegation.
-   * @param {object} endpoint
-   * @returns {Promise<boolean>}
-   */
-  function queryFrameDelegation(endpoint) {
-    const parent = parentEndpointFor(endpoint)
-    if (!parent) return Promise.resolve(false)
-    const requestId = 'delegation:' + ++nextDelegationId
-    return new Promise((resolve) => {
-      delegationPending.set(requestId, { endpoint, parent, resolve })
-      postToContentPort(parent.port, {
-        action: 'frameDelegationQuery',
-        requestId,
-        childFrameId: endpoint.frameId,
-        childDocumentId: endpoint.documentId,
-        childOrigin: endpoint.origin,
-        parentOrigin: parent.origin
-      })
-    })
-  }
-  /**
-   * Cancels delegation queries involving a retired endpoint.
-   * @param {object} endpoint
-   * @returns {void}
-   */
-  function cancelEndpointDelegations(endpoint) {
-    for (const [requestId, pending] of delegationPending) {
-      if (pending.endpoint !== endpoint && pending.parent !== endpoint) continue
-      delegationPending.delete(requestId)
-      pending.resolve(false)
-    }
-  }
   /**
    * Sends a persistence-scope event only to endpoints owning that scope.
    * @param {string|null} persistentOrigin
@@ -457,6 +372,7 @@
       persistentOrigin,
       deviceIds
     })
+    await permissionRegistry.notifyOrigin(persistentOrigin)
   }
 
   /**
@@ -505,7 +421,7 @@
         }
       })
     }
-    notifyAllowedDevicesChanged(authorityOrigin, persistentOrigin, deviceIds)
+    await notifyAllowedDevicesChanged(authorityOrigin, persistentOrigin, deviceIds)
     return true
   }
 
@@ -1785,141 +1701,54 @@
     return false
   }
 
-  /**
-   * Resolves a policy record to the document ID observed by the browser.
-   * @param {number} tabId
-   * @param {number} frameId
-   * @param {string} documentId
-   * @param {string} origin
-   * @returns {object|null}
-   */
-  function policyEntryForDocument(tabId, frameId, documentId, origin) {
-    const exactKey = documentFrameKey(tabId, frameId, documentId)
-    let entry = permissionsPolicy.get(exactKey)
-    if (!entry) {
-      const pendingKey = documentFrameKey(tabId, frameId, '')
-      entry = permissionsPolicy.get(pendingKey) || null
-      if (entry && entry.origin === origin) {
-        permissionsPolicy.delete(pendingKey)
-        entry.documentId = documentId
-        permissionsPolicy.set(exactKey, entry)
-      }
-    }
-    return entry && entry.origin === origin ? entry : null
-  }
-  /**
-   * Ensures every cross-origin container edge in the exact ancestry has a
-   * browser-authenticated delegation result.
-   * @param {object} endpoint
-   * @returns {Promise<boolean>}
-   */
-  async function ensureFrameDelegations(endpoint) {
-    let child = endpoint
-    const visited = new Set()
-    while (child && child.frameId !== 0) {
-      const key = documentFrameKey(child.tabId, child.frameId, child.documentId)
-      if (visited.has(key)) return false
-      visited.add(key)
-      const entry = policyEntryForDocument(
-        child.tabId,
-        child.frameId,
-        child.documentId,
-        child.origin
-      )
-      if (!entry || !entry.parentKey) return false
-      const parent = parentEndpointFor(child)
-      const parentEntry = permissionsPolicy.get(entry.parentKey)
-      if (!parent || !parentEntry || !parentEntry.origin) return false
-      const delegated = await queryFrameDelegation(child)
-      if (!endpointDocumentIsLive(child)) return false
-      frameDelegations.set(key, delegated)
-      child = parent
-    }
-    return !!child
-  }
-  /**
-   * @param {object} entry
-   * @param {Set<string>} visited
-   * @returns {boolean}
-   */
-  function effectivePolicyAllowsEntry(entry, visited = new Set()) {
-    if (!entry || entry.effective.kind === 'none') return false
-    const key = documentFrameKey(entry.tabId, entry.frameId, entry.documentId)
-    if (visited.has(key)) return false
-    visited.add(key)
-    if (entry.parentKey) {
-      const parent = permissionsPolicy.get(entry.parentKey)
-      if (!parent || !effectivePolicyAllowsEntry(parent, visited)) return false
-      if (frameDelegations.get(key) !== true) return false
-    }
-    return (
-      entry.effective.kind === 'all' ||
-      (entry.effective.kind === 'list' && entry.effective.origins.includes(entry.origin))
-    )
-  }
-  /**
-   * @param {object} request
-   * @param {object} sender
-   * @returns {{policy: {hid: string}}}
-   */
-  function policyForRequest(request, sender) {
-    const tabId = sender.tab?.id
-    const frameId = Number.isInteger(sender.frameId) ? sender.frameId : null
-    const documentId = typeof sender.documentId === 'string' ? sender.documentId : null
-    const requestedOrigin = typeof sender.origin === 'string' ? sender.origin : ''
-    if (tabId == null || frameId == null || !documentId || !requestedOrigin) {
-      return { policy: { hid: 'none' } }
-    }
-    const entry = policyEntryForDocument(tabId, frameId, documentId, requestedOrigin)
-    return effectivePolicyAllowsEntry(entry)
-      ? { policy: { hid: 'allowed' } }
-      : { policy: { hid: 'none' } }
-  }
-  /**
-   * @param {object} request
-   * @param {object} sender
-   * @param {function(*): void} sendResponse
-   * @param {object} port
-   * @returns {boolean}
-   */
-  async function handleGetPolicy(request, sender, sendResponse, port) {
-    const endpoint = endpointForSender(request, sender, port)
-    if (
-      !endpoint ||
-      !(await ensureFrameDelegations(endpoint)) ||
-      !endpointDocumentIsLive(endpoint)
-    ) {
+  // Reuse the registry's authoritative, per-document Permissions-Policy engine.
+  // This transport is also used by Dedicated Workers, where no content script
+  // installs the page-facing registry binding.
+  async function handleGetPolicy(_request, _sender, sendResponse, port) {
+    const endpoint = endpointForPort(port)
+    if (!endpoint || !endpointDocumentIsLive(endpoint)) {
       sendResponse({ policy: { hid: 'none' } })
       return false
     }
-    sendResponse(policyForRequest(request, sender))
+    try {
+      const sender = {
+        ...(port.sender || {}),
+        tab: { id: endpoint.tabId },
+        frameId: endpoint.frameId,
+        documentId: endpoint.documentId,
+        origin: endpoint.origin,
+        url: endpoint.url
+      }
+      const policy = browser.permissions.web
+      const allowed = typeof policy.policyAllowsForPage === 'function'
+        ? await policy.policyAllowsForPage(endpoint.tabId, endpoint.frameId, 'hid')
+        : await globalThis.XrayPermissionPolicy.allows(sender, 'hid')
+      sendResponse({ policy: { hid: allowed && endpointDocumentIsLive(endpoint) ? 'allowed' : 'none' } })
+    } catch {
+      sendResponse({ policy: { hid: 'none' } })
+    }
     return false
   }
   /**
-   * @param {object} request
-   * @param {object} sender
-   * @param {function(*): void} sendResponse
-   * @returns {boolean}
+   * Resolves a Dedicated Worker's HID permission through its owning document.
+   * The content bridge authenticates the worker Port; the background further
+   * checks the exact registered document endpoint before reading Registry state.
    */
-  function handleSetFrameDelegation(request, sender, sendResponse) {
-    const tabId = sender.tab?.id
-    const frameId = Number.isInteger(sender.frameId) ? sender.frameId : null
-    const documentId = typeof sender.documentId === 'string' ? sender.documentId : null
-    const origin = typeof sender.origin === 'string' ? sender.origin : ''
-    if (tabId == null || frameId == null || !documentId || !origin) {
-      sendResponse({ ok: false })
+  async function handleGetPermissionState(_request, _sender, sendResponse, port) {
+    const endpoint = endpointForPort(port)
+    if (!endpoint || !endpointDocumentIsLive(endpoint)) {
+      sendResponse({ state: 'denied' })
       return false
     }
-    const exactKey = documentFrameKey(tabId, frameId, documentId)
-    const entry = policyEntryForDocument(tabId, frameId, documentId, origin)
-    if (!entry || entry.origin !== origin) {
-      sendResponse({ ok: false })
-      return false
+    try {
+      const state = await permissionRegistry.stateForWorker(endpoint)
+      sendResponse({ state: endpointDocumentIsLive(endpoint) ? state : 'denied' })
+    } catch {
+      sendResponse({ state: 'denied' })
     }
-    frameDelegations.set(exactKey, request.delegated === true)
-    sendResponse({ ok: true })
     return false
   }
+
   /**
    * Arms the shadow-URL interception for the next worker script request from
    * the given tab+document, so the polyfill's own data-worker spawn is
@@ -2030,8 +1859,8 @@
     showPicker: handleShowPicker,
     cancelPicker: handleCancelPicker,
     getPendingPicker: handleGetPendingPicker,
-    setFrameDelegation: handleSetFrameDelegation,
     getPolicy: handleGetPolicy,
+    getPermissionState: handleGetPermissionState,
     armShadowSpawn: handleArmShadowSpawn,
     unarmShadowSpawn: handleUnarmShadowSpawn,
     pickerResult: handlePickerResult,
@@ -2112,13 +1941,6 @@
       }
       const endpoint = port.name === 'webhid-control' ? registerFrameEndpoint(port) : null
       port.onMessage.addListener((request) => {
-        if (request.action === 'frameDelegationResult') {
-          const pending = delegationPending.get(request.requestId)
-          if (!pending || pending.parent.port !== port) return
-          delegationPending.delete(request.requestId)
-          pending.resolve(request.delegated === true)
-          return
-        }
         const sender = endpoint
           ? {
               ...(port.sender || {}),

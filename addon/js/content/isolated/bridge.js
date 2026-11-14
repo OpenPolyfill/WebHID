@@ -224,14 +224,6 @@
         if (handler) handler(message)
         return
       }
-      if (message && message.action === 'frameDelegationQuery') {
-        port.postMessage({
-          action: 'frameDelegationResult',
-          requestId: message.requestId,
-          delegated: frameDelegationForChild(message)
-        })
-        return
-      }
       if (message && message.action === 'showInlinePicker') {
         if (!devicePicker) return
         devicePicker
@@ -261,6 +253,15 @@
         allowedByOrigin.set(origin, new Set(message.deviceIds.map((deviceId) => String(deviceId))))
         loadedOrigins.add(origin)
         flushAllowedDeviceIdsQueue(origin)
+        return
+      }
+      if (message?.action === 'registryPermissionChanged' && message.name === 'hid') {
+        for (const ports of workerPagePorts.values()) {
+          for (const port of ports) {
+            try { port.postMessage({ type: 'permissionRegistryChanged' }) }
+            catch { /* Worker terminated before the notification. */ }
+          }
+        }
         return
       }
       if (message && message.action === 'webhidDeviceEvent' && message.event) {
@@ -365,7 +366,6 @@
     'getDeviceInfo',
     'showPicker',
     'pickerResult',
-    'setFrameDelegation'
   ])
 
   const PAGE_ACTION_API_ACTIONS = new Set([
@@ -2758,112 +2758,22 @@
       replyToPage({ type: 'response', id: data.id, result: {} })
     }
   }
-  /**
-   * @param {string} token
-   * @returns {string|null}
-   */
-  function delegationToken(token) {
-    if (!token) return null
-    const first = token[0]
-    const last = token[token.length - 1]
-    if (first === "'" || first === '"') {
-      if (last !== first || token.length < 2) return null
-      return token.slice(1, -1)
+  async function handleGetPermissionStateRequest(data, _ports, requestPort) {
+    const context = frameContextForPort(requestPort)
+    if (!context || context.destroyed || !context.source) {
+      replyToPage({ type: 'response', id: data.id, result: { state: 'denied' } })
+      return
     }
-    if (last === "'" || last === '"') return null
-    return token
-  }
-  /**
-   * @param {string} value
-   * @param {string} [base]
-   * @returns {string|null}
-   */
-  function originFromDelegationUrl(value, base) {
     try {
-      const url = base ? new URL(value, base) : new URL(value)
-      const origin = url.origin
-      return typeof origin === 'string' && origin !== 'null' ? origin : null
+      const response = await sendBackgroundRequest({ action: 'getPermissionState' }, context)
+      replyToPage({ type: 'response', id: data.id, result: {
+        state: response?.state || 'denied'
+      } })
     } catch {
-      return null
+      replyToPage({ type: 'response', id: data.id, result: { state: 'denied' } })
     }
   }
-  /**
-   * @param {Element} frame
-   * @param {{childOrigin: string, parentOrigin: string}} query
-   * @param {string[]} tokens
-   * @returns {boolean}
-   */
-  function allowHidDirective(frame, query, tokens) {
-    if (tokens.length === 0) {
-      const src = frame.getAttribute('src') || ''
-      const sourceOrigin = src ? originFromDelegationUrl(src, document.baseURI) : query.parentOrigin
-      return sourceOrigin === query.childOrigin
-    }
-    for (const rawToken of tokens) {
-      const token = delegationToken(rawToken)
-      if (token === null) return false
-      if (token === 'none') return false
-      if (token === '*') return true
-      if (token === 'self' && query.childOrigin === query.parentOrigin) return true
-      if (token === 'src') {
-        const src = frame.getAttribute('src') || ''
-        const sourceOrigin = src
-          ? originFromDelegationUrl(src, document.baseURI)
-          : query.parentOrigin
-        if (sourceOrigin === query.childOrigin) return true
-        continue
-      }
-      if (originFromDelegationUrl(token) === query.childOrigin) return true
-    }
-    return false
-  }
-  /**
-   * @param {{childFrameId: number, childDocumentId: string, childOrigin: string, parentOrigin: string}} query
-   * @returns {boolean}
-   */
-  function frameDelegationForChild(query) {
-    try {
-      const getFrameId = browser.runtime.getFrameId
-      const getDocumentId = browser.runtime.getDocumentId
-      if (
-        typeof getFrameId !== 'function' ||
-        typeof getDocumentId !== 'function' ||
-        typeof query.childOrigin !== 'string' ||
-        typeof query.parentOrigin !== 'string'
-      )
-        return false
-      for (const frame of document.querySelectorAll('iframe,frame')) {
-        if (getFrameId(frame) !== query.childFrameId) continue
-        if (getDocumentId(frame) !== query.childDocumentId) continue
-        const directives = (frame.getAttribute('allow') || '')
-          .split(';')
-          .filter((directive) => directive.trim().toLowerCase().startsWith('hid'))
-        if (directives.length === 0) return query.childOrigin === query.parentOrigin
-        for (const directive of directives) {
-          const tokens = directive.trim().split(/\s+/)
-          if (tokens.shift()?.toLowerCase() !== 'hid') return false
-          if (!allowHidDirective(frame, query, tokens)) return false
-        }
-        return true
-      }
-    } catch {
-      void 0
-    }
-    return false
-  }
-  /**
-   * @param {FrameContext} context
-   * @returns {boolean}
-   */
-  function hasHidDelegation(context) {
-    return context.frameId === 0
-  }
-  /**
-   * @param {object} data
-   * @param {MessagePort[]} _ports
-   * @param {MessagePort} requestPort
-   * @returns {Promise<void>}
-   */
+
   async function handleGetPolicyRequest(data, _ports, requestPort) {
     const context = frameContextForPort(requestPort)
     if (!context || context.destroyed || !context.source) {
@@ -2871,34 +2781,15 @@
       return
     }
     try {
-      let response = null
-      if (hasHidDelegation(context)) {
-        const delegationResponse = await sendBackgroundRequest(
-          {
-            action: 'setFrameDelegation',
-            delegated: true
-          },
-          context
-        )
-        if (delegationResponse?.ok)
-          response = await sendBackgroundRequest({ action: 'getPolicy' }, context)
-      } else {
-        response = await sendBackgroundRequest({ action: 'getPolicy' }, context)
-      }
+      const response = await sendBackgroundRequest({ action: 'getPolicy' }, context)
       replyToPage({
-        type: 'response',
-        id: data.id,
-        result: response ? response.policy || { hid: 'none' } : { hid: 'none' }
+        type: 'response', id: data.id,
+        result: response?.policy || { hid: 'none' }
       })
-    } catch (e) {
-      replyToPage({
-        type: 'response',
-        id: data.id,
-        result: { hid: 'none', _err: String(e) }
-      })
+    } catch {
+      replyToPage({ type: 'response', id: data.id, result: { hid: 'none' } })
     }
   }
-
   /**
    * @param {object} data
    * @returns {Promise<void>}
@@ -3308,6 +3199,7 @@
     waitDataPlaneReady: handlePlaneReadyRequest,
     getCspInfo: handleGetCspInfoRequest,
     getPolicy: handleGetPolicyRequest,
+    getPermissionState: handleGetPermissionStateRequest,
     getSettings: handleGetSettingsRequest,
     requestDevice: handleRequestDeviceRequest
   }
@@ -3321,7 +3213,7 @@
    */
   async function handleRequest(data, ports, _source, requestPort) {
     if (!data || data.id === undefined) return
-    if (data.action === 'getPolicy') await authorityReady
+    if (data.action === 'getPolicy' || data.action === 'getPermissionState') await authorityReady
     if (authorityFailed || !authorityOrigin) {
       replyToPage({ type: 'response', id: data.id, result: { s: 503 } })
       return

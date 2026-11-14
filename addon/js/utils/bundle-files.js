@@ -24,6 +24,7 @@
       'js/utils/device-filters.js',
       'js/utils/webtransport.js',
       'js/utils/wire-format.js',
+      'js/content/main/worker-permissions.js',
       'js/content/main/index.js'
     ],
     mv2MainWorld: [

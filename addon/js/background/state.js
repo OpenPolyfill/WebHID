@@ -10,8 +10,6 @@
   /** token -> { deviceId, attempts }: session closes that failed, kept for
    * retry after their owner tab is gone. */
   const orphanCleanup = new Map()
-  const permissionsPolicy = new Map()
-  const frameDelegations = new Map()
   const pendingPicker = new Map()
   /** @type {Map<object, object>} */
   const frameEndpoints = new Map()
@@ -107,8 +105,6 @@
     deviceSessions,
     frameLifetimes,
     orphanCleanup,
-    permissionsPolicy,
-    frameDelegations,
     frameEndpoints,
     pageActionVisibility,
     pendingPicker,

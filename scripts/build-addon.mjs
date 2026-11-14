@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
 import { minify } from 'terser'
 import webExt from 'web-ext'
+import { stageAddonProvider } from '@openpolyfill/permission-registry/node'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const SRC = join(__dirname, '..', 'addon')
@@ -304,6 +305,14 @@ async function build() {
     process.exit(1)
   }
   const manifest = parseManifest(manifestPath)
+  // Ordinary and privileged builds share the same background registration.
+  // The Experiment is staged only for --experimental builds.
+  if (!manifest.permissions.includes('webNavigation')) manifest.permissions.push('webNavigation')
+  const privileged = !!args.values.experimental
+  const scripts = manifest.background.scripts
+  const registerAt = scripts.indexOf('js/background/messages.js')
+  if (registerAt < 0) throw new Error('WebHID background message entrypoint not found')
+  scripts.splice(registerAt, 0, 'js/background/permission-registry.js')
   if (args.values.experimental) {
     manifest.browser_specific_settings.gecko.update_url =
       `https://github.com/OpenPolyfill/WebHID/releases/latest/download/webhid-addon-privileged-updates.json`
@@ -337,6 +346,22 @@ async function build() {
   const distLabel = args.values.experimental ? 'experimental Firefox manifest' : 'source manifest'
   console.log(`${distLabel} references ${allowedFiles.size} files`)
   await writeDistFiles(allowedFiles, manifest, distDir)
+  const staged = await stageAddonProvider(distDir, { privileged })
+  manifest.background.scripts.unshift(...staged.backgroundScripts)
+  // Run before the MV2 injector (and MV3 MAIN script). The registry's
+  // isolated Xray layer must exist before WebHID exposes navigator.hid.
+  manifest.content_scripts.unshift({
+    matches: ['<all_urls>'],
+    js: staged.contentScripts,
+    ...(manifest.manifest_version === 3 ? { world: 'ISOLATED' } : {}),
+    run_at: 'document_start',
+    all_frames: true,
+    match_origin_as_fallback: true
+  })
+  if (staged.experiment_apis) {
+    manifest.experiment_apis = { ...manifest.experiment_apis, ...staged.experiment_apis }
+  }
+  await writeFile(join(distDir, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n')
   if (args.values.experimental) {
     console.log(`Built experimental Firefox addon in ${relative(join(__dirname, '..'), distDir)}/`)
     return

@@ -10,6 +10,7 @@
     "nativeMessaging",
     "storage",
     "webRequest",
+    "webNavigation",
     "webRequestBlocking",
     "webRequestFilterResponse",
     "notifications",

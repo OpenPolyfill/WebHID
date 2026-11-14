@@ -364,11 +364,6 @@
     }
     navigatorPrototype = nativeGetPrototypeOf(navigatorPrototype)
   }
-  const nativePermissions = nativeNavigator ? nativeGet(nativeNavigator, 'permissions') : null
-  const permissionsQuery =
-    nativePermissions && typeof nativePermissions.query === 'function'
-      ? call(nativeFunctionBind, nativePermissions.query, [nativePermissions])
-      : null
   const nativeConsole = root.console
   const consoleOps = nativeFreeze({
     error:
@@ -424,8 +419,6 @@
         return null
       }
     })(),
-    permissionsQuery,
-    permissions: nativePermissions,
     numberIsFinite: root.Number && root.Number.isFinite,
     numberIsInteger: root.Number && root.Number.isInteger,
     mathTrunc: root.Math && root.Math.trunc,

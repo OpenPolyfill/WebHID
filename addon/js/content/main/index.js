@@ -20,6 +20,7 @@
   const createSettingsStore = webhid.import('createSettingsStore')
   const isValidFilter = webhid.import('isValidFilter')
   const createWtTransport = webhid.import('createWtTransport')
+  const installWorkerPermissions = isWorker ? webhid.import('installWorkerPermissions') : null
   const NativeMap = types.Map.constructor
   const NativeWeakMap = types.WeakMap.constructor
   const NativeArrayBuffer = types.ArrayBuffer.constructor
@@ -130,7 +131,6 @@
   const readMessageEventPorts = (event) =>
     nativeMessageEventPorts ? callNative(nativeMessageEventPorts, event) : null
   const nativeBind = types.Function.proto.methods.bind
-  const permissionsObject = host.permissions
   /**
    * Gives an internal array an iterator that remains independent of page patches.
    * @param {Array} items
@@ -152,11 +152,6 @@
   const TrustedTypePolicy = types.TrustedTypePolicy ? types.TrustedTypePolicy.constructor : null
   const nativeNavigatorHidDescriptor =
     !isWorker && Navigator ? object.getOwnPropertyDescriptor(Navigator.prototype, 'hid') : null
-  const nativePermissionsQuery =
-    host.permissionsQuery ||
-    (permissionsObject && typeof permissionsObject.query === 'function'
-      ? nativeBind(permissionsObject.query, permissionsObject)
-      : null)
   const promiseOps = types.Promise.proto.methods
   const stringConstructor = types.String.constructor
   const nativeNumberIsFinite = host.numberIsFinite
@@ -1059,6 +1054,7 @@
     brokerDataPortUnavailable: handleBrokerDataPortUnavailable,
     fanoutBrokerCandidate: handleFanoutBrokerCandidate,
     response: handleResponseMessage,
+    permissionRegistryChanged: () => notifyWorkerPermissions?.(),
     settings: (data) => {
       settings.set(data.settings || {})
     },
@@ -1210,22 +1206,12 @@
     return sendRequest('getPolicy', getPolicyContext())
   }
 
-  const originalQuery = nativePermissionsQuery
-  if (originalQuery && permissionsObject) {
-    permissionsObject.query = async (desc) => {
-      if (desc && desc.name === 'hid') {
-        const policy = await getPolicy()
-        return {
-          state: policy && policy.hid === 'none' ? 'denied' : 'granted',
-          onchange: null,
-          addEventListener: () => {},
-          removeEventListener: () => {},
-          dispatchEvent: () => false
-        }
-      }
-      return originalQuery(desc)
-    }
-  }
+  const notifyWorkerPermissions = isWorker
+    ? installWorkerPermissions(async () => {
+        const response = await sendRequest('getPermissionState', {})
+        return response?.state || 'denied'
+      })
+    : null
 
   /** @type {WeakMap<object, object>} */
   const devState = hardenWeakMap(new NativeWeakMap())

@@ -3,8 +3,6 @@
   const logger = webhid.import('logger')
   const {
     workerPolyfillSites,
-    permissionsPolicy,
-    frameDelegations,
     shadowArms,
     cspFrameNavigations,
     enqueueCspStorage,
@@ -18,7 +16,6 @@
     rewriteCspForBlob,
     urlOrigin,
     frameKey,
-    documentFrameKey,
     allowInlineScript
   } = webhid.import('bgCsp')
   const loadSiteSettings = webhid.import('loadSiteSettings')
@@ -906,178 +903,6 @@
   }
 
   /**
-   * Parses one `hid` declaration from a Permissions-Policy header into an
-   * allowlist descriptor:
-   *   { kind: 'all' }                    for `*`
-   *   { kind: 'none', origins: [] }      for `()` or malformed values
-   *   { kind: 'list', origins: [] }      explicit origins (self resolved
-   *                                      by the caller against the origin)
-   * Unknown tokens contribute nothing; malformed values fail closed (do not
-   * silently broaden access).
-   * @param {string} value
-   * @returns {{kind: 'all'|'none'|'list', origins: string[]}}
-   */
-  function parseHidPolicy(value) {
-    const v = value.trim()
-    if (v === '*') return { kind: 'all', origins: [] }
-    if (v === 'self') return { kind: 'list', origins: ['self'] }
-    if (!v.startsWith('(') || !v.endsWith(')')) return { kind: 'none', origins: [] }
-    const inner = v.slice(1, -1).trim()
-    if (inner === '') return { kind: 'none', origins: [] }
-    const origins = []
-    let sawStar = false
-    let sawSelf = false
-    for (const raw of inner.split(/\s+/)) {
-      const token = raw.replace(/^['"]|['"]$/g, '')
-      if (token === '*') sawStar = true
-      else if (token === 'self') sawSelf = true
-      else {
-        try {
-          const origin = new URL(token).origin
-          if (origin !== 'null' && !origins.includes(origin)) origins.push(origin)
-        } catch {
-          // Unrecognized token: contributes nothing.
-        }
-      }
-    }
-    if (sawStar) return { kind: 'all', origins: [] }
-    if (sawSelf) origins.push('self')
-    if (origins.length === 0) return { kind: 'none', origins: [] }
-    return { kind: 'list', origins }
-  }
-
-  /**
-   * Intersects two allowlists. Deny dominates: any `none` yields `none`.
-   * @param {{kind: string, origins: string[]}} a
-   * @param {{kind: string, origins: string[]}} b
-   * @returns {{kind: 'all'|'none'|'list', origins: string[]}}
-   */
-  function intersectAllowlists(a, b) {
-    if (a.kind === 'none' || b.kind === 'none') return { kind: 'none', origins: [] }
-    if (a.kind === 'all') return b
-    if (b.kind === 'all') return a
-    const origins = a.origins.filter((o) => b.origins.includes(o))
-    return origins.length ? { kind: 'list', origins } : { kind: 'none', origins: [] }
-  }
-
-  /**
-   * Whether `origin` is inside an allowlist. `self` tokens are resolved
-   * against the owning frame's origin at store time, so lists here contain
-   * concrete origins only.
-   * @param {{kind: string, origins: string[]}} list
-   * @param {string} origin
-   * @returns {boolean}
-   */
-  function listAllows(list, origin) {
-    if (list.kind === 'all') return true
-    if (list.kind !== 'list') return false
-    return list.origins.includes(origin)
-  }
-
-  /**
-   * Records a frame document's own `hid` policy and its effective policy
-   * resolved down the exact browser frame ancestry.
-   * @param {object} details
-   * @returns {void}
-   */
-  function storePermissionsPolicy(details) {
-    const origin = urlOrigin(details.url)
-    const documentId =
-      typeof details.documentId === 'string' && details.documentId ? details.documentId : ''
-    const parentFrameId =
-      Number.isInteger(details.parentFrameId) && details.parentFrameId >= 0
-        ? details.parentFrameId
-        : -1
-    const parentDocumentId =
-      typeof details.parentDocumentId === 'string' && details.parentDocumentId
-        ? details.parentDocumentId
-        : ''
-    const parentKey =
-      parentFrameId >= 0 && parentDocumentId
-        ? documentFrameKey(details.tabId, parentFrameId, parentDocumentId)
-        : null
-    const headers = (details.responseHeaders || [])
-      .filter((h) => h.name.toLowerCase() === 'permissions-policy')
-      .map((h) => h.value || '')
-    let self = { kind: 'all', origins: [] }
-    const declarations = []
-    for (const ph of headers) {
-      for (const raw of ph.split(',')) {
-        const eq = raw.indexOf('=')
-        if (eq === -1) continue
-        const feature = raw.slice(0, eq).trim().toLowerCase()
-        if (feature !== 'hid') continue
-        declarations.push(parseHidPolicy(raw.slice(eq + 1)))
-      }
-    }
-    if (declarations.length) {
-      self = declarations.reduce(intersectAllowlists)
-      if (self.kind === 'list') {
-        self = {
-          kind: 'list',
-          origins: self.origins.map((o) => (o === 'self' ? origin : o))
-        }
-      }
-    }
-    let effective = self
-    if (self.kind !== 'none') {
-      let parent = parentKey ? permissionsPolicy.get(parentKey) : null
-      if (!parent && parentKey) {
-        const pendingParentKey = documentFrameKey(details.tabId, parentFrameId, '')
-        parent = permissionsPolicy.get(pendingParentKey) || null
-        if (parent) {
-          permissionsPolicy.delete(pendingParentKey)
-          parent.documentId = parentDocumentId
-          permissionsPolicy.set(parentKey, parent)
-        }
-      }
-      const parentEffective = parent ? parent.effective : { kind: 'all', origins: [] }
-      if (!listAllows(parentEffective, origin)) {
-        effective = { kind: 'none', origins: [] }
-      }
-    }
-    const key = documentFrameKey(details.tabId, details.frameId, documentId)
-    permissionsPolicy.set(key, {
-      tabId: details.tabId,
-      frameId: details.frameId,
-      documentId,
-      origin,
-      url: details.url,
-      parentFrameId,
-      parentDocumentId,
-      parentKey,
-      self,
-      effective
-    })
-    logger.debug('Permissions-Policy stored: ' + key + ' hid=' + JSON.stringify(effective))
-  }
-  /**
-   * @param {number} tabId
-   * @param {number} frameId
-   * @returns {void}
-   */
-  function clearPolicyFrame(tabId, frameId) {
-    const prefix = `${tabId}:${frameId}:`
-    for (const store of [permissionsPolicy, frameDelegations]) {
-      for (const key of store.keys()) {
-        if (key.startsWith(prefix)) store.delete(key)
-      }
-    }
-  }
-  /**
-   * @param {number} tabId
-   * @returns {void}
-   */
-  function clearPolicyTab(tabId) {
-    const prefix = `${tabId}:`
-    for (const store of [permissionsPolicy, frameDelegations]) {
-      for (const key of store.keys()) {
-        if (key.startsWith(prefix)) store.delete(key)
-      }
-    }
-  }
-
-  /**
    * Registers all webRequest listeners used by the background page.
    * @param {{workerSpawnMode: string, workerPolyfillEnabled: boolean}} settings
    * @returns {void}
@@ -1179,8 +1004,6 @@
         let navigation = null
         if (details.tabId !== undefined && details.frameId !== undefined) {
           navigation = beginCspNavigation(details)
-          if (details.type === 'main_frame') clearPolicyTab(details.tabId)
-          else clearPolicyFrame(details.tabId, details.frameId)
           clearFrameCspSession(details, navigation).catch(() => {})
         }
         handleMetaCsp(details, settings, navigation)
@@ -1209,15 +1032,6 @@
         return { responseHeaders: headers }
       },
       { urls: ['<all_urls>'], types: ['script'] },
-      ['blocking', 'responseHeaders']
-    )
-
-    browser.webRequest.onHeadersReceived.addListener(
-      (details) => {
-        storePermissionsPolicy(details)
-        return {}
-      },
-      { urls: ['<all_urls>'], types: ['main_frame', 'sub_frame'] },
       ['blocking', 'responseHeaders']
     )
 
